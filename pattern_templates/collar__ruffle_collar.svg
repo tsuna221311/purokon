@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40cm" height="8cm" viewBox="0 0 40 8">
+  <!-- 衿テンプレート(標準Mサイズ) フリルカラー。ネックライン側(上端)は直線のまま、外側(下端)を波状の曲線にしてフリル(ひだ飾り)の見た目を簡易的に表現した。実際のひだの折り込み分量は再現していない。 -->
+  <path
+    data-part="collar"
+    data-variation="ruffle_collar"
+    data-seam-edge="top"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 0 0 L 40 0 L 40 6 C 36 4, 32 8, 28 6 C 24 4, 20 8, 16 6 C 12 4, 8 8, 4 6 C 2 5, 0 7, 0 6 Z" />
+</svg>

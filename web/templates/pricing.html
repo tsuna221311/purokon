@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="PatternForgeの料金プラン。無料のFreeプランと、生成回数無制限のProプランをご用意しています。">
+<title>料金 — PatternForge</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  {% include "_flash.html" %}
+
+  <main class="container">
+    {% if is_mock_billing %}
+      <div class="field-box mock-note" style="max-width:720px; margin:0 auto 20px;">
+        <p class="hint" style="margin:0;">
+          ※ 現在、決済連携（Stripe）は未設定のためテストモードで動作しています。実際の
+          クレジットカード処理は行われません。「アップグレード」はマイページからテストモードで
+          即時切り替えできます。決済連携を設定すると実際の課金が有効になります。
+        </p>
+      </div>
+    {% else %}
+      <div class="field-box mock-note" style="max-width:720px; margin:0 auto 20px;">
+        <p class="hint" style="margin:0;">
+          ※ Stripeの決済ページで安全に処理されます。カード情報はこのサイトのサーバーを経由しません。
+        </p>
+      </div>
+    {% endif %}
+    <div class="plan-grid">
+      <div class="plan-card">
+        <h2>Free</h2>
+        <p class="plan-price">¥0<span class="plan-price-unit">/月</span></p>
+        <ul class="plan-features">
+          <li>ログイン無しでも利用可能</li>
+          <li>1日 {{ limits.anon }} 回まで生成（未ログイン）</li>
+          <li>アカウント登録で 1日 {{ limits.free }} 回まで生成</li>
+          <li>SVG / A4分割PDFの出力</li>
+        </ul>
+        {% if not current_user %}
+          <a href="{{ url_for('signup') }}" class="btn-outline plan-cta">無料登録</a>
+        {% endif %}
+      </div>
+      <div class="plan-card plan-card-highlight">
+        <h2>Pro {% if is_mock_billing %}<span class="plan-badge">テストモード</span>{% endif %}</h2>
+        <p class="plan-price">{{ '¥0' if is_mock_billing else 'お問い合わせ' }}<span class="plan-price-unit">{{ '（テスト）' if is_mock_billing else '' }}</span></p>
+        <ul class="plan-features">
+          <li>1日の生成回数 無制限</li>
+          <li>Freeプランの全機能</li>
+          <li>生成履歴の一覧表示</li>
+          <li>今後追加予定: 複数サイズの一括生成</li>
+        </ul>
+        {% if current_user and current_user.plan != 'pro' %}
+          <form method="post" action="{{ url_for('account_upgrade') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="primary plan-cta">
+              {{ 'アップグレード（テスト・無料）' if is_mock_billing else 'アップグレード' }}
+            </button>
+          </form>
+        {% elif current_user %}
+          <p class="hint" style="text-align:center;">現在Proプランです</p>
+        {% else %}
+          <a href="{{ url_for('signup') }}" class="primary plan-cta" style="text-decoration:none; display:block; text-align:center;">登録してアップグレード</a>
+        {% endif %}
+      </div>
+    </div>
+  </main>
+
+  {% include "_footer.html" %}
+</body>
+</html>

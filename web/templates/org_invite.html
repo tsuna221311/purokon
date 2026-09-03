@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>組織への招待 — PatternForge</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  {% include "_flash.html" %}
+
+  <main class="container narrow">
+    <section class="panel">
+      <h2>組織への招待</h2>
+      {% if invite.accepted_at %}
+        <p class="hint">この招待は既に受諾済みです。</p>
+      {% else %}
+        <p class="hint" style="margin:0 0 16px;">
+          {{ invite.email }} 宛に、組織「{{ org.name if org else '（不明な組織）' }}」への招待が届いています。
+        </p>
+        {% if current_user %}
+          {% if current_user.email == invite.email %}
+            <form method="post" action="{{ url_for('org_accept_invite', token=token) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="primary">招待を受諾して参加する</button>
+            </form>
+          {% else %}
+            <p class="error-text">
+              この招待は {{ invite.email }} 宛です。現在 {{ current_user.email }} としてログイン中のため
+              受諾できません。招待先のメールアドレスでログインし直してください。
+            </p>
+          {% endif %}
+        {% else %}
+          <p class="hint">
+            招待を受諾するには、{{ invite.email }} のアカウントでログインしてください。
+            まだアカウントをお持ちでない場合は、先にサインアップしてください。
+          </p>
+          <div class="download-row">
+            <a href="{{ url_for('login') }}" class="btn-outline">ログイン</a>
+            <a href="{{ url_for('signup') }}" class="btn-solid">新規登録</a>
+          </div>
+        {% endif %}
+      {% endif %}
+    </section>
+  </main>
+
+  {% include "_footer.html" %}
+</body>
+</html>

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="20cm" height="6cm" viewBox="0 0 20 6">
+  <!-- カフステンプレート(標準Mサイズ) 袖口の帯状パーツ。 -->
+  <path
+    data-part="cuffs"
+    data-variation=""
+    data-seam-edge="top"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 0 0 L 20 0 L 20 6 L 0 6 Z" />
+</svg>

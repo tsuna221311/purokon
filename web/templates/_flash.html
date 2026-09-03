@@ -1,0 +1,12 @@
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages or show_csrf_error_notice %}
+    <div class="container flash-container">
+      {% for category, message in messages %}
+        <div class="flash-msg flash-{{ category }}">{{ message }}</div>
+      {% endfor %}
+      {% if show_csrf_error_notice %}
+        <div class="flash-msg flash-error">セキュリティ確認に失敗しました。ページを再読み込みしてからもう一度お試しください。</div>
+      {% endif %}
+    </div>
+  {% endif %}
+{% endwith %}

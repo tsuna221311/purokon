@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="70cm" height="12cm" viewBox="0 0 70 12">
+  <!-- ウエストバンドテンプレート(標準Mサイズ) ワイドウエストバンド(standardより帯の幅が広い)。 -->
+  <path
+    data-part="waistband"
+    data-variation="wide"
+    data-seam-edge="top"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 0 0 L 70 0 L 70 12 L 0 12 Z" />
+</svg>

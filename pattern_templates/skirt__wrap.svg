@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="69.75cm" height="60cm" viewBox="0 0 69.75 60.0">
+  <!-- スカートテンプレート(標準Mサイズ・半身) ラップ(裾左側が斜めに切り上がる、前巻きスカート風の非対称シルエット)。ウエスト34cm→裾76cm。斜めの切り上がりはヒップ位置(18cm下)より下の30cmから始めており、腰まわりでは必要なヒップ寸法を確保している(round12の作り直し時、切り上がりが高すぎてヒップ位置の幅が33.9cmしか無い状態を実測で検出して修正した)。実際の巻き込み・打ち合わせ分量は再現していない、輪郭のみの近似。apply_skirt_waist_dartは適用しない。 -->
+  <path
+    data-part="skirt"
+    data-variation="wrap"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 10.75 0 L 44.75 0 L 65.75 60 L 19.75 60 L -1.25 30 Z" />
+</svg>

@@ -1,0 +1,24 @@
+<meta name="csrf-token" content="{{ csrf_token }}">
+<header class="app-header">
+  <div class="header-inner">
+    <div>
+      <h1><a href="{{ url_for('index') }}" class="header-logo-link">PatternForge</a></h1>
+      <p>AI型紙生成支援システム — 採寸値から縫える型紙を自動生成</p>
+    </div>
+    <nav class="header-nav">
+      <a href="{{ url_for('guide') }}">使い方</a>
+      <a href="{{ url_for('pricing') }}">料金</a>
+      {% if current_user %}
+        <span class="nav-plan-pill nav-plan-{{ current_user.plan }}">{{ 'Pro' if current_user.plan == 'pro' else 'Free' }}</span>
+        <a href="{{ url_for('account') }}">マイページ</a>
+        <form method="post" action="{{ url_for('logout') }}" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="link-button">ログアウト</button>
+        </form>
+      {% else %}
+        <a href="{{ url_for('login') }}">ログイン</a>
+        <a href="{{ url_for('signup') }}" class="nav-cta">無料登録</a>
+      {% endif %}
+    </nav>
+  </div>
+</header>

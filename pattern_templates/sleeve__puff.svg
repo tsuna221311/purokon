@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="37cm" height="31cm" viewBox="0 0 37 31">
+  <!-- 袖テンプレート(標準Mサイズ) パフ袖。袖山を意図的に大きく(幅37cm・高さ14cm、袖山カーブ48.7cm)取り、袖ぐり39.7cmに対して約9cm(うち通常のいせ込み2cm、デザイン上のギャザー約7cm)を縮めて付ける想定。丈は短め(30cm)。実際のギャザー分量の指定機能は無く、輪郭の形状のみの近似。 -->
+  <path
+    data-part="sleeve"
+    data-variation="puff"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 0 14 C 5.55 3.5, 12.95 0, 18.5 0 C 24.05 0, 31.45 3.5, 37 14 L 34 30 C 29 27, 24 33, 18.5 30 C 13 27, 8 33, 3 30 Z" />
+</svg>

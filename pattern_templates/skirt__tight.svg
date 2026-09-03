@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="55.5cm" height="60cm" viewBox="0 0 55.5 60.0">
+  <!-- スカートテンプレート(標準Mサイズ・半身) タイト。ウエスト34cm→ヒップ47.5cm(18cm下)→裾44cmと、腰の張り出しを経てわずかに絞る。幅方向(X)のみヒップ比で変形し、engine/darts.pyのapply_skirt_waist_dartがヒップ-ウエスト比の差分に応じたウエストダーツをさらに追加する。 -->
+  <path
+    data-part="skirt"
+    data-variation="tight"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 10.75 0 L 44.75 0 C 46.75 8.1, 51.5 13.5, 51.5 18 L 49.75 60 L 5.75 60 L 4 18 C 4 13.5, 8.75 8.1, 10.75 0 Z" />
+</svg>

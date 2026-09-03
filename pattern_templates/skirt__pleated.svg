@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="71.75cm" height="60cm" viewBox="0 0 71.75 60.0">
+  <!-- スカートテンプレート(標準Mサイズ・半身) プリーツ。ウエスト34cm→裾80cmで、裾に沿った浅いジグザグでプリーツの折り目を簡易的に表現している(実際の折り込み分量・重なりは再現していない、見た目の輪郭のみの近似)。flareと同様、apply_skirt_waist_dartは適用しない。 -->
+  <path
+    data-part="skirt"
+    data-variation="pleated"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 10.75 0 L 44.75 0 L 67.75 60 L 57.75 58 L 47.75 60 L 37.75 58 L 27.75 60 L 17.75 58 L 7.75 60 L -2.25 58 L -12.25 60 Z" />
+</svg>

@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>マイページ — PatternForge</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  {% include "_flash.html" %}
+
+  <main class="container narrow">
+    <section class="panel">
+      <h2>マイページ</h2>
+      <div class="stat-grid account-stat-grid">
+        <div class="stat-tile stat-tile-wide"><div class="value value-email">{{ user.email }}</div><div class="label">メールアドレス</div></div>
+        <div class="stat-tile"><div class="value">{{ plan_display }}</div><div class="label">現在のプラン{{ '（組織）' if org else '' }}</div></div>
+        <div class="stat-tile"><div class="value">{{ used }} / {{ limit if limit is not none else '無制限' }}</div><div class="label">本日の生成回数{{ '（組織で共有）' if org else '' }}</div></div>
+      </div>
+
+      {% if user.email_verified %}
+        <p class="hint" style="margin:0 0 16px;">✓ メールアドレス確認済み</p>
+      {% else %}
+        <div class="field-box mock-note">
+          <p class="hint" style="margin:0 0 8px;">
+            ※ メールアドレスがまだ確認されていません。確認メールが届かない場合は下のボタンから再送できます。
+          </p>
+          <form method="post" action="{{ url_for('resend_verification') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn-outline" style="width:100%;">確認メールを再送する</button>
+          </form>
+        </div>
+      {% endif %}
+
+      {% if is_mock_billing %}
+        <div class="field-box mock-note">
+          <p class="hint" style="margin:0;">
+            ※ 「アップグレード」は決済を伴わないテストモードの切り替えです。実際のクレジットカード
+            処理やStripe等の決済ゲートウェイとの連携は行っていません（決済連携が未設定のためです）。
+          </p>
+        </div>
+      {% else %}
+        <div class="field-box mock-note">
+          <p class="hint" style="margin:0;">
+            ※ アップグレードはStripeの決済ページに移動します。カード情報はStripeが直接受け取り、
+            このサイトのサーバーは経由しません。
+          </p>
+        </div>
+      {% endif %}
+
+      {% if org and org.owner_user_id != user.id %}
+        <p class="hint" style="margin:0;">※ プランの変更は組織「{{ org.name }}」のオーナーのみ行えます。</p>
+      {% elif (org and org.plan == 'pro') or (not org and user.plan == 'pro') %}
+        <form method="post" action="{{ url_for('account_downgrade') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="btn-outline" style="width:100%;">
+            {{ 'Freeプランに戻す（テスト）' if is_mock_billing else '解約してFreeプランに戻す' }}
+          </button>
+        </form>
+      {% else %}
+        <form method="post" action="{{ url_for('account_upgrade') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="primary">
+            {{ 'Proにアップグレード（テストモード・無料）' if is_mock_billing else 'Proにアップグレード' }}
+          </button>
+        </form>
+        {% if org and not is_mock_billing %}
+          <p class="hint" style="margin-top:8px;">※ 組織プランでの実際の決済連携は現在未対応です（テストモードのみ）。</p>
+        {% endif %}
+      {% endif %}
+    </section>
+
+    <section class="panel" style="margin-top:20px;">
+      <h2>組織アカウント</h2>
+      {% if org %}
+        <p class="hint" style="margin:0 0 12px;">
+          「{{ org.name }}」に{{ 'オーナーとして' if org.role == 'owner' else 'メンバーとして' }}所属しています。
+          同じ組織のメンバーは、プラン・本日の生成回数・生成履歴を共有します。
+        </p>
+        <div class="table-scroll">
+        <table class="log-table">
+          <thead><tr><th>メールアドレス</th><th>役割</th><th>参加日</th><th></th></tr></thead>
+          <tbody>
+            {% for m in org_members %}
+            <tr>
+              <td class="p-2">{{ m.email }}</td>
+              <td class="p-2">{{ 'オーナー' if m.role == 'owner' else 'メンバー' }}</td>
+              <td class="p-2">{{ m.joined_at | datetime }}</td>
+              <td class="p-2">
+                {% if org.role == 'owner' and m.user_id != user.id %}
+                  <form method="post" action="{{ url_for('org_remove_member', member_user_id=m.user_id) }}" class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="link-button">外す</button>
+                  </form>
+                {% elif m.user_id == user.id and org.role != 'owner' %}
+                  <form method="post" action="{{ url_for('org_remove_member', member_user_id=m.user_id) }}" class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="link-button">組織から抜ける</button>
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+        {% if org.role == 'owner' %}
+          <form method="post" action="{{ url_for('org_invite') }}" class="profile-save-row" style="margin-top:14px;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="email" name="email" placeholder="招待するメールアドレス" required>
+            <button type="submit" class="btn-outline">招待する</button>
+          </form>
+          <form method="post" action="{{ url_for('org_disband') }}" style="margin-top:14px;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn-danger">組織を解散する</button>
+          </form>
+        {% endif %}
+      {% else %}
+        <p class="hint" style="margin:0 0 12px;">
+          組織に所属すると、チームメンバー間でプラン・利用回数・生成履歴を共有できます
+          （アパレルブランド等での複数人によるチーム利用を想定した機能です）。
+        </p>
+        <form method="post" action="{{ url_for('org_create') }}" class="profile-save-row">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="text" name="name" placeholder="組織名（例: ○○デザイン室）" maxlength="100" required>
+          <button type="submit" class="btn-outline">組織を作成</button>
+        </form>
+      {% endif %}
+    </section>
+
+    <section class="panel" style="margin-top:20px;">
+      <h2>APIキー（B2B向けプログラマティックAPI）</h2>
+      <p class="hint" style="margin:0 0 12px;">
+        自社システムから <code>POST /api/v1/generate</code> を呼び出す際に使う認証キーです。
+        <code>Authorization: Bearer &lt;キー&gt;</code> ヘッダーを付けてリクエストしてください。
+        発行時にしか鍵の値は表示されません。最大{{ max_api_keys }}件まで発行できます。
+      </p>
+      {% if api_keys %}
+        <div class="table-scroll">
+        <table class="log-table">
+          <thead><tr><th>名前</th><th>キー(先頭)</th><th>発行日</th><th>最終利用</th><th>状態</th><th></th></tr></thead>
+          <tbody>
+            {% for k in api_keys %}
+            <tr>
+              <td class="p-2">{{ k.name }}</td>
+              <td class="p-2 key-value-mono">{{ k.key_prefix }}…</td>
+              <td class="p-2">{{ k.created_at | datetime }}</td>
+              <td class="p-2">{{ k.last_used_at | datetime if k.last_used_at else '未使用' }}</td>
+              <td class="p-2">{{ '失効済み' if k.revoked_at else '有効' }}</td>
+              <td class="p-2">
+                {% if not k.revoked_at %}
+                  <form method="post" action="{{ url_for('revoke_api_key', key_id=k.id) }}" class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="link-button">失効させる</button>
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+      {% else %}
+        <p class="hint">まだAPIキーは発行していません。</p>
+      {% endif %}
+      <form method="post" action="{{ url_for('create_api_key') }}" class="profile-save-row" style="margin-top:14px;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="text" name="name" placeholder="キー名（例: 自社ECサイト連携用）" maxlength="50" required>
+        <button type="submit" class="btn-outline">新しいキーを発行</button>
+      </form>
+    </section>
+
+    <section class="panel" style="margin-top:20px;">
+      <h2>生成履歴（最新20件）</h2>
+      {% if jobs %}
+        <div class="table-scroll">
+        <table class="log-table">
+          <thead>
+            <tr><th>生成日時</th><th>パーツ数</th><th>布ロス率</th><th>ダウンロード</th><th></th></tr>
+          </thead>
+          <tbody>
+            {% for job in jobs %}
+            <tr>
+              <td class="p-2">{{ job.created_at | datetime }}</td>
+              <td class="p-2">{{ job.part_count if job.part_count is not none else '—' }}</td>
+              <td class="p-2">{{ (job.waste_ratio * 100) | round(1) if job.waste_ratio is not none else '—' }}{{ '%' if job.waste_ratio is not none else '' }}</td>
+              <td class="p-2">
+                <a href="{{ url_for('download', job_id=job.job_id, fmt='svg') }}">SVG</a> /
+                <a href="{{ url_for('download', job_id=job.job_id, fmt='pdf') }}">PDF</a>
+              </td>
+              <td class="p-2">
+                {% if job.can_regenerate %}
+                  <form method="post" action="{{ url_for('regenerate_job', job_id=job.job_id) }}" class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="link-button">この設定で再生成</button>
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+        <p class="hint" style="margin-top:10px;">
+          生成物は生成から一定時間（既定1時間）で自動的に削除されるため、古い履歴のダウンロードは
+          失敗する場合があります。「この設定で再生成」がある行は、同じ入力（採寸値・パーツ構成等）で
+          型紙を作り直せます（イラストモードから生成した履歴は、アップロード画像を保持していないため
+          再生成できません）。再生成も通常の生成と同じく本日の生成回数を1回消費します。
+        </p>
+      {% else %}
+        <p class="hint">まだ生成履歴がありません。</p>
+      {% endif %}
+    </section>
+
+    <section class="panel" style="margin-top:20px;">
+      <h2>採寸プロフィール</h2>
+      <p class="hint" style="margin:0 0 12px;">
+        トップページの生成フォームで保存した採寸値です。複数の顧客・家族分を名前を付けて
+        管理できます（最大{{ max_profiles }}件）。
+      </p>
+      {% if profiles %}
+        <div class="table-scroll">
+        <table class="log-table">
+          <thead>
+            <tr>
+              <th>名前</th><th>バスト</th><th>ウエスト</th><th>ヒップ</th><th>身長</th>
+              <th>袖丈</th><th>肩幅</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in profiles %}
+            <tr>
+              <td class="p-2">{{ p.name }}</td>
+              <td class="p-2">{{ p.bust }}</td>
+              <td class="p-2">{{ p.waist }}</td>
+              <td class="p-2">{{ p.hip }}</td>
+              <td class="p-2">{{ p.height }}</td>
+              <td class="p-2">{{ p.sleeve_length }}</td>
+              <td class="p-2">{{ p.shoulder_width }}</td>
+              <td class="p-2">
+                <form method="post" action="{{ url_for('delete_measurement_profile', profile_id=p.id) }}" class="inline-form">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <button type="submit" class="link-button">削除</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+      {% else %}
+        <p class="hint">まだ保存されたプロフィールはありません。トップページの「②採寸値」欄から保存できます。</p>
+      {% endif %}
+    </section>
+
+    <section class="panel danger-zone" style="margin-top:20px;">
+      <h2>データのエクスポート・アカウント削除</h2>
+      <p class="hint" style="margin:0 0 12px;">
+        保存されている採寸プロフィール・生成履歴・APIキー情報などを、まとめてJSONファイルで
+        ダウンロードできます。
+      </p>
+      <a href="{{ url_for('account_export') }}" class="btn-outline" style="display:block; text-align:center; margin-bottom:16px;">
+        自分のデータをダウンロード（JSON）
+      </a>
+      <p class="hint" style="margin:0 0 12px;">
+        アカウントを削除すると、この操作は取り消せません。保存済みの採寸プロフィール・生成履歴・
+        APIキーはすべて削除されます。
+      </p>
+      <a href="{{ url_for('account_delete_confirm') }}" class="btn-danger" style="display:block; text-align:center; text-decoration:none;">
+        アカウントを削除する（退会）
+      </a>
+    </section>
+  </main>
+
+  {% include "_footer.html" %}
+</body>
+</html>

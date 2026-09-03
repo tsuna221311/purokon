@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="20cm" height="9cm" viewBox="0 0 20 9">
+  <!-- カフステンプレート(標準Mサイズ) ワイドカフス(standardより帯の幅が広い)。 -->
+  <path
+    data-part="cuffs"
+    data-variation="wide"
+    data-seam-edge="top"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 0 0 L 20 0 L 20 9 L 0 9 Z" />
+</svg>

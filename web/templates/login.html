@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="PatternForgeにログインして、保存済みの採寸プロフィールや生成履歴を利用しましょう。">
+<title>ログイン — PatternForge</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  {% include "_flash.html" %}
+  {% if show_login_required_notice %}
+    <div class="container flash-container">
+      <div class="flash-msg flash-error">ログインが必要です。</div>
+    </div>
+  {% endif %}
+
+  <main class="container narrow">
+    <section class="panel">
+      <h2>ログイン</h2>
+      <form method="post" action="{{ url_for('login_submit') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="field">
+          <label for="login-email">メールアドレス</label>
+          <input type="email" id="login-email" name="email" value="{{ email or '' }}" autocomplete="username" required>
+        </div>
+        <div class="field">
+          <label for="login-password">パスワード</label>
+          <input type="password" id="login-password" name="password" autocomplete="current-password" required>
+        </div>
+        <button type="submit" class="primary">ログインする</button>
+      </form>
+      <p class="hint" style="margin-top:14px;">
+        <a href="{{ url_for('forgot_password') }}">パスワードをお忘れですか？</a>
+      </p>
+      <p class="hint">
+        アカウントをお持ちでない方は <a href="{{ url_for('signup') }}">無料登録</a>
+        （ログインしなくても型紙生成自体は可能です）
+      </p>
+    </section>
+  </main>
+
+  {% include "_footer.html" %}
+  <script src="{{ url_for('static', filename='password_toggle.js') }}"></script>
+</body>
+</html>

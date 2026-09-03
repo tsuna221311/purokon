@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="PatternForgeの運営者情報（特定商取引法に基づく表示）です。">
+<title>運営者情報 — PatternForge</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  {% include "_flash.html" %}
+
+  <main class="container narrow">
+    <section class="panel legal-content">
+      <h2>運営者情報（特定商取引法に基づく表示）</h2>
+      <p class="hint">
+        本サービスで有料プラン（サブスクリプション）をご利用いただくにあたり、特定商取引法に基づき
+        以下を表示します。
+      </p>
+
+      <table class="log-table" style="margin-top:12px;">
+        <tbody>
+          <tr><td class="p-2" style="white-space:nowrap; font-weight:600;">事業者名</td><td class="p-2"><span class="legal-placeholder">[事業者名を入力]</span></td></tr>
+          <tr><td class="p-2" style="white-space:nowrap; font-weight:600;">運営責任者</td><td class="p-2"><span class="legal-placeholder">[運営責任者名を入力]</span></td></tr>
+          <tr><td class="p-2" style="white-space:nowrap; font-weight:600;">所在地</td><td class="p-2"><span class="legal-placeholder">[所在地を入力]</span></td></tr>
+          <tr><td class="p-2" style="white-space:nowrap; font-weight:600;">連絡先</td><td class="p-2"><span class="legal-placeholder">[電話番号・メールアドレスを入力]</span></td></tr>
+          <tr><td class="p-2" style="white-space:nowrap; font-weight:600;">販売価格</td><td class="p-2">各プランの料金は<a href="{{ url_for('pricing') }}">料金ページ</a>に表示する金額（税込）です。</td></tr>
+          <tr><td class="p-2" style="white-space:nowrap; font-weight:600;">追加費用</td><td class="p-2">上記以外に利用者が負担する費用はありません（通信費等を除く）。</td></tr>
+          <tr><td class="p-2" style="white-space:nowrap; font-weight:600;">支払方法</td><td class="p-2">クレジットカード決済（決済代行事業者経由）</td></tr>
+          <tr><td class="p-2" style="white-space:nowrap; font-weight:600;">支払時期</td><td class="p-2">アップグレード操作時点、以後は各更新日に自動課金</td></tr>
+          <tr><td class="p-2" style="white-space:nowrap; font-weight:600;">サービス提供時期</td><td class="p-2">決済完了後、即時にプランが反映されます。</td></tr>
+          <tr><td class="p-2" style="white-space:nowrap; font-weight:600;">解約・返金</td><td class="p-2">マイページからいつでも解約できます。日割り返金は行いません（詳細は<a href="{{ url_for('terms') }}">利用規約</a>参照）。</td></tr>
+        </tbody>
+      </table>
+
+      <p class="hint" style="margin-top:20px;">
+        <span class="legal-placeholder">このページの内容はテンプレートです。実際に一般公開する前に、
+        事業者名・所在地・連絡先などの実際の情報に差し替えてください（web/templates/legal.html）。</span>
+      </p>
+    </section>
+  </main>
+
+  {% include "_footer.html" %}
+</body>
+</html>

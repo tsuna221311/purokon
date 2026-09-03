@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ページが見つかりません — PatternForge</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+
+  <main class="container narrow">
+    <section class="panel" style="text-align:center;">
+      <h2>ページが見つかりません（404）</h2>
+      <p class="hint">お探しのページは存在しないか、移動または削除された可能性があります。</p>
+      <p style="margin-top:20px;">
+        <a href="{{ url_for('index') }}" class="primary" style="display:inline-block; text-decoration:none; padding:10px 22px; border-radius:8px;">トップページへ戻る</a>
+      </p>
+    </section>
+  </main>
+
+  {% include "_footer.html" %}
+</body>
+</html>

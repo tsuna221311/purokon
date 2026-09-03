@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>エラーが発生しました — PatternForge</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+
+  <main class="container narrow">
+    <section class="panel" style="text-align:center;">
+      <h2>内部エラーが発生しました（500）</h2>
+      <p class="hint">
+        しばらく待って再度お試しください。問題が続く場合は、下記のエラーIDを添えてサポートまで
+        ご連絡ください。
+      </p>
+      {% if error_id %}
+        <p class="hint" style="margin-top:10px;">エラーID: <code>{{ error_id }}</code></p>
+      {% endif %}
+      <p style="margin-top:20px;">
+        <a href="{{ url_for('index') }}" class="primary" style="display:inline-block; text-decoration:none; padding:10px 22px; border-radius:8px;">トップページへ戻る</a>
+      </p>
+    </section>
+  </main>
+
+  {% include "_footer.html" %}
+</body>
+</html>

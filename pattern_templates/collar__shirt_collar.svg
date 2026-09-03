@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40cm" height="6cm" viewBox="0 0 40 6">
+  <!-- 衿テンプレート(標準Mサイズ) シャツカラー(左右の襟先が尖った形)。 -->
+  <path
+    data-part="collar"
+    data-variation="shirt_collar"
+    data-seam-edge="bottom"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 4 0 L 0 3 L 4 6 L 36 6 L 40 3 L 36 0 Z" />
+</svg>

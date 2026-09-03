@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="44cm" height="6cm" viewBox="0 0 44 6">
+  <!-- 衿テンプレート(標準Mサイズ) ボウカラー(shirt_collarよりさらに長く尖った左右の襟先で、リボン結び風の見た目を表現)。実際に結ぶ紐部分の延長は含まない、帯部分のみの近似。 -->
+  <path
+    data-part="collar"
+    data-variation="bow_collar"
+    data-seam-edge="bottom"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 6 0 L 0 3 L 6 6 L 38 6 L 44 3 L 38 0 Z" />
+</svg>

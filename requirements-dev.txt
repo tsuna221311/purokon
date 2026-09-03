@@ -1,0 +1,19 @@
+-r requirements.txt
+pytest>=8,<9
+cairosvg>=2.7,<3   # SVGをPNGへレンダリングして目視確認する場合に使用（任意）。
+# 正直な注記: cairosvgはCSSの@font-faceを解釈しない(cairo側のフォント名解決に
+# 委ねているだけで、埋め込みフォントデータやfont-familyのフォールバック順は
+# 見ていないことをソース(cairosvg/text.py)で確認済み)。そのため、SVGに埋め込んだ
+# 日本語フォント(engine/pdf_export.pyの@font-face埋め込み)や、font-familyの
+# フォールバック候補で解決している文字の見た目を確認する用途には使えない
+# (むしろ実際には文字化けしない文字まで文字化けして見えることがある)。
+# その種の確認をしたい場合は、実際のブラウザ(例: Playwright経由のChromium)で
+# 開いて確認すること。
+# tests/test_pdf_export.pyが生成したPDFから実際にテキストを抽出して検証する
+# のに使用。以前はここに宣言されておらず、たまたまこのサンドボックスに
+# 他の目的でプリインストールされていたために気付かれていなかったが、
+# READMEの手順通り(venv作成→requirements-dev.txtのみをインストール)で
+# 実際にクリーンな仮想環境を作って`pytest`を実行したところ、
+# `ModuleNotFoundError: No module named 'pypdf'`でこのテストだけが失敗する
+# ことを確認した(=クイックスタートの手順が実際には通らない状態だった)。
+pypdf>=3,<4

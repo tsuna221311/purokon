@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24cm" height="9cm" viewBox="0 0 24 9">
+  <!-- カフステンプレート(標準Mサイズ) ボタンタブ付きカフス(round9追加)。standardと同じ帯(幅20cm・高さ6cm)の右端に、ボタン留め用のオーバーラップ部分を表す矩形のタブ(幅10cm・帯下端から3cm張り出し)を追加した。実際のボタン穴・ボタン位置のマーキング(合印)までは含まない、タブの輪郭のみの近似。 -->
+  <path
+    data-part="cuffs"
+    data-variation="button_tab"
+    data-seam-edge="top"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 0 0 L 20 0 L 20 6 L 24 6 L 24 9 L 14 9 L 14 6 L 0 6 Z" />
+</svg>

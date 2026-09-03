@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="70cm" height="10cm" viewBox="0 0 70 10">
+  <!-- ウエストバンドテンプレート(標準Mサイズ) コンター(体に沿う形)ウエストバンド(round9追加)。standard/wideのような上下が完全に平行な直線の帯ではなく、上端・下端とも中央がわずかに持ち上がる緩いカーブにして、実際のウエストラインの曲線に沿う「シェイプドウエストバンド」の見た目を近似的に表現した。実際の体型ごとの曲線量の計測は行っておらず、見た目のみの近似(elasticとの違いは上端も曲線にしている点。elasticは上端を直線のまま、下端のみシャーリングの波を表現している)。 -->
+  <path
+    data-part="waistband"
+    data-variation="contour"
+    data-seam-edge="top"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 0 2 C 20 0, 50 0, 70 2 L 70 10 C 50 8, 20 8, 0 10 Z" />
+</svg>

@@ -1,0 +1,510 @@
+/* style.css — PatternForge フロントエンド用のスタイル。
+   外部CDN(Tailwind等)に依存すると、オフライン環境や社内ネットワークの
+   プロキシ制限下でスタイルが一切適用されなくなるリスクがある。
+   自己完結させておくのが安全なため、素のCSSで最小限のデザインシステムを
+   組んでいる。 */
+
+:root {
+  --ink: #1c1c1e;
+  --muted: #78716c;
+  --border: #e7e2d9;
+  --bg: #f5f2ec;
+  --panel: #ffffff;
+  --accent: #1e293b;
+  --accent-hover: #334155;
+  --danger: #dc2626;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: "Hiragino Sans", "Noto Sans JP", "Yu Gothic", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.hidden { display: none !important; }
+
+/* display:noneと違い、スクリーンリーダーには読み上げさせつつ画面上は
+   見えなくする（アクセシビリティ用）。プレースホルダーだけでは入力欄の
+   目的が伝わらない場合の<label>などに使う。 */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+header.app-header {
+  background: var(--accent);
+  color: white;
+  padding: 20px 24px;
+}
+header.app-header h1 { margin: 0; font-size: 1.5rem; letter-spacing: -0.01em; }
+header.app-header p { margin: 4px 0 0; color: #cbd5e1; font-size: 0.85rem; }
+.header-logo-link { color: inherit; text-decoration: none; }
+
+.header-inner {
+  max-width: 1080px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.header-nav { display: flex; align-items: center; gap: 14px; font-size: 0.85rem; }
+.header-nav a { color: #e2e8f0; text-decoration: none; }
+.header-nav a:hover { text-decoration: underline; }
+.header-nav .inline-form { display: inline; margin: 0; }
+.link-button {
+  background: none;
+  border: none;
+  color: #e2e8f0;
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+.nav-cta {
+  background: white;
+  color: var(--accent) !important;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.nav-plan-pill {
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: rgba(255,255,255,0.15);
+  color: #e2e8f0;
+}
+.nav-plan-pill.nav-plan-pro { background: #7c3aed; color: white; }
+
+.container {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 24px;
+}
+.container.narrow { max-width: 460px; }
+
+.flash-container { padding-bottom: 0; }
+.flash-msg {
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+.flash-success { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; }
+.flash-error { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+
+.mock-note { border-color: #c4b5fd; background: #f5f3ff; }
+.mock-note p.hint { color: #5b21b6; }
+
+.usage-note { margin-top: 10px; }
+
+.layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 24px;
+}
+@media (min-width: 1000px) {
+  .layout { grid-template-columns: 1fr 1fr; }
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.panel h2 { font-size: 1.05rem; margin: 24px 0 14px; }
+.panel h2:first-child { margin-top: 0; }
+.panel h3 { font-size: 0.9rem; margin: 0 0 8px; }
+
+.mode-row { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 20px; }
+.mode-row label, .checkbox-row label { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.9rem; }
+
+.field-box {
+  margin-bottom: 20px;
+  padding: 14px;
+  background: #faf8f4;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.field-box p.hint { font-size: 0.78rem; color: var(--muted); margin: 8px 0 0; }
+
+.custom-grade-details { margin-top: 12px; }
+.custom-grade-details summary { color: var(--muted); }
+.custom-grade-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+.custom-grade-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem; }
+.custom-grade-grid input[type="number"] { width: 100%; }
+
+.profile-save-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.profile-save-row input[type="text"] { flex: 1 1 200px; min-width: 0; }
+.profile-save-row button { flex: 0 0 auto; white-space: nowrap; }
+#profile-save-message.error-text { color: #b91c1c; }
+
+.grid-measurements {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.grid-parts {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+@media (min-width: 500px) {
+  .grid-parts { grid-template-columns: 1fr 1fr; }
+}
+
+.field label {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.field input, .field select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #d6d0c4;
+  border-radius: 6px;
+  font-size: 0.88rem;
+  background: white;
+}
+
+/* パスワード表示/隠すトグル(password_toggle.js参照)。確認用入力欄が無い
+   サインアップ・パスワード再設定画面で、タイプミスに気付けないまま送信
+   してしまう問題への対応として追加。 */
+.password-field { position: relative; }
+.password-field input {
+  padding-right: 60px;
+}
+.password-toggle-btn {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 0.72rem;
+  cursor: pointer;
+  padding: 6px 8px;
+  line-height: 1;
+}
+.password-toggle-btn:hover, .password-toggle-btn:focus-visible {
+  color: var(--text, #2a2a2a);
+}
+
+.checkbox-row { display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.85rem; align-items: center; }
+.checkbox-row + .checkbox-row { margin-top: 6px; }
+.checkbox-row.option-with-style select {
+  font-size: 0.82rem;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #ccc);
+}
+.checkbox-row.option-with-style select:disabled { opacity: 0.5; }
+
+button.primary {
+  margin-top: 20px;
+  width: 100%;
+  background: var(--accent);
+  color: white;
+  border: none;
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+button.primary:hover { background: var(--accent-hover); }
+button.primary:disabled { background: #a8a29e; cursor: not-allowed; }
+
+.error-text {
+  margin-top: 12px;
+  font-size: 0.85rem;
+  color: #991b1b;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.muted-text { color: var(--muted); font-size: 0.88rem; }
+
+.loading-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  padding: 24px 4px;
+}
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  display: inline-block;
+  animation: pf-spin 0.8s linear infinite;
+}
+@keyframes pf-spin { to { transform: rotate(360deg); } }
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 18px;
+  text-align: center;
+}
+.stat-tile { background: #faf8f4; border: 1px solid var(--border); border-radius: 10px; padding: 12px 6px; }
+.stat-tile .value { font-size: 1.4rem; font-weight: 700; word-break: break-word; }
+.stat-tile .value.value-email { font-size: 0.95rem; overflow-wrap: anywhere; }
+.stat-tile .label { font-size: 0.7rem; color: var(--muted); margin-top: 2px; }
+/* マイページのメールアドレス欄は、3等分だと狭い画面で不自然な位置で
+   折り返されがち（例: "example.co" と "m" の間）なので、常に1行分を
+   専有させ、プラン・本日の生成回数の2つだけを下段で等分する。 */
+.account-stat-grid { grid-template-columns: repeat(2, 1fr); }
+.account-stat-grid .stat-tile-wide { grid-column: 1 / -1; }
+
+.preview-frame {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 16px;
+  background:
+    linear-gradient(45deg, #eee9df 25%, transparent 25%) 0 0/ 16px 16px,
+    linear-gradient(-45deg, #eee9df 25%, transparent 25%) 0 0/ 16px 16px,
+    linear-gradient(45deg, transparent 75%, #eee9df 75%) 0 0/ 16px 16px,
+    linear-gradient(-45deg, transparent 75%, #eee9df 75%) 0 0/ 16px 16px;
+}
+.preview-frame img { display: block; width: 100%; }
+
+.download-row { display: flex; gap: 10px; margin-bottom: 18px; }
+.btn-outline, .btn-solid {
+  flex: 1;
+  text-align: center;
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+.btn-outline { border: 1px solid var(--accent); color: var(--accent); background: white; }
+.btn-outline:hover { background: #f4f4f5; }
+.btn-solid { background: var(--accent); color: white; border: 1px solid var(--accent); }
+.btn-solid:hover { background: var(--accent-hover); }
+
+table.log-table { width: 100%; font-size: 0.78rem; border-collapse: collapse; border: 1px solid var(--border); }
+table.log-table th, table.log-table td { padding: 6px 8px; text-align: left; border-top: 1px solid #f0ece3; }
+table.log-table thead th { background: #faf8f4; border-top: none; }
+table.log-table td:first-child, table.log-table th:first-child { white-space: nowrap; }
+.table-scroll { overflow-x: auto; }
+
+.mode-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+.mode-pill.mock { background: #f1f5f9; color: #475569; }
+.mode-pill.claude { background: #ede9fe; color: #6d28d9; }
+
+.compare-row {
+  display: grid;
+  grid-template-columns: 90px 1fr 70px;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 0.8rem;
+}
+.compare-label { color: var(--muted); }
+.compare-value { text-align: right; font-weight: 600; font-size: 0.8rem; }
+.compare-track {
+  height: 14px;
+  background: #f0ece3;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.compare-fill { height: 100%; border-radius: 999px; transition: width 0.4s ease; }
+.compare-fill.naive { background: #cbd5e1; }
+.compare-fill.actual { background: var(--accent); }
+
+.chip-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.part-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.78rem;
+}
+.part-chip-name { font-weight: 600; }
+.part-chip-size { color: var(--muted); font-size: 0.72rem; }
+
+.ai-badge-box { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 18px; }
+.ai-badge {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+.ai-badge-active { background: #ede9fe; color: #6d28d9; }
+.ai-badge-inactive { background: #f1f5f9; color: #475569; }
+
+/* round8で追加: 退会(アカウント削除)・APIキー失効等、取り消せない/
+   注意を要する操作のための強調表示。誤操作を防ぐため、通常のボタン
+   (primary/btn-outline)とは視覚的に区別する。 */
+.danger-zone { border-color: #fecaca; background: #fef2f2; }
+.btn-danger {
+  display: inline-block;
+  width: 100%;
+  box-sizing: border-box;
+  background: white;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+}
+.btn-danger:hover { background: #fef2f2; }
+
+.key-value-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
+footer.app-footer {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 24px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.app-footer-links { margin-top: 8px; }
+.app-footer-links a { color: var(--muted); text-decoration: underline; margin-right: 14px; }
+.app-footer-links a:last-child { margin-right: 0; }
+.app-footer-copyright { margin-top: 6px; }
+.legal-content h3 { margin-top: 22px; margin-bottom: 6px; font-size: 1rem; }
+.legal-content p, .legal-content li { color: var(--ink); line-height: 1.7; }
+.legal-content ul { margin: 0 0 12px; padding-left: 20px; }
+.legal-placeholder { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; padding: 2px 6px; border-radius: 4px; font-size: 0.85em; }
+
+.plan-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 20px;
+  max-width: 720px;
+  margin: 0 auto;
+}
+@media (min-width: 640px) {
+  .plan-grid { grid-template-columns: 1fr 1fr; }
+}
+.plan-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+}
+.plan-card h2 { margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
+.plan-card-highlight { border-color: #7c3aed; box-shadow: 0 0 0 1px #7c3aed inset; }
+.plan-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  background: #ede9fe;
+  color: #6d28d9;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.plan-price { font-size: 1.8rem; font-weight: 700; margin: 8px 0 16px; }
+.plan-price-unit { font-size: 0.85rem; font-weight: 400; color: var(--muted); }
+.plan-features { list-style: none; padding: 0; margin: 0 0 20px; font-size: 0.85rem; }
+.plan-features li { padding: 6px 0; border-top: 1px solid #f0ece3; }
+.plan-features li:first-child { border-top: none; }
+
+/* round10で追加: カスタムパーツ(自由形状パーツ)の輪郭トレースUI。
+   engine/custom_panel.py・app.pyの/api/custom-panel/traceと対になる
+   フロントエンド側の実装(web/static/app.js参照)。 */
+.custom-panel-card { margin-bottom: 14px; }
+.custom-panel-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.custom-panel-card-header input[type="text"] {
+  flex: 1 1 200px;
+  min-width: 160px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.88rem;
+}
+.custom-panel-card-header label { font-size: 0.82rem; display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.custom-panel-trace-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.custom-panel-canvas-wrap { margin-bottom: 10px; }
+.custom-panel-canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #faf9f6;
+  cursor: crosshair;
+  touch-action: none;
+}
+.custom-panel-tools { margin-bottom: 10px; }
+.custom-panel-tool-btn { font-size: 0.78rem; padding: 6px 10px; }
+.custom-panel-tool-btn.is-active { background: var(--accent); color: white; }
+.custom-panel-calibration { margin-bottom: 8px; }
+.custom-panel-calib-manual-field, .custom-panel-calib-measurement-field { margin-top: 6px; }
+.custom-panel-calib-manual-field input, .custom-panel-calib-measurement-field select {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+.custom-panel-status { margin-top: 8px !important; }
+#add-custom-panel-btn { margin-top: 4px; }
+#add-custom-panel-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.plan-cta { width: 100%; display: block; text-align: center; }
+
+/* round11: カスタムパーツの実寸(cm)予告表示。
+   通常は控えめな色、寸法の上限/下限に触れたときだけ error-text で目立たせる。 */
+.custom-panel-size-preview {
+  margin-top: 8px !important;
+  font-weight: 600;
+  color: #1e293b;
+}
+.custom-panel-size-preview.is-muted {
+  font-weight: 400;
+  color: var(--muted);
+}

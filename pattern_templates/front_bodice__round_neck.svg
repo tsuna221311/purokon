@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="45.5cm" height="58cm" viewBox="0 0 45.5 58.0">
+  <!-- 前身頃テンプレート(標準Mサイズ) ラウンドネック -->
+  <path
+    data-part="front_bodice"
+    data-variation="round_neck"
+    data-fit-x="side:0.000 shoulder:4.250 neck:15.892 cf:22.750 neck:29.608 shoulder:41.250 side:45.500"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 4.250 5.300 C 6.875 12.580, 3.125 18.950, 0.000 23.500 L 0 58.000 L 45.500 58.000 L 45.500 23.500 C 42.375 18.950, 38.625 12.580, 41.250 5.300 L 29.608 0.000 C 27.551 10.344, 17.949 10.344, 15.892 0.000 L 4.250 5.300 Z" />
+</svg>

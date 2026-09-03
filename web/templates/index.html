@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="PatternForgeは、採寸値とパーツ構成（またはデザインイラスト）から、縫い代・合印・布目線を含んだ「縫える型紙」をSVG/PDFで自動生成するサービスです。アカウント登録不要で今すぐ試せます。">
+<title>PatternForge — AI型紙生成支援システム</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  {% include "_flash.html" %}
+
+  <main class="container">
+    <div class="layout">
+      <!-- 入力フォーム -->
+      <section class="panel">
+        <form id="generate-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <h2>① 入力モード</h2>
+          <div class="mode-row">
+            <label>
+              <input type="radio" name="mode" value="manual" checked>
+              手動でパーツを選ぶ（推奨・APIキー不要）
+            </label>
+            <label>
+              <input type="radio" name="mode" value="illustration">
+              イラストからAI判定（実験的）
+            </label>
+            <label>
+              <input type="radio" name="mode" value="multi_size">
+              複数サイズを一括生成（サイズ展開）
+            </label>
+          </div>
+
+          <div id="multi-size-section" class="field-box hidden">
+            <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:8px;">
+              生成するサイズ（下の採寸値を「M」相当として、サイズごとに機械的に増減させます）
+            </label>
+            <div class="checkbox-row">
+              {% for s in standard_sizes %}
+              <label><input type="checkbox" name="sizes" value="{{ s }}" {{ "checked" if s == "M" }}> {{ s }}</label>
+              {% endfor %}
+            </div>
+            <p class="hint">
+              既定では、バスト・ウエスト・ヒップは4cm刻み、肩幅・袖丈は1cm刻み、
+              身長は変えずに前後のサイズを算出します。実際のブランド・アイテム
+              ごとのグレーディングルールとは異なる簡略化した目安値であることに
+              ご注意ください。各サイズは個別にSVG/PDF/DXFを生成し、まとめた
+              ZIPも1つ提供します。
+            </p>
+            <details class="custom-grade-details">
+              <summary style="font-size:0.85rem; font-weight:600; cursor:pointer;">
+                カスタムグレーディングルールを使う（任意・自社のルールが分かる場合）
+              </summary>
+              <p class="hint">
+                自社・当該アイテム固有のグレーディングルール（号数1段階あたりの
+                増減量、単位cm）が分かっている場合は入力してください。空欄の
+                項目は既定値のまま使われます（一部の項目だけ上書きできます）。
+              </p>
+              <div class="custom-grade-grid">
+                <label>バスト<input type="number" step="0.1" name="grade_bust" placeholder="4.0"></label>
+                <label>ウエスト<input type="number" step="0.1" name="grade_waist" placeholder="4.0"></label>
+                <label>ヒップ<input type="number" step="0.1" name="grade_hip" placeholder="4.0"></label>
+                <label>身長<input type="number" step="0.1" name="grade_height" placeholder="0.0"></label>
+                <label>袖丈<input type="number" step="0.1" name="grade_sleeve_length" placeholder="1.0"></label>
+                <label>肩幅<input type="number" step="0.1" name="grade_shoulder_width" placeholder="1.0"></label>
+              </div>
+            </details>
+          </div>
+
+          <div id="illustration-section" class="field-box hidden">
+            <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:8px;">
+              衣装イラスト（背景が単色に近い画像を推奨）
+            </label>
+            <input type="file" name="illustration" accept="image/*">
+            <p class="hint">
+              人が着用した写真ではなく、服だけが写った画像（平置き・ハンガー・
+              マネキン等）でお試しください。人物込みの写真は輪郭全体が服として
+              誤認識され、パーツの位置がずれやすくなります。1枚の画像に複数の
+              服がある場合は、最も大きく写っている1点のみが認識されます。
+            </p>
+            <p class="hint">ANTHROPIC_API_KEY が未設定の場合は簡易判定（モック）で動作します。</p>
+          </div>
+
+          <h2>② 採寸値 <span class="muted-text">(単位: cm)</span></h2>
+
+          {% if current_user %}
+          <div class="field-box" id="profile-box">
+            <div class="field {{ 'hidden' if not profiles }}" style="margin-bottom:10px;" id="profile-select-field">
+              <label for="profile-select">保存済みプロフィールから読み込む</label>
+              <select id="profile-select">
+                <option value="">（選択してください）</option>
+                {% for p in profiles %}
+                <option value="{{ p.id }}"
+                  data-bust="{{ p.bust }}" data-waist="{{ p.waist }}" data-hip="{{ p.hip }}"
+                  data-height="{{ p.height }}" data-sleeve_length="{{ p.sleeve_length }}"
+                  data-shoulder_width="{{ p.shoulder_width }}">
+                  {{ p.name }}
+                </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="profile-save-row">
+              <label for="profile-name-input" class="visually-hidden">プロフィール名</label>
+              <input type="text" id="profile-name-input" placeholder="プロフィール名（例: 田中様、母）" maxlength="50">
+              <button type="button" id="profile-save-btn" class="btn-outline">この採寸値を保存</button>
+            </div>
+            <p class="hint" id="profile-save-message" style="margin:6px 0 0;"></p>
+          </div>
+          {% else %}
+          <p class="hint" style="margin-bottom:10px;">
+            <a href="{{ url_for('login') }}">ログイン</a>すると、採寸値を名前を付けて保存し、次回から呼び出せます
+            （複数の顧客・家族分の管理に便利です）。
+          </p>
+          {% endif %}
+
+          <div class="grid-measurements">
+            {% for field, label, default in [
+                ('bust','バスト',84), ('waist','ウエスト',68), ('hip','ヒップ',92),
+                ('height','身長',160), ('sleeve_length','袖丈',54), ('shoulder_width','肩幅',37)] %}
+            <div class="field">
+              <label for="field-{{ field }}">{{ label }}</label>
+              <input type="number" step="0.1" name="{{ field }}" id="field-{{ field }}" value="{{ default }}" required>
+            </div>
+            {% endfor %}
+          </div>
+
+          <div id="manual-section">
+            <h2>③ パーツ構成</h2>
+            <div class="grid-parts">
+              <div class="field">
+                <label for="field-neckline">ネックライン</label>
+                <select name="neckline" id="field-neckline">
+                  {% for n in necklines %}<option value="{{ n }}">{{ n|style_label }}</option>{% endfor %}
+                </select>
+              </div>
+              <div class="field">
+                <label for="field-sleeve-style">袖の形（なし可）</label>
+                <select name="sleeve_style" id="field-sleeve-style">
+                  {% for s in sleeve_styles %}<option value="{{ s }}">{{ s|style_label }}</option>{% endfor %}
+                  <option value="">なし（ノースリーブ）</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="field-skirt-style">スカートの形（なし可）</label>
+                <select name="skirt_style" id="field-skirt-style">
+                  {% for s in skirt_styles %}<option value="{{ s }}">{{ s|style_label }}</option>{% endfor %}
+                  <option value="">なし</option>
+                </select>
+              </div>
+            </div>
+            <div class="checkbox-row">
+              <label><input type="checkbox" name="front_zip"> 前開きファスナー</label>
+            </div>
+            <div class="checkbox-row option-with-style">
+              <label><input type="checkbox" name="include_pants" id="include-pants-input"> パンツを含める</label>
+              <select name="pants_style" id="field-pants-style" disabled>
+                <option value="">標準</option>
+                {% for s in pants_styles %}<option value="{{ s }}">{{ s|style_label }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="checkbox-row option-with-style">
+              <label><input type="checkbox" name="include_collar" id="include-collar-input"> 衿を含める</label>
+              <select name="collar_style" id="field-collar-style" disabled>
+                <option value="">標準（スタンドカラー）</option>
+                {% for s in collar_styles %}<option value="{{ s }}">{{ s|style_label }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="checkbox-row option-with-style">
+              <label id="cuffs-label"><input type="checkbox" name="include_cuffs" id="include-cuffs-input"> カフスを含める</label>
+              <select name="cuffs_style" id="field-cuffs-style" disabled>
+                <option value="">標準</option>
+                {% for s in cuffs_styles %}<option value="{{ s }}">{{ s|style_label }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="checkbox-row option-with-style">
+              <label><input type="checkbox" name="include_waistband" id="include-waistband-input"> ウエストバンドを含める</label>
+              <select name="waistband_style" id="field-waistband-style" disabled>
+                <option value="">標準</option>
+                {% for s in waistband_styles %}<option value="{{ s }}">{{ s|style_label }}</option>{% endfor %}
+              </select>
+            </div>
+            <p class="hint" style="margin-top:8px;">
+              ※「前開きファスナー」は中心前で実際に左右2枚に裁ち割りし、見返し(裏側の
+              折り返し布)分を加えた構造です。バストが標準より大きい場合、左右それぞれの
+              パネルの外側の脇線に脇ダーツが自動で入ります(中心前の見返し側には入りません)。
+              ウエストダーツは前パネルには自動追加されません(後身頃には引き続き入ります)。
+              前開き対応のネックラインはタートルネックを除く5種
+              （ラウンドネック・Vネック・スクエアネック・ボートネック・
+              スウィートハートネック）です。
+              カフスは袖を選んでいる場合のみ追加できます（袖なしでは指定できません）。
+            </p>
+          </div>
+
+          <div id="custom-panel-section">
+            <h2>④ カスタムパーツ（自由形状・任意、round10で追加）</h2>
+            <div class="field-box">
+              <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:6px;">
+                本体パーツ（上の「③ パーツ構成」の内容）
+              </label>
+              <select name="include_body_garment" id="field-include-body-garment">
+                <option value="1">含める（通常の服に、下のカスタムパーツを追加する）</option>
+                <option value="0">含めない（カスタムパーツだけを生成する）</option>
+              </select>
+              <p class="hint">
+                アニメ画像のコスプレ衣装や舞台衣装のラフイラストのように、定型の
+                ネックライン・袖・スカート等に当てはまらない形状（マント・翼・
+                肩当て・胸当て等の装甲プレート・小道具など）は、下の
+                「カスタムパーツを追加」から画像やクリックで輪郭を取り込み、
+                実寸(cm)に校正して型紙化できます。通常の服と組み合わせる場合は
+                「含める」のまま、小道具だけを作りたい場合は「含めない」にしてください。
+              </p>
+              <p class="hint" style="color:#92400e;">
+                ⚠ 正直な限界: ここで取り込む輪郭は、画像に写っている見た目の
+                シルエットをそのまま拡大縮小しただけの形です。実際の縫製では、
+                身頃・スカートのように体に沿ってドレープする部分の型紙は、
+                見た目の輪郭とは異なる形状（ゆとり・ダーツ等を織り込んだ形）を
+                しています。この機能が正直に実力を発揮できるのは、マント・翼・
+                EVAフォーム装甲プレートのような<strong>体に沿わない平面的なパーツ</strong>
+                です（実際のコスプレ制作で使われる「参考画像を印刷し、実寸に
+                拡大縮小してから輪郭通りに切り出す」手法をそのままコード化した
+                ものに近いイメージです）。校正は参照線1本の実寸を基準にした一様な
+                拡大縮小のため、パースのある(斜めから描かれた)画像では実寸とズレが
+                生じます。
+              </p>
+            </div>
+
+            <div id="custom-panel-list"></div>
+
+            <button type="button" id="add-custom-panel-btn" class="btn-outline">＋ カスタムパーツを追加</button>
+            <input type="hidden" name="custom_panels_json" id="custom-panels-json-input" value="[]">
+          </div>
+
+          <h2><span id="fabric-step-number">⑤</span> 生地の配置設定</h2>
+          <div class="field-box">
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.85rem; font-weight:600;">
+              <input type="checkbox" name="allow_rotation">
+              非方向性の生地を使う（ニット・無地など。90度回転を許可して布ロスをさらに減らす）
+            </label>
+            <p class="hint">
+              既定はオフ（布目安全モード）。全パーツの布目線を生地の縦地に揃えて配置します。
+              オンにすると布ロスは減りますが、回転したパーツは生地の縦地からズレる場合があります。
+              先染めチェック・ストライプ・起毛など方向性のある生地では使わないでください。
+            </p>
+          </div>
+
+          <h2><span id="seam-step-number">⑥</span> 縫い代（任意）</h2>
+          <div class="field-box">
+            <div class="grid-measurements">
+              <div class="field">
+                <label for="field-seam-allowance">縫い代 (cm)</label>
+                <input type="number" step="0.1" min="0.3" max="3.0"
+                       name="seam_allowance_cm" id="field-seam-allowance" placeholder="1.0（既定）">
+              </div>
+              <div class="field">
+                <label for="field-hem-seam-allowance">裾の縫い代 (cm、空欄で上と同じ)</label>
+                <input type="number" step="0.1" min="0.3" max="8.0"
+                       name="hem_seam_allowance_cm" id="field-hem-seam-allowance" placeholder="未指定">
+              </div>
+            </div>
+            <p class="hint">
+              両方とも空欄なら従来通り全辺1.0cmで統一されます。「裾の縫い代」だけ別に
+              指定すると、各パーツの最も下（y座標最大）にある水平な辺だけをその幅で
+              裁断します（三つ折りなど、裾だけ折り返し分を多く取りたい場合向け）。
+              ウエストダーツを追加した後は、裾のうちダーツのV字の脚部分（斜めの辺）は
+              水平ではないため裾扱いにならず、通常の縫い代幅のままになります。
+            </p>
+          </div>
+
+          <button type="submit" class="primary">型紙を生成する</button>
+          <p class="hint usage-note">
+            本日の生成回数:
+            <span id="usage-note-text">
+              {{ usage.used_today }} / {{ usage.daily_limit if usage.daily_limit is not none else '無制限' }}
+              （{{ 'Pro' if usage.plan == 'pro' else ('Free会員' if usage.plan == 'free' else '未ログイン') }}）
+            </span>
+            {% if not current_user %}
+              — <a href="{{ url_for('signup') }}">無料登録</a>で上限が増えます
+            {% endif %}
+          </p>
+          <p id="form-error" class="error-text hidden"></p>
+        </form>
+      </section>
+
+      <!-- 結果パネル -->
+      <section class="panel">
+        <h2>生成結果</h2>
+        <div id="result-placeholder" class="muted-text">
+          左のフォームを入力して「型紙を生成する」を押してください。
+        </div>
+        <div id="result-loading" class="loading-box hidden">
+          <span class="spinner" aria-hidden="true"></span>生成中です…
+        </div>
+        <div id="result-content" class="hidden">
+          <div class="stat-grid">
+            <div class="stat-tile"><div class="value" id="stat-parts">-</div><div class="label">パーツ数</div></div>
+            <div class="stat-tile"><div class="value" id="stat-waste">-</div><div class="label">布ロス率</div></div>
+            <div class="stat-tile"><div class="value" id="stat-length">-</div><div class="label">使用生地丈(cm)</div></div>
+            <div class="stat-tile"><div class="value" id="stat-width">-</div><div class="label">生地幅(cm)</div></div>
+            <div class="stat-tile"><div class="value" id="stat-time">-</div><div class="label">処理時間(秒)</div></div>
+            <div class="stat-tile"><div class="value" id="stat-unplaced">-</div><div class="label">配置不能パーツ</div></div>
+          </div>
+
+          <div class="field-box">
+            <h3 style="margin:0 0 10px;">詰め合わせ効果（素朴に縦積みした場合との比較）</h3>
+            <div class="compare-row">
+              <div class="compare-label">詰めない場合</div>
+              <div class="compare-track"><div id="bar-naive" class="compare-fill naive"></div></div>
+              <div class="compare-value" id="compare-naive-value">-</div>
+            </div>
+            <div class="compare-row">
+              <div class="compare-label">実際の配置</div>
+              <div class="compare-track"><div id="bar-actual" class="compare-fill actual"></div></div>
+              <div class="compare-value" id="compare-actual-value">-</div>
+            </div>
+            <p class="hint" style="margin-top:8px;">
+              「詰めない場合」は各パーツを1枚ずつ縦に積んだだけの参考値で、実際の裁断現場の
+              標準的な配置手法と比較したものではありません。バーの長さは使用生地丈(cm)に対応します。
+            </p>
+          </div>
+
+          <div class="preview-frame">
+            <img id="preview-img" alt="生成された型紙のプレビュー">
+          </div>
+
+          <div class="download-row">
+            <a id="download-svg" href="#" target="_blank" class="btn-outline">SVGを開く</a>
+            <a id="download-pdf" href="#" class="btn-solid">A4分割PDFをダウンロード</a>
+            <a id="download-dxf" href="#" class="btn-outline">DXFをダウンロード（業務用裁断機・CAD向け）</a>
+          </div>
+
+          <div id="rotation-warning" class="field-box hidden" style="border-color:#d97706;">
+            <p class="hint" style="margin:0; color:#92400e;">
+              ⚠ 一部のパーツが90度回転して配置されています。布目線が生地の縦地からズレる可能性があるため、
+              方向性のある生地（先染めチェック・ストライプ等）を使う場合は配置を確認してください。
+            </p>
+          </div>
+
+          <div id="unplaced-warning" class="field-box hidden" style="border-color:#dc2626; background:#fef2f2;">
+            <p class="hint" style="margin:0 0 6px; color:#991b1b; font-weight:700;">
+              ⚠ 型紙が不完全です。一部のパーツが生地に収まらず含まれていません。
+            </p>
+            <ul id="unplaced-warning-list" style="margin:0; padding-left:1.2em; color:#991b1b;"></ul>
+          </div>
+
+          <div id="measurement-clamp-warning" class="field-box hidden" style="border-color:#dc2626;">
+            <p class="hint" style="margin:0 0 6px; color:#991b1b; font-weight:600;">
+              ⚠ 入力した採寸値の一部が、テンプレートを正確に変形できる範囲を超えています。
+            </p>
+            <ul id="measurement-clamp-warning-list" style="margin:0; padding-left:1.2em; color:#991b1b;"></ul>
+          </div>
+
+          <div id="dart-note" class="field-box hidden" style="border-color:#2563eb;">
+            <p class="hint" style="margin:0; color:#1d4ed8;">
+              ✓ 体型に応じて、ダーツを合計<span id="dart-count">0</span>本追加しました
+              （身頃のウエスト/脇ダーツ、タイトスカートのウエストダーツなど、V字の
+              切り込みが目印です）。線形の比例変形だけでは表現できない体型差を補正しています。
+            </p>
+          </div>
+
+          <div id="compatibility-warning" class="field-box hidden" style="border-color:#d97706; background:#fffbeb;">
+            <p class="hint" style="margin:0 0 6px; color:#92400e; font-weight:600;">
+              ⚠ パーツ間の縫い合わせ長さに、無視できない差があります(round6で追加したチェック)。
+            </p>
+            <ul id="compatibility-warning-list" style="margin:0; padding-left:1.2em; color:#92400e;"></ul>
+          </div>
+
+          <div class="field-box">
+            <h3 style="margin:0 0 10px;">生成されたパーツ一覧</h3>
+            <div id="parts-chip-list" class="chip-list"></div>
+          </div>
+
+          <div class="field-box ai-badge-box">
+            <span id="ai-badge" class="ai-badge">AI</span>
+            <div>
+              <h3 style="margin:0 0 4px;">AIはどこまで関与したか</h3>
+              <p class="hint" id="ai-contribution-note" style="margin:0;"></p>
+            </div>
+          </div>
+
+          <div id="classification-section" class="hidden"
+               data-variation-labels='{{ variation_labels_json }}'
+               data-part-type-labels='{{ part_type_labels_json }}'>
+            <h3>AIパーツ判定ログ</h3>
+            <table class="log-table">
+              <thead>
+                <tr><th>パーツ種</th><th>バリエーション</th><th>確信度</th><th>判定方式</th></tr>
+              </thead>
+              <tbody id="classification-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- サイズ展開モード専用の結果表示。通常モードとは応答の形が異なる
+             (複数PipelineResultの束)ため、#result-contentとは別のマークアップで
+             表示する。 -->
+        <div id="multi-size-result-content" class="hidden">
+          <div class="field-box">
+            <h3 style="margin:0 0 10px;">生成したサイズ</h3>
+            <p class="hint" id="multi-size-summary" style="margin:0 0 10px;"></p>
+            <p class="hint hidden" id="custom-grade-note" style="margin:0 0 10px;"></p>
+            <a id="download-zip" href="#" class="btn-solid">全サイズをまとめてZIPダウンロード</a>
+          </div>
+
+          <div id="size-consistency-warning" class="field-box hidden" style="border-color:#d97706; background:#fffbeb;">
+            <p class="hint" style="margin:0 0 6px; color:#92400e; font-weight:600;">
+              ⚠ サイズ間でダーツ本数の変化が不連続になっている箇所があります(round6で追加したチェック)。
+            </p>
+            <ul id="size-consistency-warning-list" style="margin:0; padding-left:1.2em; color:#92400e;"></ul>
+          </div>
+
+          <div id="grading-precision-note" class="field-box hidden" style="border-color:#2563eb;">
+            <p class="hint" style="margin:0 0 6px; color:#1d4ed8; font-weight:600;">
+              ℹ グレーディング(号数展開)の刻み幅について、参考情報があります(round6で追加)。
+            </p>
+            <ul id="grading-precision-note-list" style="margin:0; padding-left:1.2em; color:#1d4ed8;"></ul>
+          </div>
+
+          <div id="multi-size-list"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  {% include "_footer.html" %}
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

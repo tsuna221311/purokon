@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32cm" height="38cm" viewBox="0 0 32 38">
+  <!-- 袖テンプレート(標準Mサイズ) 7分袖。直線袖(丈52cm)と袖山を共通にしたまま丈38cm(約7.3分)で打ち切り、袖口をわずかに絞った。 -->
+  <path
+    data-part="sleeve"
+    data-variation="three_quarter"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 0 12 C 4.8 3, 11.2 0, 16 0 C 20.8 0, 27.2 3, 32 12 L 28.5 38 L 3.5 38 Z" />
+</svg>

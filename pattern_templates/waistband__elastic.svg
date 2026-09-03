@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="70cm" height="10cm" viewBox="0 0 70 10">
+  <!-- ウエストバンドテンプレート(標準Mサイズ) 伸縮(ゴム)ウエストバンド。上端(ウエスト側の縫い付け線)は直線のまま、下端を波状の曲線にしてゴム通しによる縮み(シャーリング)の見た目を簡易的に表現した。実際の伸縮率・ゴム分量の計算はしていない、見た目のみの近似。 -->
+  <path
+    data-part="waistband"
+    data-variation="elastic"
+    data-seam-edge="top"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 0 0 L 70 0 L 70 8 C 65 6, 60 10, 55 8 C 50 6, 45 10, 40 8 C 35 6, 30 10, 25 8 C 20 6, 15 10, 10 8 C 5 6, 0 10, 0 8 Z" />
+</svg>

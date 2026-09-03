@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40cm" height="6cm" viewBox="0 0 40 6">
+  <!-- 衿テンプレート(標準Mサイズ) スタンドカラー用の帯状パーツ。 -->
+  <path
+    data-part="collar"
+    data-variation=""
+    data-seam-edge="bottom"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 2 0 C 0 0, 0 2, 0 3 L 0 6 L 40 6 L 40 3 C 40 2, 40 0, 38 0 Z" />
+</svg>

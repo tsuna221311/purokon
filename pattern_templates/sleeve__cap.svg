@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32cm" height="17cm" viewBox="0 0 32 17">
+  <!-- 袖テンプレート(標準Mサイズ) キャップスリーブ。肩先を覆う程度のごく短い袖(丈17cm)で、上下とも緩いカーブの三日月型。脇の直線部分は無い。袖山カーブは他の袖と共通のため、袖ぐりにはそのまま付く。 -->
+  <path
+    data-part="sleeve"
+    data-variation="cap"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 0 12 C 4.8 3, 11.2 0, 16 0 C 20.8 0, 27.2 3, 32 12 C 27.2 15, 20.8 17, 16 17 C 11.2 17, 4.8 15, 0 12 Z" />
+</svg>

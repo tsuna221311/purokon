@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="34.85cm" height="96cm" viewBox="0 0 34.85 96.0">
+  <!-- パンツ後ろパーツテンプレート(標準Mサイズ・片脚、variation=flare)。ウエスト側17cm・ヒップ側23.75cm(4枚でウエスト68cm・ヒップ95cm)、股上25cm、総丈96cm、裾は脚まわり60cm。後ろは股ぐりの出しを前より大きく取り(9.1cm)、中心線をわずかに外へ膨らませて臀部のゆとりを表現している。 -->
+  <path
+    data-part="back_pants"
+    data-variation="flare"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 9.10 0 L 26.10 0 C 27.30 8.10, 32.85 12.60, 32.85 18.00 L 35.98 96.00 L 5.98 96.00 L 0 25.00 C 3.18 20.50, 9.10 22.00, 9.10 18.00 C 7.50 10.80, 7.50 5.40, 9.10 0 Z" />
+</svg>

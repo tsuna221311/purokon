@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="31.45cm" height="38cm" viewBox="0 0 31.45 38.0">
+  <!-- パンツ前パーツテンプレート(標準Mサイズ・片脚、variation=shorts)。ウエスト側17cm・ヒップ側23.75cm(4枚でウエスト68cm・ヒップ95cm)、股上25cm、総丈38cm、裾は脚まわり50cm。前は股ぐりの出しを小さく(5.7cm)、中心線は直線。 -->
+  <path
+    data-part="front_pants"
+    data-variation="shorts"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 5.70 0 L 22.70 0 C 23.90 8.10, 29.45 12.60, 29.45 18.00 L 30.07 38.00 L 5.07 38.00 L 0 25.00 C 1.99 20.50, 5.70 22.00, 5.70 18.00 L 5.70 0 Z" />
+</svg>

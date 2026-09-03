@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="75.75cm" height="60cm" viewBox="0 0 75.75 60.0">
+  <!-- スカートテンプレート(標準Mサイズ・半身) マーメイド。ウエスト34cm→ヒップ47.5cm→膝下(裾から15cm手前)46cmまで細身にフィットし、そこから裾88cmへ一気に広がる。tightと同様フィットしたデザインのため、apply_skirt_waist_dartの対象に含める(SKIRT_DART_ELIGIBLE_VARIATIONS参照)。 -->
+  <path
+    data-part="skirt"
+    data-variation="mermaid"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 10.75 0 L 44.75 0 C 46.75 8.1, 51.5 13.5, 51.5 18 L 50.75 45 L 71.75 60 L -16.25 60 L 4.75 45 L 4 18 C 4 13.5, 8.75 8.1, 10.75 0 Z" />
+</svg>

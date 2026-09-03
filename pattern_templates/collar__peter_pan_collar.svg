@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40cm" height="10cm" viewBox="0 0 40 10">
+  <!-- 衿テンプレート(標準Mサイズ) ピーターパンカラー(丸く平らに寝かせる、standardより幅広の襟)。 -->
+  <path
+    data-part="collar"
+    data-variation="peter_pan_collar"
+    data-seam-edge="top"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 2 0 C 0 0, 0 4, 0 5 C 0 8, 4 10, 10 10 L 30 10 C 36 10, 40 8, 40 5 C 40 4, 40 0, 38 0 Z" />
+</svg>

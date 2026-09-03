@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="45.5cm" height="62cm" viewBox="0 0 45.5 62.0">
+  <!-- 前身頃テンプレート(標準Mサイズ) タートルネック(首ぐりを水平に閉じ、高さ4cmの台襟を立てた形) -->
+  <path
+    data-part="front_bodice"
+    data-variation="turtle_neck"
+    data-fit-x="side:0.000 shoulder:4.250 neck:15.892 cf:22.750 neck:29.608 shoulder:41.250 side:45.500"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 4.250 9.300 C 6.875 16.580, 3.125 22.950, 0.000 27.500 L 0 62.000 L 45.500 62.000 L 45.500 27.500 C 42.375 22.950, 38.625 16.580, 41.250 9.300 L 29.608 4.000 L 29.608 0.000 L 15.892 0.000 L 15.892 4.000 L 4.250 9.300 Z" />
+</svg>

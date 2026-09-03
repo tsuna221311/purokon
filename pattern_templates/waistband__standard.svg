@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="70cm" height="8cm" viewBox="0 0 70 8">
+  <!-- ウエストバンドテンプレート(標準Mサイズ) スカート/パンツ共通の帯状パーツ。 -->
+  <path
+    data-part="waistband"
+    data-variation=""
+    data-seam-edge="top"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 0 0 L 70 0 L 70 8 L 0 8 Z" />
+</svg>

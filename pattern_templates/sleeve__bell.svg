@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="46cm" height="52cm" viewBox="0 0 46 52">
+  <!-- 袖テンプレート(標準Mサイズ) ベルスリーブ。袖山は直線袖と同じ(幅32cm)だが、袖口に向かって大きく末広がりに広がる(裾幅46cm)。実際のドレープ(垂れ具合)は再現しておらず、末広がりの輪郭のみの近似。 -->
+  <path
+    data-part="sleeve"
+    data-variation="bell"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 7 12 C 11.8 3, 18.2 0, 23 0 C 27.8 0, 34.2 3, 39 12 L 46 52 L 0 52 Z" />
+</svg>

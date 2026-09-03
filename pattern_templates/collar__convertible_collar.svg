@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40cm" height="9cm" viewBox="0 0 40 9">
+  <!-- 衿テンプレート(標準Mサイズ) コンバーチブルカラー(round9追加)。シャツの開襟カラーのように、左右の襟先が角(ノッチ)状に大きく尖って外側へ開く形状で、standard(スタンドカラー)とは明確に異なる輪郭にしている。shirt_collarより衿の高さ(9cm)があり、peter_pan_collarのような丸みではなく角の効いた直線的な折り返しで区別した。 -->
+  <path
+    data-part="collar"
+    data-variation="convertible_collar"
+    data-seam-edge="bottom"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 6 0 C 2 0, 0 3, 0 4 L 6 9 L 34 9 L 40 4 C 40 3, 38 0, 34 0 Z" />
+</svg>

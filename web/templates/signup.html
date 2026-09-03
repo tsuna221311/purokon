@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="PatternForgeに無料登録して、生成履歴の確認や採寸プロフィールの保存など、より便利な機能を利用しましょう。">
+<title>新規登録 — PatternForge</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  {% include "_flash.html" %}
+
+  <main class="container narrow">
+    <section class="panel">
+      <h2>新規登録（無料）</h2>
+      <p class="hint" style="margin:0 0 16px;">
+        登録すると、まず即ログイン状態になり型紙生成を利用できます。確認メールも別途お送りしますので、
+        マイページの案内に沿って確認手続きを行ってください。
+      </p>
+      <form method="post" action="{{ url_for('signup_submit') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="field">
+          <label for="signup-email">メールアドレス</label>
+          <input type="email" id="signup-email" name="email" value="{{ email or '' }}" autocomplete="email" required>
+        </div>
+        <div class="field">
+          <label for="signup-password">パスワード（8文字以上）</label>
+          <input type="password" id="signup-password" name="password" minlength="8" autocomplete="new-password" required>
+        </div>
+        <button type="submit" class="primary">登録する</button>
+        <p class="hint" style="margin-top:10px; text-align:center;">
+          登録することで、<a href="{{ url_for('terms') }}">利用規約</a>および
+          <a href="{{ url_for('privacy') }}">プライバシーポリシー</a>に同意したものとみなされます。
+        </p>
+      </form>
+      <p class="hint" style="margin-top:14px;">
+        すでにアカウントをお持ちの方は <a href="{{ url_for('login') }}">ログイン</a>
+      </p>
+    </section>
+  </main>
+
+  {% include "_footer.html" %}
+  <script src="{{ url_for('static', filename='password_toggle.js') }}"></script>
+</body>
+</html>

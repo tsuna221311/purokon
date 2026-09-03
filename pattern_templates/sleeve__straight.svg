@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32cm" height="52cm" viewBox="0 0 32 52">
+  <!-- 袖テンプレート(標準Mサイズ) 直線袖。袖山カーブ42.0cm(袖ぐり39.7cm+いせ込み2.3cm)、袖幅32cm、袖丈52cm。袖口に向けてわずかに絞る。 -->
+  <path
+    data-part="sleeve"
+    data-variation="straight"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 0 12 C 4.8 3, 11.2 0, 16 0 C 20.8 0, 27.2 3, 32 12 L 28 52 L 4 52 Z" />
+</svg>
