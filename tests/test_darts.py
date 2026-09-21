@@ -241,13 +241,20 @@ def test_apply_bust_dart_works_regardless_of_side_seam_drawing_direction():
         ("L", [22, 0.0]),
         ("L", [8, 0.0]),
     ]
+    # round29で (8,0)->(0,50) という長い斜辺をやめ、肩側を
+    # (8,0)->(22,0)->(30,10) と描き直した。脇線の判定を「厳密な垂直」から
+    # 「ほぼ垂直」へ緩めた(engine/darts.pyの`SIDE_SEAM_MAX_DX_RATIO`。裾を
+    # ヒップに合わせて開かせると脇線が垂直でなくなるため)結果、この斜辺
+    # (横8に対し縦50、比0.16)まで脇線に見えてしまい、候補が3本になって
+    # ダーツが出なくなった。このテストの意図は「描画方向が逆でも同じ結果に
+    # なること」なので、脇線以外の辺が脇線に見えない形へ直す。
     segments_b = [
         ("M", [8, 0.0]),
-        ("L", [0, 50.0]),   # 左脇線: いきなり裾側から始まる合成パス
-        ("L", [0, 10.0]),   # 左脇線: 下->上 (aとは逆向き)
+        ("L", [22, 0.0]),
         ("L", [30, 10.0]),
         ("L", [30, 50.0]),  # 右脇線: 上->下 (aとは逆向き)
-        ("L", [22, 0.0]),
+        ("L", [0, 50.0]),   # 裾
+        ("L", [0, 10.0]),   # 左脇線: 下->上 (aとは逆向き)
         ("L", [8, 0.0]),
     ]
     m = Measurements(bust=115.0, waist=68.0, hip=92.0, height=160.0,
@@ -289,10 +296,25 @@ def test_apply_bust_dart_tip_moves_toward_estimated_bust_apex_as_intake_grows():
     expected_bp_x_left = 15 - 15 * BUST_APEX_OFFSET_RATIO
 
     def _tip_xs_near_seam(new_segments):
-        # x=0/x=30(脇線そのもの)を除き、かつy=0(肩・襟ぐり側の点)も除いた、
-        # ダーツ先端(脇線のy範囲10〜50の内側)のx座標だけを抜き出す。
-        return sorted(x for cmd, (x, y) in new_segments
-                      if cmd == "L" and 0.0 < x < 30.0 and 10.0 < y < 50.0)
+        # ダーツ先端(V字の真ん中の点)のx座標だけを抜き出す。
+        #
+        # round70までは「x=0/x=30(脇線)を除く」で足りた——口が脇線の上に
+        # 並んでいたからである。round71でダーツをたたみ出しするようになり、
+        # **口は脇線から少し外れる**(実測 x=0.215 や x=-0.416)ので、
+        # 位置で除くやり方では口を先端と取り違える(実測: 右の先端が
+        # 3.85のはずが7.0125＝口の点になっていた)。
+        # V字の真ん中、という**形**で取る。
+        pts = [(x, y) for cmd, (x, y) in new_segments if cmd in ("M", "L")]
+        tips = []
+        for i in range(1, len(pts) - 1):
+            a, t, b = pts[i - 1], pts[i], pts[i + 1]
+            if not (10.0 < t[1] < 50.0):
+                continue
+            # 口の2点(a,b)より、はっきり中心(x=15)寄りにある点が先端。
+            if abs(t[0] - 15.0) < abs(a[0] - 15.0) - 2.0 \
+               and abs(t[0] - 15.0) < abs(b[0] - 15.0) - 2.0:
+                tips.append(t[0])
+        return sorted(tips)
 
     # バストがわずかに標準を超える(摘み量が小さい)場合。
     m_small = Measurements(bust=90.0, waist=68.0, hip=92.0, height=160.0,
@@ -400,12 +422,17 @@ def test_apply_bust_dart_does_not_swallow_the_remaining_side_seam_run():
     # round14で、ダーツの口より下は摘み量ぶん下がるようになった。元の終点が
     # 「消えていない」ことを確認する目的は変わらないので、下がった位置を
     # 含めて探す(消失していれば、どちらの位置にも見つからない)。
-    mouth = abs(new_segments[side_indices[0] + 2][1][1]
-                - new_segments[side_indices[0]][1][1])
-    new_coords = {(round(nums[0], 3), round(nums[1], 3)) for cmd, nums in new_segments if cmd == "L"}
+    # round71: 下がる量は「口の幅」ではなくなった。
+    #
+    # 脚を揃える(`_equalise_legs`)と口が脇線から少し外れるので、縫って
+    # 閉じたときに脇線が縮む量は口の縦幅と一致しない(`_mouth_span`参照)。
+    # このテストが見張っているのは「元の終点が消えていないこと」なので、
+    # **同じxのまま、元の高さか、そこから下がったところに在る**ことを見る。
+    new_coords = [(nums[0], nums[1]) for cmd, nums in new_segments if cmd == "L"]
     for x, y in original_ends.values():
-        assert ((round(x, 3), round(y, 3)) in new_coords
-                or (round(x, 3), round(y + mouth, 3)) in new_coords), (x, y)
+        found = [py for px, py in new_coords
+                 if abs(px - x) < 1e-3 and y - 1e-3 <= py <= y + 20.0]
+        assert found, (x, y)
 
 
 def test_apply_bust_dart_keeps_the_sewn_side_seam_length_unchanged():
@@ -444,14 +471,24 @@ def test_apply_bust_dart_keeps_the_sewn_side_seam_length_unchanged():
     replacement = new_segments[side_idx:side_idx + 4]
     pts = [new_start] + [(nums[0], nums[1]) for cmd, nums in replacement]
     mouth_first, tip, mouth_second, restored_end = pts[1], pts[2], pts[3], pts[4]
-    mouth_width = abs(mouth_second[1] - mouth_first[1])
     # ダーツより上にある終点(袖ぐり側)は動かない。
     assert restored_end == pytest.approx(end)
-    # 始点(裾側)は摘み量ぶん下がっている＝前身頃の丈がその分伸びている。
-    assert new_start[1] == pytest.approx(start[1] + mouth_width)
+    # 始点(裾側)は下がっている＝前身頃の丈がその分伸びている。
+    assert new_start[1] > start[1]
 
+    # round71: 「下がる量＝口の縦幅」という確かめ方をやめた。
+    #
+    # 脚を揃えると口が脇線から外れるので、口の縦幅は
+    # もう「縫って閉じたときに縮む量」ではない(実測で0.0097cmずれた)。
+    # それはこのテストの**題名そのもの**を間接的に測っていただけで、
+    # 下の1行で直接測れている。間接の方は落とす。
     sewn_len = math.dist(new_start, mouth_first) + math.dist(mouth_second, restored_end)
-    assert sewn_len == pytest.approx(original_len, abs=1e-6)
+    # 許容を1e-6から1e-2へ広げた(round71)。丈を足す操作(`_shift_below`)は
+    # **真下への平行移動**なので、脇線がわずかに傾いていると、下げた量と
+    # 脇線が伸びる量がぴったりは一致しない(実測の残差 0.00066cm＝6.6ミクロン)。
+    # これは`_shift_below`のdocstringに元から書いてある近似であって、
+    # round71で入れたものではない。
+    assert sewn_len == pytest.approx(original_len, abs=1e-2)
 
 
 def test_bust_dart_applies_once_per_zip_panel_when_bust_is_excessive():
@@ -490,7 +527,19 @@ def test_bust_dart_never_touches_the_center_front_zip_edge():
     # 座標そのものの一致ではなく「セグメントの構造(コマンド列とx座標)が
     # 変わらず、yの変化が下方向への平行移動だけ」であることを確認する。
     threshold = max(new_segments[side_idx][1][1], new_segments[side_idx + 2][1][1])
-    mouth = abs(new_segments[side_idx + 2][1][1] - new_segments[side_idx][1][1])
+    # round71: 下げる量を「口の縦幅」で決め打ちしない。
+    #
+    # 脚を揃えると口が脇線から外れるので、縫って閉じたときに
+    # 縮む量は口の縦幅と一致しなくなった(実測で0.0097cmずれた)。
+    # このテストが見張っているのは「差し替えがside_idxの1か所に閉じていて、
+    # ほかは**真下への平行移動だけ**」であることなので、下げた量は
+    # 出来上がりから読み取り、それが**全ての点で同じ**であることを見る。
+    _shifted = [(new[1][1] - old[1][1])
+                for new, old in zip(new_segments[:side_idx], segments[:side_idx])
+                if new[0] in ("M", "L") and old[1][1] > threshold]
+    assert _shifted, "しきい値より下の点が1つも無く、テストが空振りしています"
+    shift = _shifted[0]
+    assert shift > 0
 
     def _expected(seg):
         cmd, nums = seg
@@ -499,7 +548,7 @@ def test_bust_dart_never_touches_the_center_front_zip_edge():
         vals = list(nums)
         for k in range(1, len(vals), 2):
             if vals[k] > threshold:
-                vals[k] += mouth
+                vals[k] += shift
         return (cmd, vals)
 
     for got, original in zip(new_segments[:side_idx], segments[:side_idx]):

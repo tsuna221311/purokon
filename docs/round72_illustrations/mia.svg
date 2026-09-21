@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1500" viewBox="0 0 900 1500"><rect width="900" height="1500" fill="#ffffff"/>
+  <ellipse cx="450" cy="198.0" rx="60.84" ry="78.0" fill="#f6d9c4" stroke="#2b2430" stroke-width="3"/>
+  <path d="M382.92 194.1
+           C375.9 92.7 524.1 92.7 517.08 194.1
+           C504.6 147.3 395.4 147.3 382.92 194.1 Z"
+        fill="#4a3b52"/>
+  <path d="M382.92 190.2 L368.1 322.8 L407.1 291.6 Z" fill="#4a3b52"/>
+  <path d="M517.08 190.2 L531.9 322.8 L492.9 291.6 Z" fill="#4a3b52"/>
+  <rect x="430" y="260.4" width="40" height="77.60000000000002" fill="#f6d9c4" stroke="#2b2430" stroke-width="3"/>
+
+  <!-- パフ袖(丸くふくらんだ短い袖) -->
+  <ellipse cx="282" cy="382" rx="82" ry="70" fill="#e8ecf8" stroke="#2b2430" stroke-width="4"/>
+  <ellipse cx="618" cy="382" rx="82" ry="70" fill="#e8ecf8" stroke="#2b2430" stroke-width="4"/>
+  <!-- 腕 -->
+  <rect x="228" y="440" width="40" height="250" rx="19" fill="#f6d9c4" stroke="#2b2430" stroke-width="3"/>
+  <rect x="632" y="440" width="40" height="250" rx="19" fill="#f6d9c4" stroke="#2b2430" stroke-width="3"/>
+  <!-- 身頃(ウエストでくびれる) -->
+  <path d="M332 330
+           L568 330
+           C578 460 554 540 536 600
+           L364 600
+           C346 540 322 460 332 330 Z"
+        fill="#e8ecf8" stroke="#2b2430" stroke-width="4"/>
+  <!-- セーラー衿 -->
+  <path d="M332 330 L394 336 L450 416 L506 336 L568 330
+           L546 434 L354 434 Z"
+        fill="#5566aa" stroke="#2b2430" stroke-width="4"/>
+  <!-- フレアの短いスカート -->
+  <path d="M364 600
+           L536 600
+           L686 860
+           L214 860 Z"
+        fill="#5566aa" stroke="#2b2430" stroke-width="4"/>
+
+  <rect x="390" y="850" width="34" height="480" rx="16" fill="#f6d9c4" stroke="#2b2430" stroke-width="3"/>
+  <rect x="476" y="850" width="34" height="480" rx="16" fill="#f6d9c4" stroke="#2b2430" stroke-width="3"/>
+</svg>

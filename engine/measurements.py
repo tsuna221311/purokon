@@ -9,14 +9,44 @@ from dataclasses import dataclass, fields
 
 # 採寸として許容する範囲（cm）。パタンナー業務で現実的にありえる範囲の外側は
 # 入力ミス（単位違い・桁間違い）である可能性が高いため、早期に弾く。
+#
+# 【round42で下限を子どもまで広げた】round41までの下限は
+# 身長120 / 袖丈30 / 肩幅25 / バスト50 で、これは**成人女子だけを見た範囲**
+# だった。子ども服の型紙を引こうとすると、
+#   1歳(身長80・袖丈24)・4歳(身長102)・6歳(身長114)
+# はどれも入力の時点でエラーになり、**そもそも試せなかった**。
+# 参考寸法の出典: MAISON DE AS「採寸の仕方【男性・女性・子供】」
+# https://maisondeas.com/taking-measurements/
+# (1歳: 身長80・バスト50・ウエスト48・ヒップ50・肩幅24・袖丈24)
+#
+# 下限は「1歳児より一回り小さいところ」に置いてある。単位間違い(1.6mと
+# 入力する等)は依然として弾かれる。**どの原型に合うか**は範囲ではなく
+# 原型ごとの警告で伝える(engine/blocks.pyの`height_note`)——
+# 境目の体型は実在するので、入力を拒むのではなく選び直せるようにする。
 _VALID_RANGES = {
-    "bust": (50.0, 160.0),
-    "waist": (40.0, 150.0),
-    "hip": (50.0, 170.0),
-    "height": (120.0, 210.0),
-    "sleeve_length": (30.0, 90.0),
-    "shoulder_width": (25.0, 60.0),
+    "bust": (40.0, 160.0),
+    "waist": (35.0, 150.0),
+    "hip": (40.0, 170.0),
+    "height": (70.0, 210.0),
+    "sleeve_length": (15.0, 90.0),
+    "shoulder_width": (18.0, 60.0),
+    # round25で追加した任意項目(二の腕まわり)。指定された場合のみ検証する。
+    "upper_arm": (15.0, 60.0),
+    # round29で追加した任意項目。
+    # 乳間: 左右の乳頭の間隔。9号(バスト83)で18cm前後。
+    "bust_point_spacing": (10.0, 40.0),
+    # 乳下がり: 前中央で首の付け根からバストの一番高いところまで。
+    # ドレメ式の参考寸法で7号16.5cm〜17号21cm。
+    "bust_point_drop": (10.0, 40.0),
+    # round75で追加した任意項目(頭囲)。成人女性の平均57cm・男性58cmで、
+    # 帽子のサイズ展開が概ね54〜62cmなので、子どもから大きめまで入る幅。
+    "head_circumference": (40.0, 70.0),
 }
+
+
+#: 未指定(None)を許す任意の採寸項目(round25)。
+_OPTIONAL_FIELDS = frozenset({"upper_arm", "bust_point_spacing",
+                              "bust_point_drop", "head_circumference"})
 
 
 @dataclass(frozen=True)
@@ -29,10 +59,38 @@ class Measurements:
     height: float
     sleeve_length: float
     shoulder_width: float
+    #: 二の腕まわり(round25で追加した**任意**項目)。
+    #:
+    #: 指定すると袖幅がこの実測から決まる。未指定(None)なら従来どおり
+    #: 袖ぐりから相似で決まる(engine/scaling.pyの`scale_sleeve_to_cap_length`)。
+    #: 位置引数の並びを変えないよう末尾に置き、既定値をNoneにしてある
+    #: (既存の呼び出しを1つも書き換えずに済む)。
+    upper_arm: float | None = None
+    #: 乳間(round29で追加した**任意**項目)。左右の乳頭の間隔(cm)。
+    #:
+    #: 指定するとBP(バストポイント)の左右位置がこの実測から決まる。未指定
+    #: なら新文化式の推定式(胸幅/2 + 0.7)にフォールバックする
+    #: (engine/bodice_fit.pyの`bust_point_from_cf_cm`)。
+    bust_point_spacing: float | None = None
+    #: 乳下がり(round29で追加した**任意**項目)。前中央で首の付け根から
+    #: バストの一番高いところ(BP)までの長さ(cm)。
+    #:
+    #: 指定するとBPの**高さ**がこの実測から決まる。未指定なら原型と同じく
+    #: 「BPはバストライン(袖ぐり底の線)の上にある」とみなす
+    #: (engine/bodice_fit.pyの`bust_point_y_cm`)。
+    bust_point_drop: float | None = None
+    #: 頭囲(round75で追加した**任意**項目)。眉間から後頭部の一番出ている
+    #: ところまでを一周した長さ(cm)。
+    #:
+    #: フードの大きさがこの実測から決まる(engine/hood.py)。未指定なら
+    #: 成人女性の平均57cmで引き、**その旨を利用者へ開示する**。
+    head_circumference: float | None = None
 
     def __post_init__(self) -> None:
         for f in fields(self):
             value = getattr(self, f.name)
+            if value is None and f.name in _OPTIONAL_FIELDS:
+                continue          # 任意項目は未指定を許す
             if not isinstance(value, (int, float)):
                 raise TypeError(f"{f.name} は数値である必要があります: {value!r}")
             if value <= 0:
@@ -45,7 +103,13 @@ class Measurements:
                 )
 
     def as_dict(self) -> dict[str, float]:
-        return {f.name: getattr(self, f.name) for f in fields(self)}
+        """採寸値の辞書。未指定の任意項目は**含めない**。
+
+        JSONのレスポンスや保存済みプロフィールにNoneが混ざると、受け手が
+        「0cm」と誤って扱いうるため、項目ごと落とす。
+        """
+        return {f.name: getattr(self, f.name) for f in fields(self)
+                if getattr(self, f.name) is not None}
 
 
 # JIS L 4005 成人女子M相当を参考にした標準体型（概算値）。
@@ -81,6 +145,22 @@ STANDARD_SIZE_GRADE_CM: dict[str, float] = {
     "height": 0.0,
     "sleeve_length": 1.0,
     "shoulder_width": 1.0,
+    # round25: 二の腕まわり。バスト4cm刻みに対して1.0cmは、実務の
+    # グレーディングで使われる範囲(1.0〜1.4cm)の下限にあたる控えめな値。
+    "upper_arm": 1.0,
+    # round29: 乳間・乳下がり。どちらも推測ではなく、既に根拠のある値から
+    # 導いている。
+    #   乳下がり: ドレメ式の参考寸法(7号16.5→9号17→11号18→13号19→
+    #             15号20→17号21cm)は号数1つあたり約1.0cm。
+    #   乳間: 新文化式のBPの式から 乳間 = 2×(B/16 + 3.8) なので、
+    #         バスト4cm刻みに対して 2×4/16 = 0.5cm。
+    "bust_point_spacing": 0.5,
+    "bust_point_drop": 1.0,
+    # round75: 頭囲。サイズ展開でバストが4cm動いても、頭はほとんど
+    # 変わらない(帽子はS/M/Lで2cm刻み)。**0.0にはしない**——0だと
+    # 「グレーディングの対象外」なのか「刻みが0」なのか読めないので、
+    # 帽子のサイズ展開のいちばん細かい刻みである0.5cmを置く。
+    "head_circumference": 0.5,
 }
 
 # サイズ名 -> 基準サイズ(入力した採寸値をこのサイズとみなす)からの刻み数。
@@ -114,10 +194,13 @@ def graded_measurements(base: Measurements, size: str,
     effective_grade_cm = dict(STANDARD_SIZE_GRADE_CM)
     if grade_cm:
         effective_grade_cm.update(grade_cm)
-    values = {
-        name: getattr(base, name) + effective_grade_cm[name] * step
-        for name in effective_grade_cm
-    }
+    values = {}
+    for name in effective_grade_cm:
+        current = getattr(base, name)
+        # round25: 任意項目(二の腕まわり)は、未指定ならサイズ展開しても
+        # 未指定のまま。0cmとして扱うと入力検証で落ちる。
+        values[name] = (None if current is None
+                        else current + effective_grade_cm[name] * step)
     return Measurements(**values)
 
 

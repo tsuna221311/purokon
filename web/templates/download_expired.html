@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>型紙のファイルは保存期間を過ぎています — PatternForge</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+
+  <main id="main-content" class="container narrow">
+    <section class="panel">
+      {# round51: ここは以前 `{"error":"not found","ok":false}` という
+         生のJSONが画面に出ていた。リンクをブックマークして翌日開く、
+         タブを開いたまま一晩置く——保存期間が{{ hours }}時間なので、
+         **ふつうに起こる**経路である。何が起きたのか、どうすればよいのかを
+         この製品の言葉で書く。 #}
+      <h2>このファイルは保存期間を過ぎています</h2>
+      <p class="hint">
+        生成した型紙のファイル（PDF・SVG・DXF）は、サーバーに
+        <strong>{{ hours }}時間</strong>だけ置いてから自動的に消しています。
+        採寸値から作られた個人的なファイルを、必要以上に持ち続けないためです。
+        型紙そのものが失われたわけではなく、同じ入力から作り直せます。
+      </p>
+
+      {% if current_user %}
+      <p class="hint">
+        <strong>マイページ</strong>に生成履歴が残っていれば、そこから
+        同じ設定で作り直せます（イラストから生成したものは、画像を保存して
+        いないため作り直せません）。
+      </p>
+      <p style="margin-top:20px;">
+        <a href="{{ url_for('account') }}" class="primary"
+           style="display:inline-block; text-decoration:none; padding:10px 22px; border-radius:8px;">マイページの生成履歴へ</a>
+      </p>
+      {% else %}
+      <p class="hint">
+        ログインしていると生成履歴が残り、同じ設定で作り直せます
+        （イラストから生成したものを除く）。
+      </p>
+      <p style="margin-top:20px;">
+        <a href="{{ url_for('index') }}" class="primary"
+           style="display:inline-block; text-decoration:none; padding:10px 22px; border-radius:8px;">もう一度つくる</a>
+      </p>
+      {% endif %}
+
+      <p class="hint" style="margin-top:18px;">
+        次に作るときは、生成したらその場でダウンロードしておくと確実です。
+      </p>
+    </section>
+  </main>
+
+  {% include "_footer.html" %}
+</body>
+</html>

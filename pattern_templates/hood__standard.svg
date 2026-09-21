@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="26.5cm" height="46.2cm" viewBox="0 0 26.7 46.2">
+  <!-- フードテンプレート(標準Mサイズ・2枚剥ぎの1枚)。頭囲57cm・首ぐり37.3cmから引いた形で、高さ43.2cm・奥行き26.5cm・付け根18.6cm。実際の生成ではengine/hood.pyが採寸から引き直すので、この形はそのままでは使われない(どんな形かを見るための見本)。 -->
+  <path
+    data-part="hood"
+    data-variation=""
+    data-seam-edge="bottom"
+    fill="none" stroke="black" stroke-width="0.1"
+    d="M 0.000 0.000 C -0.600 19.438 2.810 34.557 8.029 45.696 C 14.494 44.571 20.959 43.496 26.500 43.196 L 26.500 5.184 C 24.380 0.933 11.925 -0.400 0.000 0.000 Z" />
+</svg>

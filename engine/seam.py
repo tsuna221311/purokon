@@ -54,6 +54,30 @@ class FinalizedPart:
     # テンプレートSVGのdata-seam-edge属性が出どころで、
     # engine/compatibility.pyのseam_edge_lengthが長さを測るのに使う。
     seam_edge: str = ""
+    #: round27で追加: パーツ**内部**の縫い線(閉じた点列のリスト)。
+    #:
+    #: ウエストのダーツ(両端が尖ったダイヤモンドダーツ)のように、輪郭を
+    #: 切り欠かずに内側で摘む縫い線を表す。輪郭(cut_line/stitch_line)には
+    #: 現れないので、縫い合わせ長さのチェックには影響しない。
+    internal_lines: list[list[Point]] = field(default_factory=list)
+    #: round30で追加: JIS L 0110「衣料パターンの表示記号」の**内部線**(表2-40)
+    #: と**中心線**(表1-2)、**バストポイント**(表1-12)。
+    #:
+    #: (ラベル, 点列) の並び。縫う線ではなく、「この線がバストの高さ」
+    #: 「ここが中心前」という**製図上の基準**を示すための線で、実物の型紙
+    #: では細い線で描かれる。補正するとき(丈を詰める・ダーツを移す)に
+    #: どこを基準にすればよいかが型紙だけで分かるようになる。
+    reference_lines: list[tuple[str, list[Point]]] = field(default_factory=list)
+    #: round31: この型紙1枚から裁つ枚数。パイプラインは同じ形を複数枚使う
+    #: 場合それぞれ別のパーツとして並べるので、通常は1になる。
+    cut_quantity: int = 1
+    #: round31: 中心を布のわ(輪)に合わせて裁つパーツか。このエンジンの
+    #: 身頃は左右つながった全幅で出るので、今はどれもFalse。
+    cut_on_fold: bool = False
+    #: round76: ドロップショルダーで下げたあとの脇の下の高さ(cm)。
+    #: Noneなら基準線のバスト線(BL)を脇の下として扱う(round75までと同じ)。
+    #: `engine/compatibility.py`の`underarm_y_of`が読む。
+    underarm_y_cm: float | None = None
     bbox: tuple[float, float, float, float] = field(init=False)
 
     def __post_init__(self) -> None:
@@ -71,9 +95,41 @@ class FinalizedPart:
 
     @property
     def display_name(self) -> str:
-        base = f"{self.part_type}({self.variation})" if self.variation else self.part_type
-        base = f"{base} {self.label_suffix}" if self.label_suffix else base
-        return f"{base} [ダーツ{self.dart_count}本]" if self.dart_count else base
+        """型紙に印字する日本語のパーツ名(round32)。
+
+        round31まではここが内部識別子(`front_bodice(round_neck)`)のままで、
+        **印刷して裁断に使う紙の上にそれが書かれていた**。機械向けの
+        識別子が要る場所では`identifier`を使う(文字列はround31までと同一)。
+        """
+        from .part_names import part_display_name
+        return part_display_name(self.part_type, self.variation,
+                                  self.label_suffix, self.dart_count)
+
+    @property
+    def name_without_dart_count(self) -> str:
+        """ダーツ本数の後置きを付けない、そのままのパーツ名(round65)。
+
+        「どのパーツにダーツが入ったか」を文で言うときに使う。
+        `display_name`をそのまま並べると
+        「前身頃（ラウンドネック） [ダーツ4本] 4本」と重なる。
+        名前の組み立ては`display_name`と同じ関数を使う(二重に書かない)。
+        """
+        from .part_names import part_display_name
+        return part_display_name(self.part_type, self.variation,
+                                  self.label_suffix)
+
+    @property
+    def identifier(self) -> str:
+        """機械向けの識別子。round31までの`display_name`とまったく同じ文字列。"""
+        from .part_names import part_identifier
+        return part_identifier(self.part_type, self.variation,
+                                self.label_suffix, self.dart_count)
+
+    @property
+    def cutting_note(self) -> str:
+        """裁ち方の指示(生地・枚数・わ裁ち・接着芯)。engine/cutting.py参照。"""
+        from .cutting import cutting_note
+        return cutting_note(self.part_type, self.cut_quantity, self.cut_on_fold)
 
 
 def _signed_area(points: list[Point]) -> float:
@@ -489,6 +545,7 @@ DEFAULT_NOTCH_FRACTIONS: dict[str, list[float]] = {
     "back_pants": [0.0, 0.5],
     "collar": [0.0, 0.5],
     "cuffs": [0.0, 0.5],
+    "hood": [0.0, 0.5],
     "waistband": [0.0, 0.5],
 }
 
@@ -499,7 +556,12 @@ def finalize_part(part_type: str, variation: str, segments: list,
                    label_suffix: str = "",
                    extra_notch_fractions: list[float] | None = None,
                    dart_count: int = 0,
-                   seam_edge: str = "") -> FinalizedPart:
+                   seam_edge: str = "",
+                   notch_points: list[Point] | None = None,
+                   internal_lines: list[list[Point]] | None = None,
+                   reference_lines: list[tuple[str, list[Point]]] | None = None,
+                   underarm_y_cm: float | None = None,
+                   ) -> FinalizedPart:
     """変形済みセグメントから、縫い線・裁断線・合印・布目線を含む最終パーツを作る。
 
     Args:
@@ -518,12 +580,54 @@ def finalize_part(part_type: str, variation: str, segments: list,
             が既に反映済みなので、ここでは表示用のメタデータとして渡すだけで、
             ジオメトリを追加で変形するわけではない。
     """
-    stitch_line = segments_to_polyline(segments)
+    return finalize_from_stitch_line(
+        part_type, variation, segments_to_polyline(segments),
+        seam_allowance_cm=seam_allowance_cm,
+        hem_seam_allowance_cm=hem_seam_allowance_cm,
+        label_suffix=label_suffix,
+        extra_notch_fractions=extra_notch_fractions,
+        dart_count=dart_count, seam_edge=seam_edge,
+        notch_points=notch_points, internal_lines=internal_lines,
+        reference_lines=reference_lines, underarm_y_cm=underarm_y_cm)
+
+
+def finalize_from_stitch_line(part_type: str, variation: str,
+                               stitch_line: list[Point],
+                               seam_allowance_cm: float = DEFAULT_SEAM_ALLOWANCE_CM,
+                               hem_seam_allowance_cm: float | None = None,
+                               label_suffix: str = "",
+                               extra_notch_fractions: list[float] | None = None,
+                               dart_count: int = 0,
+                               seam_edge: str = "",
+                               notch_points: list[Point] | None = None,
+                               internal_lines: list[list[Point]] | None = None,
+                               reference_lines: list[tuple[str, list[Point]]] | None = None,
+                               underarm_y_cm: float | None = None,
+                               ) -> FinalizedPart:
+    """`finalize_part`の本体。縫い線が**点列として既にある**場合の入口。
+
+    round41で`finalize_part`から切り出した。裏地のパーツ(engine/lining.py)は
+    「表地とまったく同じ縫い線を、縫い代だけ変えてもう一度確定させる」ため、
+    ベジエのセグメントではなく既に確定した`stitch_line`から作る必要がある。
+    セグメントを持たない分岐を`finalize_part`側に足すより、共通処理をこちらへ
+    出して`finalize_part`を薄い包みにするほうが分岐が増えない。
+    """
     cut_line = offset_polygon_variable(stitch_line, seam_allowance_cm, hem_seam_allowance_cm)
-    fractions = list(DEFAULT_NOTCH_FRACTIONS.get(part_type, [0.0]))
-    if extra_notch_fractions:
-        fractions.extend(extra_notch_fractions)
-    notches = notch_marks(stitch_line, fractions)
+    # round16: `notch_points`(実際に縫い合わせる辺の上の座標)が与えられた
+    # 場合はそれを使う。与えられない場合だけ、round15までの「自分自身の
+    # 周長比」による既定位置へフォールバックする。周長比の合印は相手パーツ
+    # との対応が無く、裾や自由端にも落ちるため、engine/notches.py が位置を
+    # 決められるパーツでは必ずそちらを使う(理由はそのモジュール参照)。
+    if notch_points:
+        from .notches import notch_marks_at
+        notches = notch_marks_at(stitch_line, notch_points)
+        if extra_notch_fractions:
+            notches = notches + notch_marks(stitch_line, list(extra_notch_fractions))
+    else:
+        fractions = list(DEFAULT_NOTCH_FRACTIONS.get(part_type, [0.0]))
+        if extra_notch_fractions:
+            fractions.extend(extra_notch_fractions)
+        notches = notch_marks(stitch_line, fractions)
     xs = [p[0] for p in cut_line]
     ys = [p[1] for p in cut_line]
     bbox = (min(xs), min(ys), max(xs), max(ys))
@@ -539,4 +643,7 @@ def finalize_part(part_type: str, variation: str, segments: list,
         label_suffix=label_suffix,
         dart_count=dart_count,
         seam_edge=seam_edge,
+        internal_lines=list(internal_lines or []),
+        reference_lines=list(reference_lines or []),
+        underarm_y_cm=underarm_y_cm,
     )

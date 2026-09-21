@@ -3,6 +3,7 @@
   <path
     data-part="front_pants"
     data-variation="wide"
+    data-fit-y="waist:0.000 crotch:25.000 hem:96.000"
     fill="none" stroke="black" stroke-width="0.1"
     d="M 5.70 0 L 22.70 0 C 23.90 8.10, 29.45 12.60, 29.45 18.00 L 31.57 96.00 L 3.57 96.00 L 0 25.00 C 1.99 20.50, 5.70 22.00, 5.70 18.00 L 5.70 0 Z" />
 </svg>

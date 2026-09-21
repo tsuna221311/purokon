@@ -81,6 +81,14 @@ def test_render_dxf_labels_every_placed_part_with_its_display_name(tmp_path):
     labels = {e.dxf.text for e in msp if e.dxftype() == "TEXT" and e.dxf.layer == "LABEL"}
     assert labels == {p.part.display_name for p in result.placed}
 
+    # round32: パーツ名を日本語にしたので、ASCIIだけの識別子を別レイヤーへ
+    # 併記する。日本語グリフを持たないSHXフォントのCAD環境で文字化けしても、
+    # どのパーツかは必ず分かるようにするため(モジュールdocstringの
+    # 「正直な制約」に元から書いてあったリスクへの対応)。
+    ids = {e.dxf.text for e in msp if e.dxftype() == "TEXT" and e.dxf.layer == "LABEL_ID"}
+    assert ids == {p.part.identifier for p in result.placed}
+    assert all(text.isascii() for text in ids), ids
+
 
 def test_render_dxf_marks_rotated_parts_in_their_label():
     # render_layout_svg/render_a4_pdfと同じ「(90度回転・布目確認)」の注記が
@@ -116,7 +124,8 @@ def test_render_dxf_writes_a_warning_text_for_unplaced_parts(tmp_path):
     msp = doc.modelspace()
     warnings = [e.dxf.text for e in msp if e.dxftype() == "TEXT" and e.dxf.layer == "WARNING"]
     assert len(warnings) == 1
-    assert "skirt" in warnings[0]
+    # round32: パーツ名は日本語で書かれる(内部識別子ではない)。
+    assert result.unplaced[0].display_name in warnings[0], warnings[0]
     assert "型紙に含まれていない" in warnings[0]
 
 

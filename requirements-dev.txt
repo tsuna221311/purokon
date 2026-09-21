@@ -17,3 +17,8 @@ cairosvg>=2.7,<3   # SVGをPNGへレンダリングして目視確認する場�
 # `ModuleNotFoundError: No module named 'pypdf'`でこのテストだけが失敗する
 # ことを確認した(=クイックスタートの手順が実際には通らない状態だった)。
 pypdf>=3,<4
+# round66: `tests/test_round51_illustration_inputs.py`のExif回転のテストが
+# 使う。宣言されていなかったため、このファイルだけを入れた環境では
+# そのテストが**静かにskip**されていた(pypdfのときとまったく同じ形。
+# 上の注記参照)。skipは赤にならないので、全件を流しても気づきにくい。
+piexif>=1.1,<2

@@ -28,12 +28,27 @@ OUT_DIR = os.path.join(_REPO_ROOT, "pattern_templates")
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from engine.bodice_fit import neck_half_cm  # noqa: E402
+from engine.bodice_fit import BODICE_EASE_CM, neck_half_cm  # noqa: E402
+
+
+from engine import hood as _hood_module
+
+
+def _segments_to_d(segments) -> str:
+    """`engine/svgpath.py`のセグメント列を、SVGの"d"文字列に戻す。"""
+    out = []
+    for name, coords in segments:
+        if name == "Z":
+            out.append("Z")
+        else:
+            out.append(name + " " + " ".join(f"{v:.3f}" for v in coords))
+    return " ".join(out)
 
 
 def _write(filename: str, part: str, variation: str, width: str, height: str,
            view_w: float, view_h: float, d: str, comment: str,
-           fit_x: str | None = None, seam_edge: str | None = None) -> None:
+           fit_x: str | None = None, seam_edge: str | None = None,
+           fit_y: str | None = None) -> None:
     """テンプレートSVGを1枚書き出す。
 
     fit_x は round14 で追加した「体型合わせの基準点(X座標)」。
@@ -55,6 +70,11 @@ def _write(filename: str, part: str, variation: str, width: str, height: str,
     attrs = ""
     if fit_x:
         attrs += f'\n    data-fit-x="{fit_x}"'
+    if fit_y:
+        # round23で追加した「体型合わせの基準線(Y座標)」。袖ぐりの深さを
+        # バストに応じて変えるために、engine/bodice_fit.pyが
+        # 「この線が首の付け根」「この線が脇の下」「この線が裾」と知る必要がある。
+        attrs += f'\n    data-fit-y="{fit_y}"'
     if seam_edge:
         attrs += f'\n    data-seam-edge="{seam_edge}"'
     svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {view_w} {view_h}">
@@ -89,7 +109,9 @@ def _write(filename: str, part: str, variation: str, width: str, height: str,
 # 【寸法の導出】いずれもSTANDARD_M(バスト83・肩幅37・身長158)から、
 # 文化式婦人原型で一般に使われる算出式を単純化して求めている。
 # 「それらしい曲線を当てずっぽうで描く」ことは避け、各値の根拠を残す。
-BODICE_EASE_CM = 8.0            # 着用ゆとり(布帛の身頃で一般的な範囲)
+# 着用ゆとり(布帛の身頃で一般的な範囲)。round23から engine/bodice_fit.py に
+# 置いてある——採寸に合わせて身頃の幅を決め直すのに同じ値が必要で、
+# 二重に書くとずれるため(neck_half_cmと同じ理由)。
 _STD_BUST, _STD_SHOULDER, _STD_HEIGHT = 83.0, 37.0, 158.0
 
 BODICE_W = (_STD_BUST + BODICE_EASE_CM) / 2      # 1枚の幅 = 胴回りの半分 = 45.5
@@ -104,6 +126,10 @@ BODICE_DROP_F = _STD_HEIGHT / 20 - 2.6            # 前肩下がり = 5.30
 BODICE_DROP_B = BODICE_DROP_F - 0.8               # 後肩下がり = 4.50(前より水平寄り)
 BODICE_AH_DEPTH = 23.5                            # 首の付け根の線から脇の下まで
 BODICE_HEM = 58.0                                 # 首の付け根の線から裾まで(ヒップ丈)
+#: 首の付け根の線からウエストまで(背丈)。JIS成人女子M相当の背丈は約38cm。
+#: round26で追加。裾(ヒップ丈)とウエストは別の高さなので、ウエストで絞り、
+#: そこから裾へ向かってヒップに合わせて開く、という形を作るのに要る。
+BODICE_WAIST_Y = 38.0
 # 袖ぐり曲線が弦からえぐれる量。1.5〜3cm程度が自然な範囲で、この値のとき
 # 袖ぐり(片腕)は前19.5cm+後20.2cm=39.7cmになる。バスト83の標準的な袖ぐり
 # (概ねバスト/2=41.5cm前後)に収まる値として選んだ
@@ -216,6 +242,30 @@ def _bodice_anchors(neck_half: float) -> str:
         f"neck:{BODICE_CF + neck_half:.3f}",
         f"shoulder:{BODICE_SHOULDER_R:.3f}",
         f"side:{BODICE_W:.3f}",
+    ])
+
+
+def _bodice_y_anchors(body_shift: float = 0.0) -> str:
+    """身頃テンプレートの「体型合わせの基準線」(Y座標)を書き出す(round23)。
+
+    役割(role)の意味:
+      neck     … 首の付け根の線(丈を測る基準)。身長比で動く。
+      waist    … ウエストの線(背丈)。身長比で動く。round26で追加。
+                 ここから裾へ向かって、脇線をヒップに合わせて開かせる。
+      underarm … 脇の下の線。身長比に加え、バストに応じて深くなる
+                 (文化式の袖ぐり深さ B/12+13.7 の増分。
+                  engine/bodice_fit.py の `armhole_depth_cm` 参照)。
+      hem      … 裾。身長比で動く(着丈は身長で決まる)。
+
+    round22まではY方向を身長比で一律に伸縮していたため、袖ぐりの深さが
+    バストでほとんど変わらず、バスト130cmで文化式の目安より3.9cm浅い
+    (=脇が食い込む)型紙が出ていた。
+    """
+    return " ".join([
+        f"neck:{body_shift:.3f}",
+        f"underarm:{body_shift + BODICE_AH_DEPTH:.3f}",
+        f"waist:{body_shift + BODICE_WAIST_Y:.3f}",
+        f"hem:{body_shift + BODICE_HEM:.3f}",
     ])
 
 
@@ -444,7 +494,8 @@ def front_bodice(variation: str, neck: Neckline, comment: str,
     _write(f"front_bodice__{variation}.svg", "front_bodice", variation,
            f"{BODICE_W:g}cm", f"{BODICE_HEM + extra_h:g}cm",
            BODICE_W, BODICE_HEM + extra_h, d, comment,
-           fit_x=_bodice_anchors(neck.half_width))
+           fit_x=_bodice_anchors(neck.half_width),
+           fit_y=_bodice_y_anchors(body_shift))
 
 
 def back_bodice(variation: str, neck: Neckline, comment: str,
@@ -453,7 +504,8 @@ def back_bodice(variation: str, neck: Neckline, comment: str,
     _write(f"back_bodice__{variation}.svg", "back_bodice", variation,
            f"{BODICE_W:g}cm", f"{BODICE_HEM + extra_h:g}cm",
            BODICE_W, BODICE_HEM + extra_h, d, comment,
-           fit_x=_bodice_anchors(neck.half_width))
+           fit_x=_bodice_anchors(neck.half_width),
+           fit_y=_bodice_y_anchors(body_shift))
 
 
 def front_bodice_zip_panel(variation: str, neck: Neckline, comment: str) -> None:
@@ -477,7 +529,7 @@ def front_bodice_zip_panel(variation: str, neck: Neckline, comment: str) -> None
     ])
     _write(f"front_bodice_zip_panel__{variation}.svg", "front_bodice_zip_panel", variation,
            f"{view_w:g}cm", f"{BODICE_HEM:g}cm", view_w, BODICE_HEM, d, comment,
-           fit_x=fit_x)
+           fit_x=fit_x, fit_y=_bodice_y_anchors())
 
 
 def main() -> None:
@@ -600,36 +652,63 @@ def main() -> None:
                 f" C {x0 + w * 0.15:g} {h * 0.25:g}, {x0 + w * 0.35:g} 0, {x0 + w / 2:g} 0"
                 f" C {x0 + w * 0.65:g} 0, {x0 + w * 0.85:g} {h * 0.25:g}, {x0 + w:g} {h:g}")
 
+    def _sleeve_y_anchors(length: float, cap_h: float = _SLEEVE_CAP_H) -> str:
+        """袖テンプレートの「体型合わせの基準線」(Y座標)を書き出す(round24)。
+
+        役割(role)の意味:
+          cap      … 袖山のてっぺん(y=0)。
+          underarm … 袖山カーブが終わり、袖の脇が始まる線(=袖山の高さ)。
+                     袖ぐりの寸法に比例して動く。
+          hem      … 袖口。袖丈で動く。
+
+        round23まで袖山の高さは袖丈比だけで動いていた。つまり**袖ぐりが
+        大きくなっても袖山が高くならず**、袖山カーブの長さを合わせるために
+        幅ばかりが広がっていた(engine/scaling.pyの`scale_sleeve_to_cap_length`
+        のコメントに実測を記載)。袖山の高さは袖ぐり寸法に比例させるのが
+        製図の定石(目安は袖ぐり÷3)である。
+        """
+        return " ".join([
+            "cap:0.000",
+            f"underarm:{cap_h:.3f}",
+            f"hem:{length:.3f}",
+        ])
+
     _write("sleeve__straight.svg", "sleeve", "straight", "32cm", "52cm", 32, 52,
            _sleeve_cap_d() + " L 28 52 L 4 52 Z",
            "袖テンプレート(標準Mサイズ) 直線袖。袖山カーブ42.0cm(袖ぐり39.7cm+"
-           "いせ込み2.3cm)、袖幅32cm、袖丈52cm。袖口に向けてわずかに絞る。")
+           "いせ込み2.3cm)、袖幅32cm、袖丈52cm。袖口に向けてわずかに絞る。",
+           fit_y=_sleeve_y_anchors(52))
     _write("sleeve__curve.svg", "sleeve", "curve", "32cm", "52cm", 32, 52,
            _sleeve_cap_d() + " C 31 22, 28.5 37, 27 52 L 5 52 C 3.5 37, 1 22, 0 12 Z",
            "袖テンプレート(標準Mサイズ) カーブ袖。袖山は直線袖と共通で、脇を"
-           "カーブで絞って腕に沿わせたフィット袖(袖口幅22cm)。")
+           "カーブで絞って腕に沿わせたフィット袖(袖口幅22cm)。",
+           fit_y=_sleeve_y_anchors(52))
     _write("sleeve__puff.svg", "sleeve", "puff", "37cm", "31cm", 37, 31,
            _sleeve_cap_d(0, 37, 14)
            + " L 34 30 C 29 27, 24 33, 18.5 30 C 13 27, 8 33, 3 30 Z",
            "袖テンプレート(標準Mサイズ) パフ袖。袖山を意図的に大きく(幅37cm・"
            "高さ14cm、袖山カーブ48.7cm)取り、袖ぐり39.7cmに対して約9cm(うち"
            "通常のいせ込み2cm、デザイン上のギャザー約7cm)を縮めて付ける想定。"
-           "丈は短め(30cm)。実際のギャザー分量の指定機能は無く、輪郭の形状のみの近似。")
+           "丈は短め(30cm)。実際のギャザー分量の指定機能は無く、輪郭の形状のみの近似。",
+           fit_y=_sleeve_y_anchors(31, 14))
     _write("sleeve__bell.svg", "sleeve", "bell", "46cm", "52cm", 46, 52,
            _sleeve_cap_d(7) + " L 46 52 L 0 52 Z",
            "袖テンプレート(標準Mサイズ) ベルスリーブ。袖山は直線袖と同じ"
            "(幅32cm)だが、袖口に向かって大きく末広がりに広がる(裾幅46cm)。"
-           "実際のドレープ(垂れ具合)は再現しておらず、末広がりの輪郭のみの近似。")
+           "実際のドレープ(垂れ具合)は再現しておらず、末広がりの輪郭のみの近似。",
+           fit_y=_sleeve_y_anchors(52))
     _write("sleeve__cap.svg", "sleeve", "cap", "32cm", "17cm", 32, 17,
            _sleeve_cap_d()
            + " C 27.2 15, 20.8 17, 16 17 C 11.2 17, 4.8 15, 0 12 Z",
            "袖テンプレート(標準Mサイズ) キャップスリーブ。肩先を覆う程度の"
            "ごく短い袖(丈17cm)で、上下とも緩いカーブの三日月型。脇の直線部分は"
-           "無い。袖山カーブは他の袖と共通のため、袖ぐりにはそのまま付く。")
+           "無い。袖山カーブは他の袖と共通のため、袖ぐりにはそのまま付く。",
+           fit_y=_sleeve_y_anchors(17))
     _write("sleeve__three_quarter.svg", "sleeve", "three_quarter", "32cm", "38cm", 32, 38,
            _sleeve_cap_d() + " L 28.5 38 L 3.5 38 Z",
            "袖テンプレート(標準Mサイズ) 7分袖。直線袖(丈52cm)と袖山を共通に"
-           "したまま丈38cm(約7.3分)で打ち切り、袖口をわずかに絞った。")
+           "したまま丈38cm(約7.3分)で打ち切り、袖口をわずかに絞った。",
+           fit_y=_sleeve_y_anchors(38))
 
     # --- スカート 6種 -------------------------------------------------------
     #
@@ -778,6 +857,15 @@ def main() -> None:
             view_w = ext + PANTS_HIP_QUARTER + 2.0
             d = _pants_panel_d(hem_half=hem_half, length=length, is_back=is_back)
             side = "後ろ" if is_back else "前"
+            # round25で追加した「体型合わせの基準線」(Y座標)。股上(ウエスト〜
+            # 股ぐり)は身長ではなくヒップで決まる量なので、engine側が股ぐりの
+            # 線を知っている必要がある(engine/bodice_fit.pyの
+            # `build_pants_y_map`参照)。
+            fit_y = " ".join([
+                "waist:0.000",
+                f"crotch:{PANTS_RISE:.3f}",
+                f"hem:{length:.3f}",
+            ])
             _write(f"{part_type}__{fname_suffix}.svg", part_type, variation,
                    f"{view_w:.2f}cm", f"{length:g}cm", view_w, length, d,
                    f"パンツ{side}パーツテンプレート(標準Mサイズ・片脚、"
@@ -788,7 +876,8 @@ def main() -> None:
                    + ("後ろは股ぐりの出しを前より大きく取り(9.1cm)、中心線を"
                       "わずかに外へ膨らませて臀部のゆとりを表現している。"
                       if is_back else
-                      "前は股ぐりの出しを小さく(5.7cm)、中心線は直線。"))
+                      "前は股ぐりの出しを小さく(5.7cm)、中心線は直線。"),
+                   fit_y=fit_y)
     _write("collar__standard.svg", "collar", "", "40cm", "6cm", 40, 6,
            "M 2 0 C 0 0, 0 2, 0 3 L 0 6 L 40 6 L 40 3 C 40 2, 40 0, 38 0 Z",
            "衿テンプレート(標準Mサイズ) スタンドカラー用の帯状パーツ。",
@@ -825,6 +914,23 @@ def main() -> None:
            "輪郭にしている。shirt_collarより衿の高さ(9cm)があり、"
            "peter_pan_collarのような丸みではなく角の効いた直線的な折り返しで"
            "区別した。",
+           seam_edge="bottom")
+    # round75: フード。ここで書き出すのは**標準M(頭囲57cm・首ぐり37.3cm)の
+    # 1枚ぶん**で、実際の生成では`engine/hood.py`が採寸から引き直す。
+    # テンプレートを置いてあるのは、他のパーツと同じく「どんな形か」を
+    # ファイルとして見られるようにするためと、テンプレートの一覧を
+    # 数え上げる仕組み(TemplateDB)に載せるため。
+    _hood_plan = _hood_module.plan_hood(neckline_cm=37.30)
+    _hood_d = _segments_to_d(_hood_module.hood_segments(_hood_plan))
+    _write("hood__standard.svg", "hood", "",
+           f"{_hood_plan.depth_cm:.1f}cm", f"{_hood_plan.height_cm + 3:.1f}cm",
+           round(_hood_plan.depth_cm + 0.2, 1), round(_hood_plan.height_cm + 3, 1),
+           _hood_d,
+           "フードテンプレート(標準Mサイズ・2枚剥ぎの1枚)。"
+           f"頭囲57cm・首ぐり37.3cmから引いた形で、高さ{_hood_plan.height_cm:.1f}cm・"
+           f"奥行き{_hood_plan.depth_cm:.1f}cm・付け根{_hood_plan.neck_edge_cm:.1f}cm。"
+           "実際の生成ではengine/hood.pyが採寸から引き直すので、この形は"
+           "そのままでは使われない(どんな形かを見るための見本)。",
            seam_edge="bottom")
     _write("cuffs__standard.svg", "cuffs", "", "20cm", "6cm", 20, 6,
            "M 0 0 L 20 0 L 20 6 L 0 6 Z",

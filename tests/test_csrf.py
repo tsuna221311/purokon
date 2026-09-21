@@ -53,10 +53,19 @@ def test_csrf_token_is_stable_across_requests_within_the_same_session(client):
     assert first == second
 
 
-def test_a_real_browser_style_flow_using_the_actual_page_token_succeeds():
+def test_a_real_browser_style_flow_using_the_actual_page_token_succeeds(
+        tmp_path, monkeypatch):
     # conftestの固定トークンに頼らず、実際にGETでページを取得し、そこに
     # 埋め込まれたトークンをそのままフォームに使う、実ブラウザに近い経路を
     # 確認する。
+    #
+    # round48: 出力先を一時ディレクトリへ向ける。このテストは`client`
+    # fixtureをあえて使わない(本物のトークンが要るため)ので、その
+    # fixtureがやっている出力先の差し替えも効いていなかった。
+    # そのため本当に型紙を生成し、**リポジトリの中**の`generated/`へ
+    # 4ファイル書いていた(conftestの`_keep_the_source_tree_clean`が検出)。
+    monkeypatch.setattr(app_module, "OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(app_module.pipeline, "output_dir", str(tmp_path))
     fresh_client = app_module.app.test_client()
     body = fresh_client.get("/").get_data(as_text=True)
     token = _extract_meta_csrf_token(body)

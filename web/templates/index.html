@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="description" content="PatternForgeは、採寸値とパーツ構成（またはデザインイラスト）から、縫い代・合印・布目線を含んだ「縫える型紙」をSVG/PDFで自動生成するサービスです。アカウント登録不要で今すぐ試せます。">
-<title>PatternForge — AI型紙生成支援システム</title>
+<title>PatternForge — 採寸値から縫える型紙をつくる</title>
 <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
@@ -12,21 +12,28 @@
   {% include "_nav.html" %}
   {% include "_flash.html" %}
 
-  <main class="container">
+  <main id="main-content" class="container">
     <div class="layout">
       <!-- 入力フォーム -->
       <section class="panel">
         <form id="generate-form">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <h2>① 入力モード</h2>
-          <div class="mode-row">
+          <h2 id="mode-group-label">① 入力モード</h2>
+          {# round45: スクリーンリーダーで読むと、この3つのラジオには
+             「群の名前」が付いていなかった。見出しは視覚的には名前に
+             見えるが、プログラム上はつながっていないので、
+             「手動でパーツを選ぶ ラジオボタン 1/3」としか聞こえず、
+             何を選んでいるのかが分からない。下のネックライン・袖・
+             スカートの3つは既に role="group" で名前が付いているので、
+             同じ書き方に揃える。 #}
+          <div class="mode-row" role="radiogroup" aria-labelledby="mode-group-label">
             <label>
               <input type="radio" name="mode" value="manual" checked>
               手動でパーツを選ぶ（推奨・APIキー不要）
             </label>
             <label>
               <input type="radio" name="mode" value="illustration">
-              イラストからAI判定（実験的）
+              資料画像から生成（正面・背面資料を使う）
             </label>
             <label>
               <input type="radio" name="mode" value="multi_size">
@@ -34,11 +41,58 @@
             </label>
           </div>
 
+          <div class="reference-first-callout" id="reference-first-callout">
+            <div>
+              <strong>手元の資料から新しく作る</strong>
+              <p>キャラクターの正面・背面画像と、着る人の採寸値を使って型紙の土台を作ります。固定キャラの選択は必要ありません。</p>
+            </div>
+            <button type="button" id="switch-to-reference-mode">資料画像を使う</button>
+          </div>
+
+          <div class="field-box" id="costume-project-section">
+            <div class="project-section-heading">
+              <div>
+                <label for="costume-project"><strong>参考カタログ（任意）</strong></label>
+                <p class="project-section-subtitle">資料がない場合のシルエット確認用です。ユーザー提供の画像から作る場合は、上の「資料画像を使う」を選んでください。</p>
+              </div>
+              <span class="project-count" id="costume-project-count">{{ costume_project_choices|length - 1 }}件</span>
+            </div>
+            <div class="project-filters">
+              <div class="field">
+                <label for="costume-project-search">名前から探す</label>
+                <input type="search" id="costume-project-search" placeholder="例：初音ミク、原神、コート" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="costume-project-category">ジャンル</label>
+                <select id="costume-project-category">
+                  <option value="all">すべて</option>
+                  <option value="curated">個別設計済み</option>
+                  <option value="endfield">エンドフィールド</option>
+                  <option value="game">ゲーム／RPG</option>
+                  <option value="anime">アニメ／漫画</option>
+                  <option value="music">VOCALOID／VTuber</option>
+                </select>
+              </div>
+            </div>
+            <select name="costume_project" id="costume-project">
+              {% for value, label in costume_project_choices %}
+              <option value="{{ value }}">{{ label }}</option>
+              {% endfor %}
+            </select>
+            <p id="costume-project-selection-summary" class="project-selection-summary" aria-live="polite">
+              未選択です。資料画像から作る場合は、上の「資料画像を使う」を選んでください。
+            </p>
+            <p class="hint" style="margin:6px 0 0;">採寸値は下の欄に必ず入力してください。個別設計済み以外は、シルエット互換性を確認済みの検証ベースです。</p>
+          </div>
+
           <div id="multi-size-section" class="field-box hidden">
-            <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:8px;">
+            <p id="sizes-group-label" style="font-size:0.85rem; font-weight:600; margin:0 0 8px;">
               生成するサイズ（下の採寸値を「M」相当として、サイズごとに機械的に増減させます）
-            </label>
-            <div class="checkbox-row">
+            </p>
+            {# round45: 群の名前が無いと、読み上げは「XS チェックボックス」
+               「S チェックボックス」……としか言わない。何のサイズなのかが
+               分からないので、上の見出しを群の名前として結び付ける。 #}
+            <div class="checkbox-row" role="group" aria-labelledby="sizes-group-label">
               {% for s in standard_sizes %}
               <label><input type="checkbox" name="sizes" value="{{ s }}" {{ "checked" if s == "M" }}> {{ s }}</label>
               {% endfor %}
@@ -71,20 +125,126 @@
           </div>
 
           <div id="illustration-section" class="field-box hidden">
-            <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:8px;">
-              衣装イラスト（背景が単色に近い画像を推奨）
+            <label for="field-illustration" style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:8px;">
+              衣装イラスト・前から見た絵（背景が単色に近い画像を推奨・複数枚可）
             </label>
-            <input type="file" name="illustration" accept="image/*">
+            <input type="file" name="illustration" id="field-illustration" accept="image/*" multiple>
             <p class="hint">
-              人が着用した写真ではなく、服だけが写った画像（平置き・ハンガー・
-              マネキン等）でお試しください。人物込みの写真は輪郭全体が服として
-              誤認識され、パーツの位置がずれやすくなります。1枚の画像に複数の
-              服がある場合は、最も大きく写っている1点のみが認識されます。
+              服だけが写った画像（平置き・ハンガー・マネキン等）がもっとも
+              精度が高くなります。人物が着ているイラスト（アニメ画像など）も、
+              腕が体から離れて描かれていれば服だけの絵と同じ精度で読み取ります。
+              1枚の画像に複数の服がある場合は、最も大きく写っている1点のみが
+              認識されます。
+            </p>
+            <p class="hint">
+              袖は、袖口が水平に切れている輪郭から読み取ります。ノースリーブは
+              袖を付けずに生成します。腕を体に密着させたポーズでは胴の幅を
+              分離できないため、袖丈・スカート丈・裾の広がりは読み取らず、
+              その旨を生成結果に表示します。
+            </p>
+
+            <label for="field-illustration-back" style="font-size:0.85rem; font-weight:600; display:block; margin:12px 0 8px;">
+              後ろから見た絵（任意・複数枚可）
+            </label>
+            <input type="file" name="illustration_back" id="field-illustration-back" accept="image/*" multiple>
+            <p class="hint">
+              指定すると、後身頃の襟ぐりを後ろ姿の絵から読み取ります
+              （指定しなければ、後身頃は前身頃と同じ襟ぐりになります）。
+              前後で首の開き幅が違って肩線が縫い合わせられない組み合わせに
+              なった場合は、前に合わせたうえで生成結果に理由を表示します。
+              前後あわせて{{ max_illustration_images }}枚までです。
             </p>
             <p class="hint">ANTHROPIC_API_KEY が未設定の場合は簡易判定（モック）で動作します。</p>
           </div>
 
+          <div class="field-box">
+            <label for="fit" style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:8px;">
+              ゆとり（着方）
+            </label>
+            <select id="fit" name="fit">
+              {% for key, label, bodice_cm, delta_cm in fit_presets %}
+              {# round42: 原型を切り替えると標準ゆとりが変わるので、
+                 app.jsが data-* から表示を書き換える。ここは既定(大人)の表示。 #}
+              <option value="{{ key }}" {{ 'selected' if key == default_fit }}
+                      data-fit-label="{{ label }}" data-fit-delta="{{ delta_cm }}"
+                      data-fit-abs="{{ bodice_cm }}">{{ label }}（身頃 バスト+{{ bodice_cm }}cm）</option>
+              {% endfor %}
+              <option value="stretch">伸びる生地（ニット・ストレッチ）</option>
+              <option value="custom">数値で指定する</option>
+            </select>
+            <p class="hint">
+              出来上がりの胴回りは「バスト＋この値」になります。ゆとりは体型ではなく
+              着方で決まる量なので、下に重ね着する衣装や動きの大きい演目では
+              「ゆったり」を、体の線を出したい場合は「ぴったり」を選んでください。
+              スカート・パンツのウエスト／ヒップのゆとりも連動します。
+            </p>
+            <div id="custom-ease-fields" class="custom-grade-grid hidden">
+              <label>身頃<input type="number" step="0.1" min="-20" max="30" name="ease_bodice" placeholder="8.0"></label>
+              <label>ウエスト<input type="number" step="0.1" min="-15" max="15" name="ease_waist" placeholder="2.0"></label>
+              <label>ヒップ<input type="number" step="0.1" min="-20" max="20" name="ease_hip" placeholder="4.0"></label>
+              <label>袖<input type="number" step="0.1" min="-10" max="20" name="ease_sleeve" placeholder="5.0"></label>
+            </div>
+            <div id="stretch-fields" class="custom-grade-grid hidden">
+              <label>生地の伸縮率(%)<input type="number" step="1" min="0" max="200" name="stretch_percent" placeholder="50"></label>
+              <label>密着度<input type="number" step="0.1" min="0.5" max="3" name="stretch_cling" placeholder="1.0"></label>
+            </div>
+            <p class="hint hidden" id="stretch-hint">
+              <strong>伸縮率の測り方:</strong> 生地を10cm四方に切り、無理なく伸びる
+              ところまで横に引っぱって長さを測ります。15cmになれば伸縮率50%です。
+              入力すると、体の寸法から一定の割合を引いた（＝マイナスのゆとりの）
+              型紙になります。伸縮率25%までなら2%、50%まで3%、75%まで5%、
+              それ以上は10%を引きます。<br>
+              伸びる生地の型紙は<strong>ダーツを入れません</strong>（生地が伸びて
+              胸やウエストの丸みに沿うため）。ウエストの絞りは脇線が担います。<br>
+              <strong>密着度</strong>は、生地の伸びをどこまで使うかの倍率です。1.0が
+              上記のとおりで、水着・レオタードのように体へ密着させたい場合は
+              1.5〜2.0程度にします（きつすぎると着られないので、必ず試し縫いを）。
+            </p>
+
+            <div class="field" style="margin-top:12px;">
+              <label for="field-shoulder_drop_cm">肩先を外へ出す（ドロップショルダー）
+                <span class="muted-text">(任意)</span></label>
+              <input type="number" step="0.5" name="shoulder_drop_cm"
+                     id="field-shoulder_drop_cm" placeholder="例: 5"
+                     min="0.5" max="20">
+              <p class="hint">
+                コート・パーカ・ブルゾンのように、肩の縫い目が腕の上まで
+                落ちた形にします。入れた数字だけ、肩先が<strong>肩線の
+                延長上</strong>へ出ます（肩線は折れません）。袖ぐりの長さは
+                変えずに脇の下を下げ、袖は袖山を低く・袖丈をその分だけ短く
+                引き直します。空欄なら従来どおりのセットインスリーブです。
+              </p>
+            </div>
+          </div>
+
           <h2>② 採寸値 <span class="muted-text">(単位: cm)</span></h2>
+
+          <!-- round42: どの原型(ブロック)の式で身頃を引くか。
+               採寸値の意味そのものが変わる選択なので、採寸欄のいちばん上に置く。 -->
+          <div class="field-box">
+            <label for="block" style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:8px;">
+              原型（誰の体型で引くか）
+            </label>
+            <select id="block" name="block">
+              {% for b in blocks %}
+              <option value="{{ b.key }}" {{ 'selected' if b.key == default_block }}
+                      data-height-lo="{{ b.height_lo }}" data-height-hi="{{ b.height_hi }}"
+                      data-ease-text="{{ b.ease_text }}">
+                {{ b.label }}（身長{{ b.height_lo | int }}〜{{ b.height_hi | int }}cm）
+              </option>
+              {% endfor %}
+            </select>
+            <p class="hint">
+              身頃の背幅・胸幅・襟ぐり・袖ぐりの深さ・胸ぐせダーツ・ゆとりは、
+              <strong>原型ごとに違う式</strong>で決まります。子どもの寸法に大人の原型を
+              当てると、背幅・胸幅が広く、胸ぐせダーツが余計に入った型紙になります。
+              {% for b in blocks %}
+              <br><strong>{{ b.label }}</strong>: 出典
+              <a href="{{ b.source_url }}" target="_blank" rel="noopener noreferrer">{{ b.source_name }}</a>
+              {% endfor %}
+            </p>
+            <p class="hint" style="margin-top:8px;">{{ mens_block_absent_note }}</p>
+          </div>
 
           {% if current_user %}
           <div class="field-box" id="profile-box">
@@ -116,68 +276,216 @@
           </p>
           {% endif %}
 
+          <!-- round33: 採寸値の「たぶん測り間違い」を、生成する前に出す。
+               採寸ミスがこのサービスの最大の失敗要因なのに、round32までは
+               指摘が生成したあとにしか出ず、1日の生成回数を1回使ってから
+               「肩幅を確かめてください」と言われる状態だった。 -->
+          {# round47: この箱には読み上げの指定が無かった。round44で生成の
+             進み具合は読み上げるようにしたのに、**この製品でいちばん大事な
+             警告**——round33自身が「採寸ミスがこのサービスの最大の失敗要因」
+             と書いている指摘——は、スクリーンリーダーでは一言も出ないままだった。
+             欄から離れた瞬間に画面へ現れるので、目で見ていなければ気づけない
+             (WCAG 2.1 SC 4.1.3 Status Messages)。
+             中身を入れてから見せる順になっているので、polite で読み上げられる。 #}
+          <div id="measurement-hints" class="field-box note-warn hidden"
+               role="status" aria-live="polite">
+            <p class="hint note-title">
+              入力を確かめてください
+            </p>
+            <ul id="measurement-hints-list"></ul>
+          </div>
+
           <div class="grid-measurements">
             {% for field, label, default in [
                 ('bust','バスト',84), ('waist','ウエスト',68), ('hip','ヒップ',92),
                 ('height','身長',160), ('sleeve_length','袖丈',54), ('shoulder_width','肩幅',37)] %}
             <div class="field">
               <label for="field-{{ field }}">{{ label }}</label>
-              <input type="number" step="0.1" name="{{ field }}" id="field-{{ field }}" value="{{ default }}" required>
+              {# round44: min/max はエンジンの有効範囲(engine/measurements.pyの
+                 _VALID_RANGES)をそのまま渡している。単位・桁の間違いを
+                 サーバーへ往復する前にブラウザが止める。 #}
+              <input type="number" step="0.1" name="{{ field }}" id="field-{{ field }}" value="{{ default }}"
+                     min="{{ measurement_ranges[field][0] }}" max="{{ measurement_ranges[field][1] }}" required>
             </div>
             {% endfor %}
           </div>
 
+          {# round64: 狭い画面では、採寸図とその説明が**画面の外**にある。
+             round34で図を採寸欄の下へ移したが、図は390px幅で523px、
+             説明はさらにその下にあるので、欄にフォーカスした時点での
+             実測は「図0px・説明0px」——ソフトキーボードを出すと
+             (390x508)、上の6欄のどれを触っても説明は1pxも見えない。
+             測りながら読む文なので、**欄のすぐ下**にも同じ文を出す。
+             文は engine/measure_guide.py が唯一の出どころのままで、
+             ここは器だけ(中身は web/static/app.js が入れる)。
+             1000px以上では図の説明が見えている(実測712px)ので隠す。 #}
+          <div id="measure-inline-guide" class="measure-inline-guide hidden">
+            <p class="measure-inline-guide-title" id="measure-inline-guide-title"></p>
+            <p class="measure-inline-guide-how" id="measure-inline-guide-how"></p>
+            <p class="measure-inline-guide-caution hidden"
+               id="measure-inline-guide-caution"></p>
+          </div>
+
+          <div class="field" style="margin-top:10px;">
+            <label for="field-upper_arm">二の腕まわり <span class="muted-text">(任意)</span></label>
+            <input type="number" step="0.1" name="upper_arm" id="field-upper_arm" placeholder="例: 27"
+                   min="{{ measurement_ranges['upper_arm'][0] }}" max="{{ measurement_ranges['upper_arm'][1] }}">
+            <p class="hint">
+              入力すると、袖幅を「二の腕まわり＋袖のゆとり」で決めます。
+              空欄の場合は袖ぐりの寸法から相似で決まります（腕の太さが
+              体型の比率から外れている方ほど、入力する効果が大きくなります）。
+            </p>
+          </div>
+
+          <div class="field" style="margin-top:10px;">
+            <label for="field-head_circumference">頭囲 <span class="muted-text">(任意)</span></label>
+            <input type="number" step="0.1" name="head_circumference" id="field-head_circumference" placeholder="例: 57"
+                   min="{{ measurement_ranges['head_circumference'][0] }}" max="{{ measurement_ranges['head_circumference'][1] }}">
+            <p class="hint">
+              フードを作るときだけ使います。眉間から後頭部のいちばん出ている
+              ところまでを一周して測ってください。空欄の場合は成人女性の平均
+              57cmで引き、そのことを結果に書き添えます。
+            </p>
+          </div>
+
+          <div class="field" style="margin-top:10px;">
+            <label for="field-bust_point_spacing">乳間 <span class="muted-text">(任意)</span></label>
+            <input type="number" step="0.1" name="bust_point_spacing" id="field-bust_point_spacing" placeholder="例: 18"
+                   min="{{ measurement_ranges['bust_point_spacing'][0] }}" max="{{ measurement_ranges['bust_point_spacing'][1] }}">
+            <p class="hint">
+              左右の乳首から乳首までの間隔。入力すると、胸ぐせダーツと前身頃の
+              ウエストダーツが、この実測から決まるバストポイント(BP)へ向きます。
+              空欄の場合は新文化式の式（胸幅の半分＋0.7cm）で推定します。
+            </p>
+          </div>
+          <div class="field" style="margin-top:10px;">
+            <label for="field-bust_point_drop">乳下がり <span class="muted-text">(任意)</span></label>
+            <input type="number" step="0.1" name="bust_point_drop" id="field-bust_point_drop" placeholder="例: 17"
+                   min="{{ measurement_ranges['bust_point_drop'][0] }}" max="{{ measurement_ranges['bust_point_drop'][1] }}">
+            <p class="hint">
+              前中央で、首の付け根からバストのいちばん高いところまでの長さ。
+              入力すると、ダーツの向かう高さがこの実測で決まります。空欄の場合は
+              原型と同じく「BPはバストライン(袖ぐり底の線)の上」とみなします。
+            </p>
+          </div>
+
+          {# round34: 狭い画面では、採寸図を採寸欄のすぐ下へ移す。
+             採寸図は右のパネル(生成結果)の中にあるが、1列に積まれる
+             スマホではフォーム全体の**下**に来てしまい、実測で
+             採寸欄から2500px離れていた——測りながら見る図としては
+             役に立たない。移動は web/static/app.js が行う。 #}
+          <div id="measure-figure-slot"></div>
+
+
           <div id="manual-section">
             <h2>③ パーツ構成</h2>
-            <div class="grid-parts">
-              <div class="field">
-                <label for="field-neckline">ネックライン</label>
-                <select name="neckline" id="field-neckline">
-                  {% for n in necklines %}<option value="{{ n }}">{{ n|style_label }}</option>{% endfor %}
-                </select>
+            {# round34: 形は文字のプルダウンではなく**絵**で選ぶ。
+               作っているのは衣装で、選んでいるのは形なのに、round33までは
+               「スウィートハートネック」「マーメイド」という名前を知って
+               いる人にしか選べなかった。サムネイルは描き起こしではなく
+               **実際のテンプレート型紙の輪郭**を縮小したもの
+               (scripts/build_style_thumbnails.py)。描き起こすと、
+               テンプレートを直したときに絵だけ黙って古くなる。
+
+               inputのname/valueは従来のselectとまったく同じなので、
+               サーバ側は何も変わらない。 #}
+            <div class="style-picker" role="group" aria-labelledby="style-picker-neckline-label">
+              <p class="style-picker-label" id="style-picker-neckline-label">ネックライン</p>
+              <div class="style-options">
+                {% for n in necklines %}
+                <label class="style-option">
+                  <input type="radio" name="neckline" value="{{ n }}"
+                         {{ 'checked' if n == default_neckline }}>
+                  <img src="{{ url_for('static', filename='thumbs/neckline__' ~ n ~ '.svg') }}" alt="">
+                  <span>{{ n|style_label }}</span>
+                </label>
+                {% endfor %}
               </div>
-              <div class="field">
-                <label for="field-sleeve-style">袖の形（なし可）</label>
-                <select name="sleeve_style" id="field-sleeve-style">
-                  {% for s in sleeve_styles %}<option value="{{ s }}">{{ s|style_label }}</option>{% endfor %}
-                  <option value="">なし（ノースリーブ）</option>
-                </select>
+            </div>
+
+            <div class="style-picker" role="group" aria-labelledby="style-picker-sleeve-label">
+              <p class="style-picker-label" id="style-picker-sleeve-label">袖の形</p>
+              <div class="style-options">
+                {% for s in sleeve_styles %}
+                <label class="style-option">
+                  <input type="radio" name="sleeve_style" value="{{ s }}"
+                         {{ 'checked' if s == default_sleeve_style }}>
+                  <img src="{{ url_for('static', filename='thumbs/sleeve__' ~ s ~ '.svg') }}" alt="">
+                  <span>{{ s|style_label }}</span>
+                </label>
+                {% endfor %}
+                <label class="style-option style-option-none">
+                  <input type="radio" name="sleeve_style" value="">
+                  <span class="style-none-mark">—</span>
+                  <span>なし（ノースリーブ）</span>
+                </label>
               </div>
-              <div class="field">
-                <label for="field-skirt-style">スカートの形（なし可）</label>
-                <select name="skirt_style" id="field-skirt-style">
-                  {% for s in skirt_styles %}<option value="{{ s }}">{{ s|style_label }}</option>{% endfor %}
-                  <option value="">なし</option>
-                </select>
+            </div>
+
+            <div class="style-picker" role="group" aria-labelledby="style-picker-skirt-label">
+              <p class="style-picker-label" id="style-picker-skirt-label">スカートの形</p>
+              <div class="style-options">
+                {% for s in skirt_styles %}
+                <label class="style-option">
+                  <input type="radio" name="skirt_style" value="{{ s }}"
+                         {{ 'checked' if s == default_skirt_style }}>
+                  <img src="{{ url_for('static', filename='thumbs/skirt__' ~ s ~ '.svg') }}" alt="">
+                  <span>{{ s|style_label }}</span>
+                </label>
+                {% endfor %}
+                <label class="style-option style-option-none">
+                  <input type="radio" name="skirt_style" value="">
+                  <span class="style-none-mark">—</span>
+                  <span>なし</span>
+                </label>
               </div>
             </div>
             <div class="checkbox-row">
-              <label><input type="checkbox" name="front_zip"> 前開きファスナー</label>
+              <label><input type="checkbox" name="front_zip" id="opt-front-zip"> 前開きファスナー</label>
             </div>
+            <div class="checkbox-row">
+              <label><input type="checkbox" name="princess_line" id="opt-princess-line"> 切り替え線（プリンセスライン）</label>
+            </div>
+            {# round67: この2つは同時に指定できない(build_garment_spec が断る)。
+               round66まで画面は両方押せてしまい、**生成を押してから**
+               エラーで戻されていた。下の説明文の中に一行書いてはあったが、
+               round32の折りたたみで隠れることがあるうえ、押せてしまう
+               ことに変わりはない。片方を選んだら、もう片方をその場で
+               押せなくして、理由をここに出す。文は web/static/app.js が
+               入れる(理由は1か所に置く)。 #}
+            <p class="conflict-note hidden" id="zip-princess-conflict"
+               role="status"></p>
+            <p class="hint">
+              身頃を「中央」と「脇」の2枚に分け、その縫い目でウエストを絞ります。
+              ダーツと違って摘める量に上限が無いので、ウエストとバストの差が
+              大きい体型でもぴったり絞れます（実測: バスト83・ウエスト50・
+              ヒップ100の体型で、ダーツ式は2.9cm余っていたのが0.0cmになりました）。
+              縫う手間は増えます。前開きファスナーとは同時に指定できません。
+            </p>
             <div class="checkbox-row option-with-style">
               <label><input type="checkbox" name="include_pants" id="include-pants-input"> パンツを含める</label>
-              <select name="pants_style" id="field-pants-style" disabled>
+              <select name="pants_style" id="field-pants-style" aria-label="パンツの形" disabled>
                 <option value="">標準</option>
                 {% for s in pants_styles %}<option value="{{ s }}">{{ s|style_label }}</option>{% endfor %}
               </select>
             </div>
             <div class="checkbox-row option-with-style">
               <label><input type="checkbox" name="include_collar" id="include-collar-input"> 衿を含める</label>
-              <select name="collar_style" id="field-collar-style" disabled>
+              <select name="collar_style" id="field-collar-style" aria-label="衿の形" disabled>
                 <option value="">標準（スタンドカラー）</option>
                 {% for s in collar_styles %}<option value="{{ s }}">{{ s|style_label }}</option>{% endfor %}
               </select>
             </div>
             <div class="checkbox-row option-with-style">
               <label id="cuffs-label"><input type="checkbox" name="include_cuffs" id="include-cuffs-input"> カフスを含める</label>
-              <select name="cuffs_style" id="field-cuffs-style" disabled>
+              <select name="cuffs_style" id="field-cuffs-style" aria-label="カフスの形" disabled>
                 <option value="">標準</option>
                 {% for s in cuffs_styles %}<option value="{{ s }}">{{ s|style_label }}</option>{% endfor %}
               </select>
             </div>
             <div class="checkbox-row option-with-style">
               <label><input type="checkbox" name="include_waistband" id="include-waistband-input"> ウエストバンドを含める</label>
-              <select name="waistband_style" id="field-waistband-style" disabled>
+              <select name="waistband_style" id="field-waistband-style" aria-label="ウエストバンドの形" disabled>
                 <option value="">標準</option>
                 {% for s in waistband_styles %}<option value="{{ s }}">{{ s|style_label }}</option>{% endfor %}
               </select>
@@ -194,10 +502,17 @@
             </p>
           </div>
 
-          <div id="custom-panel-section">
-            <h2>④ カスタムパーツ（自由形状・任意、round10で追加）</h2>
+          <!-- round32: 任意の設定は折りたたんで開始する。実測でフォーム全体の
+               高さは2971pxあり、「型紙を生成する」ボタンはページ先頭から
+               約2300px下にあった。初めて使う人は、既定のままでよい設定を
+               延々スクロールしてようやくボタンに着く。中身は消していないので
+               開けば従来どおり。見出しの「round10で追加」も、利用者には
+               意味の無い開発上の呼び名なので外した。 -->
+          <details id="custom-panel-section" class="optional-section">
+            <summary><span class="optional-step">④</span> カスタムパーツ（自由形状・任意）<span class="optional-hint">マント・翼・装甲プレートなど、定型の服に当てはまらない形</span></summary>
             <div class="field-box">
-              <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:6px;">
+              <label for="field-include-body-garment"
+                     style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:6px;">
                 本体パーツ（上の「③ パーツ構成」の内容）
               </label>
               <select name="include_body_garment" id="field-include-body-garment">
@@ -212,7 +527,7 @@
                 実寸(cm)に校正して型紙化できます。通常の服と組み合わせる場合は
                 「含める」のまま、小道具だけを作りたい場合は「含めない」にしてください。
               </p>
-              <p class="hint" style="color:#92400e;">
+              <p class="hint hint-warn">
                 ⚠ 正直な限界: ここで取り込む輪郭は、画像に写っている見た目の
                 シルエットをそのまま拡大縮小しただけの形です。実際の縫製では、
                 身頃・スカートのように体に沿ってドレープする部分の型紙は、
@@ -231,9 +546,10 @@
 
             <button type="button" id="add-custom-panel-btn" class="btn-outline">＋ カスタムパーツを追加</button>
             <input type="hidden" name="custom_panels_json" id="custom-panels-json-input" value="[]">
-          </div>
+          </details>
 
-          <h2><span id="fabric-step-number">⑤</span> 生地の配置設定</h2>
+          <details class="optional-section">
+            <summary><span class="optional-step">⑤</span> 生地の配置設定<span class="optional-hint">既定は布目安全モード（回転しない）</span></summary>
           <div class="field-box">
             <label style="display:flex; align-items:center; gap:6px; font-size:0.85rem; font-weight:600;">
               <input type="checkbox" name="allow_rotation">
@@ -244,22 +560,273 @@
               オンにすると布ロスは減りますが、回転したパーツは生地の縦地からズレる場合があります。
               先染めチェック・ストライプ・起毛など方向性のある生地では使わないでください。
             </p>
-          </div>
 
-          <h2><span id="seam-step-number">⑥</span> 縫い代（任意）</h2>
+            <!-- round38: 一方方向の生地。布目安全モードでも180度反転は
+                 起きていたので、上のチェックを外すだけでは足りない。 -->
+            <label class="checkbox-row" style="margin-top:12px;">
+              <input type="checkbox" name="one_way_fabric" id="field-one-way-fabric">
+              一方方向の生地を使う（起毛・別珍・コーデュロイ・片方向プリント）
+            </label>
+            <p class="hint">
+              オンにすると、全パーツの<strong>上下の向き</strong>まで揃えて配置します。
+              毛の向きで色や艶が変わる生地・柄に上下がある生地で、
+              「一部のパーツだけ色が違う」のを防ぎます。
+              上の「非方向性の生地」をオンにすると配置を詰めるために一部のパーツを
+              180度回転させますが、こちらをオンにすれば、そちらを使っていても向きは揃えます。
+            </p>
+
+            <div class="grid-measurements" style="margin-top:12px;">
+              <div class="field">
+                <label for="field-shrink-percent">生地の収縮率 (%)<span class="muted-text">（任意）</span></label>
+                <input type="number" step="0.1" min="0" max="20"
+                       name="shrink_percent" id="field-shrink-percent" placeholder="例: 3">
+              </div>
+              <div class="field">
+                <label for="field-pattern-repeat">柄のリピート幅 (cm)<span class="muted-text">（任意）</span></label>
+                <input type="number" step="0.1" min="0.5" max="150"
+                       name="pattern_repeat_cm" id="field-pattern-repeat" placeholder="例: 12">
+              </div>
+            </div>
+            <!-- round39: 手持ちの生地で足りるかの判定。 -->
+            <div class="grid-measurements" style="margin-top:12px;">
+              <div class="field">
+                <label for="field-stash-width">手持ちの生地の幅 (cm)<span class="muted-text">（任意）</span></label>
+                <input type="number" step="1" min="30" max="300"
+                       name="stash_width_cm" id="field-stash-width" placeholder="例: 110">
+              </div>
+              <div class="field">
+                <label for="field-stash-length">手持ちの生地の長さ (cm)<span class="muted-text">（任意）</span></label>
+                <input type="number" step="1" min="10" max="3000"
+                       name="stash_length_cm" id="field-stash-length" placeholder="例: 180">
+              </div>
+            </div>
+            {# round57: 生地ごとの手持ち。⑨で生地を分けたときだけ、
+               その名前ごとに1行出す(app.jsが作る)。round55で判定は
+               生地ごとになったのに、寸法は1枚ぶんしか受け取れなかった
+               ——「白を2m、紺を1m持っている」が入れられなかった。 #}
+            <div id="stash-per-fabric" class="hidden" data-default-fabric="{{ default_fabric_name }}">
+              <p class="hint" style="margin:10px 0 4px; font-weight:600;">
+                生地ごとに違う寸法を持っている場合（空欄なら上の寸法で判定します）
+              </p>
+              <div id="stash-per-fabric-rows"></div>
+            </div>
+            <p class="hint">
+              家にある生地の寸法を入れると、<strong>それで作れるか</strong>を判定します。
+              足りない場合は「丈を何cm詰めれば入るか」まで、実際に型紙を作り直して確かめた値で出します。
+              幅と長さの両方を入力してください。
+            </p>
+
+            <p class="hint">
+              収縮率は生地のタグに書いてあることがあります（「収縮率5%」なら1mが95cmになる意味）。
+              入力すると、地直し後に必要な長さが残るように逆算します。空欄なら綿・麻の目安（1〜3%）で示します。
+              柄のリピート幅は、柄合わせをする場合に、縦方向で柄が何cmごとに繰り返すかです。
+            </p>
+          </div>
+          </details>
+
+          <!-- round40: 着てみて合わなかったときの補正。
+               症状をこちらで当てるのではなく、利用者が実物で測った
+               余り/不足をcmで入れてもらう(数字の出どころを実測にする)。 -->
+          <details class="optional-section">
+            <summary><span class="optional-step">⑥</span> 着てみて合わなかったら（任意）<span class="optional-hint">一度縫ってみて、余った/足りない分をcmで入れます</span></summary>
+          <div class="field-box">
+            <p class="hint" style="margin:0 0 10px;">
+              一度縫って着てみて、<strong>実際に測った余り・不足</strong>を入れてください。
+              プラスは「足りないので足す」、マイナスは「余っているので詰める」です。
+              空欄の項目は補正しません。（±{{ max_alteration_cm }}cmまで）
+            </p>
+            {% for kind in alteration_kinds %}
+            <div class="field" style="margin-bottom:12px;">
+              <label for="field-alter-{{ kind.key }}">{{ kind.label }} (cm)</label>
+              <input type="number" step="0.1" min="-{{ max_alteration_cm }}" max="{{ max_alteration_cm }}"
+                     name="alter_{{ kind.key }}" id="field-alter-{{ kind.key }}" placeholder="例: 1.5">
+              <p class="hint" style="margin:4px 0 0;">
+                {{ kind.how_to_measure }}<br>
+                <span class="muted-text">
+                  ＋ … {{ kind.positive_means }} ／ − … {{ kind.negative_means }}
+                </span><br>
+                <span class="muted-text">出典:
+                  <a href="{{ kind.source_url }}" target="_blank" rel="noopener noreferrer">{{ kind.source_name }}</a>
+                </span>
+              </p>
+            </div>
+            {% endfor %}
+            <p class="hint" style="margin:10px 0 0;">
+              補正した内容は、生成後に「この型紙の作り方」へ書き出します。
+              袖丈・スカート丈を変えたい場合は、この欄ではなく②の採寸値で直してください。
+            </p>
+          </div>
+          </details>
+
+          <!-- round41: 裏地の型紙(engine/lining.py)。表地とは別の生地なので、
+               型紙も買う量も別立てで出す。
+               round49: サイズ展開モードでは裏地を引かなかったので、この節を
+               JSがモードごと隠していた(押せるのに黙って無視されるため)。
+               round58: `generate_multi_size`にliningを渡すようにしたので、
+               どのモードでも出す。裏地付きの衣装をS/M/Lでまとめて作れる。 -->
+          <details class="optional-section" id="lining-section">
+            <summary><span class="optional-step">⑦</span> 裏地（任意）<span class="optional-hint">表地の型紙から裏地の型紙も引きます</span></summary>
+          <div class="field-box">
+            <div class="checkbox-row">
+              <label for="field-lining">
+                <input type="checkbox" name="lining" id="field-lining" value="1">
+                裏地の型紙も作る
+              </label>
+            </div>
+            <p class="hint" style="margin:8px 0 0;">
+              身頃・袖・スカート・パンツの裏地を、表地と<strong>同じ出来上がり線</strong>で引きます。
+              違うのは2か所だけです。
+            </p>
+            <ul class="hint" style="margin:6px 0 0; padding-left:1.2em;">
+              <li>裾の縫い代を<strong>2cm減らす</strong>
+                （出典:
+                <a href="https://yousai.net/how_to/bubunnui/migoro/urajituke" target="_blank" rel="noopener noreferrer">うさこの洋裁工房「裏地付けの基本」</a>）</li>
+              <li>後ろ身頃の背中心に<strong>2cm足す</strong>（縫うときに深さ1cmのひだにたたむ「きせ」の分。
+                出典:
+                <a href="https://ameblo.jp/katagami-sewing/entry-12345397762.html" target="_blank" rel="noopener noreferrer">かたやまゆうこ「裏地付きコートの作り方」</a>）</li>
+            </ul>
+            <p class="hint" style="margin:6px 0 0;">
+              肩・袖ぐり・脇のゆとりは<strong>足していません</strong>。
+              「ゆとりを入れる」と書く資料はあっても、各部位で何cm足すのかを
+              数字で書いた資料が見つからなかったためです（推測で埋めると、
+              根拠のない寸法が型紙に載ります）。
+              衿・カフス・ウエストバンドは裏地ではなく接着芯の担当なので対象外です。
+            </p>
+          </div>
+          </details>
+
+          {# round52: 丈の直接指定。キャラクターの衣装は丈でシルエットが
+             決まる(膝丈・くるぶし丈・床に着く丈…)ので、身長からの比例だけ
+             では合わせられない。エンジン側の `design_length_overrides` は
+             round39から`engine/stash.py`が使っていて動いていたのに、
+             **利用者からは触れる道が無かった**。 #}
+          <details class="optional-section" id="design-length-section">
+            <summary><span class="optional-step">⑧</span> 丈を指定する（任意）<span class="optional-hint">キャラクターの丈に合わせる</span></summary>
+          <div class="field-box">
+            <div class="grid-measurements">
+              <div class="field">
+                <label for="field-length-skirt">スカート丈 (cm)<span class="muted-text">（任意）</span></label>
+                <input type="number" step="0.1" name="length_skirt" id="field-length-skirt"
+                       min="{{ design_length_range[0] }}" max="{{ design_length_range[1] }}"
+                       placeholder="例: 65">
+              </div>
+              <div class="field">
+                <label for="field-length-pants">パンツ丈 (cm)<span class="muted-text">（任意）</span></label>
+                <input type="number" step="0.1" name="length_front_pants" id="field-length-pants"
+                       min="{{ design_length_range[0] }}" max="{{ design_length_range[1] }}"
+                       placeholder="例: 95">
+              </div>
+              {# round57: 袖丈・着丈。袖ぐりより下だけを伸縮させるので、
+                 襟ぐり・袖ぐり・袖山は採寸から決まる形のまま残る。 #}
+              <div class="field">
+                <label for="field-length-sleeve">袖丈 (cm)<span class="muted-text">（任意）</span></label>
+                <input type="number" step="0.1" name="length_sleeve" id="field-length-sleeve"
+                       min="{{ design_length_range[0] }}" max="{{ design_length_range[1] }}"
+                       placeholder="例: 30">
+              </div>
+              <div class="field">
+                <label for="field-length-bodice">着丈 (cm)<span class="muted-text">（任意）</span></label>
+                <input type="number" step="0.1" name="length_front_bodice" id="field-length-bodice"
+                       min="{{ design_length_range[0] }}" max="{{ design_length_range[1] }}"
+                       placeholder="例: 55">
+              </div>
+            </div>
+            <p class="hint">
+              スカート丈・パンツ丈はウエストから裾まで、袖丈は肩先から袖口まで、
+              着丈は首の付け根から裾までの<strong>出来上がりの長さ</strong>です（縫い代は別に付きます）。
+              空欄にすると、これまでどおり身長に比例した丈になります。
+              測り方: ウエストの位置から、裾を置きたいところまでを体に沿って測ります。
+              床に着く丈にしたい場合は、履く靴を履いた状態で測ってください。
+              指定できるのは{{ design_length_range[0] }}〜{{ design_length_range[1] }}cmです。
+            </p>
+            <p class="hint">
+              袖丈・着丈は、<strong>袖ぐりより下だけ</strong>を伸縮させて合わせます。
+              襟ぐり・袖ぐり・袖山は採寸から決まる形のまま残るので、丈を変えても袖は付きます
+              （袖ぐりより下が無くなるほど短い指定は、当てずにその旨をお知らせします）。
+            </p>
+            <p class="hint">
+              イラストから判定するモードでも、ここに入力した値が優先されます
+              （絵から読み取った丈より、実際に着る人の寸法で決めた方が確実なため）。
+            </p>
+          </div>
+          </details>
+
+          {# round54: 生地の割り当て。キャラクターの衣装は1着が1種類の生地で
+             できていない(本体の色・差し色・別布…)。round53まではその
+             割り当てを受け取る場所が無く、全パーツを1枚の生地に詰めた
+             配置しか出せなかった——白と紺のパーツが交互に並ぶ配置図は、
+             どちらの生地の上に置いても使えない。 #}
+          <details class="optional-section" id="fabric-group-section">
+            <summary><span class="optional-step">⑨</span> 生地を分ける（任意）<span class="optional-hint">2色以上の衣装向け</span></summary>
+          <div class="field-box">
+            <p class="hint">
+              パーツごとに<strong>どの生地から裁つか</strong>を書くと、生地ごとに
+              配置し直した型紙と買い物メモを別々に作ります。
+              空欄のパーツは「{{ default_fabric_name }}」にまとまります。
+              名前は型紙の表紙と各ページの隅に印字されるので、
+              「白ブロード」「紺サテン」のように<strong>店で言える名前</strong>にしておくと、
+              裁つときに紙を取り違えません。
+            </p>
+            <div class="grid-measurements" id="fabric-group-grid">
+              {% for area in fabric_areas %}
+              <div class="field">
+                <label for="field-fabric-{{ area.key }}">{{ area.label }}</label>
+                <input type="text" name="fabric_{{ area.key }}" id="field-fabric-{{ area.key }}"
+                       maxlength="20" placeholder="{{ default_fabric_name }}"
+                       autocomplete="off">
+              </div>
+              {% endfor %}
+            </div>
+            <p class="hint">
+              その構成に無いパーツ（パンツを選んでいないときの「パンツ」など）に
+              書いた名前は、何もしません。生地は{{ max_fabric_groups }}種類までです。
+              裏地は<strong>この割り当てとは別</strong>に、これまでどおり裏地だけの型紙になります。
+            </p>
+          </div>
+          </details>
+
+          <details class="optional-section">
+            <summary><span class="optional-step">⑩</span> 縫い代（任意）<span class="optional-hint">既定は全辺1.0cm</span></summary>
           <div class="field-box">
             <div class="grid-measurements">
               <div class="field">
                 <label for="field-seam-allowance">縫い代 (cm)</label>
-                <input type="number" step="0.1" min="0.3" max="3.0"
+                {# round52: 下限を0に下げた。EVAフォーム・樹脂板のような
+                   「線の上で切る」素材には縫い代が要らず、エンジンは0を
+                   正しく扱えるのに、画面とAPIだけが弾いていた。
+                   0と0.3の間は従来どおり弾く(縫うつもりの入力ミス)。 #}
+                <input type="number" step="0.1"
+                       min="{{ seam_allowance_range[0] }}" max="{{ seam_allowance_range[2] }}"
                        name="seam_allowance_cm" id="field-seam-allowance" placeholder="1.0（既定）">
               </div>
               <div class="field">
                 <label for="field-hem-seam-allowance">裾の縫い代 (cm、空欄で上と同じ)</label>
-                <input type="number" step="0.1" min="0.3" max="8.0"
+                <input type="number" step="0.1"
+                       min="{{ hem_seam_allowance_range[0] }}" max="{{ hem_seam_allowance_range[1] }}"
                        name="hem_seam_allowance_cm" id="field-hem-seam-allowance" placeholder="未指定">
               </div>
             </div>
+            {# round57: 用紙。コンビニのA3はA4と同じ単価で面積が2倍なので、
+               枚数と貼り合わせの手間がほぼ半分になる(実測: 48枚→23枚)。 #}
+            <div class="field" style="margin:0 0 10px;">
+              <label for="field-paper">用紙</label>
+              <select name="paper" id="field-paper">
+                <option value="a4" selected>A4（家庭用プリンタ・コンビニ）</option>
+                <option value="a3">A3（コンビニ・枚数がほぼ半分になります）</option>
+              </select>
+            </div>
+            {# round57: 白紙の面を省くか(round53で省くようにしたとき、
+               「格子をそろえて全面ほしい」人向けの選択肢が無かった)。 #}
+            <label class="checkbox-row" style="margin:0 0 8px;">
+              <input type="checkbox" name="include_empty_tiles" value="on">
+              型紙の載らない面も印刷する（貼り合わせの格子をそろえたい場合）
+            </label>
+            <p class="hint">
+              EVAフォーム・樹脂板・ワーブラなど<strong>縫わずに線の上で切る</strong>素材で
+              作る場合は、<strong>0</strong>を指定してください（裁断線と出来上がり線が同じに
+              なります）。布を裁って縫うパーツには、
+              {{ seam_allowance_range[1] }}〜{{ seam_allowance_range[2] }}cmを指定します。
+            </p>
             <p class="hint">
               両方とも空欄なら従来通り全辺1.0cmで統一されます。「裾の縫い代」だけ別に
               指定すると、各パーツの最も下（y座標最大）にある水平な辺だけをその幅で
@@ -268,7 +835,18 @@
               水平ではないため裾扱いにならず、通常の縫い代幅のままになります。
             </p>
           </div>
+          </details>
 
+          {# round70: 「型紙を生成する」を、フォームの下端に貼り付ける。
+             【なぜ】既定値のままでも生成できるのに、ボタンはずっと下に
+             あった。実測で 1440x900 では y=2,965px（**3.3画面ぶん**下）、
+             390x844 では y=4,253px（5画面ぶん下）。採寸を入れ終わるのは
+             y=923px なので、そこから2,042px、触らなくてよい設定の上を
+             スクロールしないと押せない。
+             `position: sticky` なので、DOMの位置は変えていない——
+             Enterで押したときのフォーカスの戻し先(round47)も、
+             押した後のスクロール(round46)もそのまま効く。 #}
+          <div class="action-bar">
           <button type="submit" class="primary">型紙を生成する</button>
           <p class="hint usage-note">
             本日の生成回数:
@@ -280,31 +858,269 @@
               — <a href="{{ url_for('signup') }}">無料登録</a>で上限が増えます
             {% endif %}
           </p>
-          <p id="form-error" class="error-text hidden"></p>
+          {# round44: エラーはJSで後から書き込むので、role="alert"が無いと
+             スクリーンリーダーには**何も起きていない**ように聞こえる
+             (WCAG 4.1.3 Status Messages)。 #}
+          <p id="form-error" class="error-text hidden" role="alert"></p>
+          </div>
         </form>
       </section>
 
       <!-- 結果パネル -->
-      <section class="panel">
-        <h2>生成結果</h2>
-        <div id="result-placeholder" class="muted-text">
-          左のフォームを入力して「型紙を生成する」を押してください。
+      <section class="panel" id="result-panel">
+        {# round47: キーボードだけで操作すると、「型紙を生成する」をEnterで
+           押した瞬間に**フォーカスが消えていた**。押すとボタンが
+           disabled になり、フォーカスを持った要素を無効にすると
+           ブラウザはフォーカスを <body> へ落とすためである
+           (実測: 押す前 BUTTON → 150ms後 BODY → 完了後も BODY)。
+           スクリーンリーダーでは現在地が失われ、読み上げの起点が
+           文書の先頭に戻る。tabindex="-1" を付けて、ここを
+           「押したあとの行き先」にする(見出し自体はTab順に入らない)。 #}
+        <h2 id="result-heading" tabindex="-1">生成結果</h2>
+        <!-- round34: 生成前は、ここが1440px幅で画面のほぼ半分を占める
+             空白だった。採寸ミスが最大の失敗要因なので、その空白に
+             「どこを測るか」の図を置く(_measure_figure.html)。 -->
+        <div id="result-placeholder">
+          <p class="muted-text" style="margin:0 0 14px;">
+            採寸値とパーツを選んで「型紙を生成する」を押すと、ここに結果が出ます。
+          </p>
+          {% include "_measure_figure.html" %}
         </div>
+        {# round44: 生成の状態を読み上げるための領域。画面には出さない
+           (見える表示はローディングと結果そのもの)。aria-live="polite" なので
+           いま読んでいる内容を遮らず、区切りのいいところで読み上げられる。 #}
+        <p id="result-status" class="visually-hidden" role="status" aria-live="polite"></p>
         <div id="result-loading" class="loading-box hidden">
           <span class="spinner" aria-hidden="true"></span>生成中です…
         </div>
         <div id="result-content" class="hidden">
-          <div class="stat-grid">
-            <div class="stat-tile"><div class="value" id="stat-parts">-</div><div class="label">パーツ数</div></div>
-            <div class="stat-tile"><div class="value" id="stat-waste">-</div><div class="label">布ロス率</div></div>
-            <div class="stat-tile"><div class="value" id="stat-length">-</div><div class="label">使用生地丈(cm)</div></div>
-            <div class="stat-tile"><div class="value" id="stat-width">-</div><div class="label">生地幅(cm)</div></div>
-            <div class="stat-tile"><div class="value" id="stat-time">-</div><div class="label">処理時間(秒)</div></div>
-            <div class="stat-tile"><div class="value" id="stat-unplaced">-</div><div class="label">配置不能パーツ</div></div>
+          <!-- round34: いちばん上を「布を何m買えばいいか」にした。
+               round33までの先頭は パーツ数/布ロス率/使用生地丈/生地幅/
+               処理時間/配置不能パーツ という6つの数値タイルで、
+               **処理時間のようなエンジン側の指標**が、買い物に必要な
+               「幅○cmの生地を△m」と同じ大きさで並んでいた。
+               まず買う物、次に印刷、内部指標はいちばん下へ。 -->
+          <!-- round39: 手持ちの生地で足りるかの判定。
+               これは利用者が「作れる?」と明示的に聞いた質問への答えなので、
+               結果パネルのいちばん上に置く。プレビュー画像より下に置くと、
+               sticky+overflowのパネルの中をスクロールしないと見えない
+               (round36で分割の開示が同じ形で埋もれていた)。 -->
+          <div id="stash-verdict" class="field-box hidden">
+            <p class="hint" id="stash-headline" style="margin:0 0 6px; font-weight:600;"></p>
+            <p class="hint" id="stash-detail" style="margin:0;"></p>
+            <ul id="stash-suggestions" class="hint" style="margin:8px 0 0; padding-left:1.2em;"></ul>
+          </div>
+
+          <div class="fabric-need">
+            <p class="fabric-need-lead">用意する生地</p>
+            <p class="fabric-need-main">
+              幅<strong id="need-width">-</strong>cm の生地を
+              <strong id="need-length">-</strong>m
+            </p>
+            <p class="fabric-need-sub" id="need-sub"></p>
+          </div>
+
+          <div class="download-row">
+            <a id="download-pdf" href="#" class="btn-solid">A4分割PDFをダウンロード</a>
+            <a id="download-svg" href="#" target="_blank" class="btn-outline">SVGを開く</a>
+            <a id="download-dxf" href="#" class="btn-outline">DXF（裁断機・CAD向け）</a>
+            <!-- round39: プロジェクター投影用(実寸1枚もの)。A4分割とは別物。 -->
+            <a id="download-projector" href="#" class="btn-outline">プロジェクター投影用PDF</a>
+          </div>
+
+          {# round53: 印刷する枚数。コンビニで印刷する人にはこれが値段と
+             待ち時間そのもので、家のプリンタでも「紙が足りるか」を
+             出かける前に知りたい。PDFを開くまで分からないのは遅い。 #}
+          <p class="hint" id="pdf-sheet-hint" style="margin:6px 0 0;"></p>
+
+          {# round54: 生地を分けたときの、生地ごとの型紙。
+             上のダウンロード行は1種類目の生地のものなので、2種類以上に
+             分かれたときは**どの生地のものか分からなくなる**。
+             生地ごとに1ブロックずつ出し、上の行は隠す。 #}
+          <div id="fabric-groups-box" class="field-box note-plan hidden">
+            <p class="hint note-title">
+              生地ごとの型紙（<span id="fabric-group-count">0</span>種類）— それぞれ別の生地から裁ちます
+            </p>
+            <div id="fabric-group-list"></div>
+            <p class="hint" style="margin:8px 0 0;">
+              配置と必要量は生地ごとに計算し直しています。合計しても買う単位に
+              ならないので、<strong>生地ごとの長さをそのまま店で言ってください</strong>。
+            </p>
+          </div>
+
+          <!-- round41: 裏地の型紙。表地とは**別の生地**なので、
+               ダウンロードも必要量も表地とは別の行にする(足し合わせると
+               買う単位にならない)。裏地を付けない生成では出さない。 -->
+          <div id="lining-box" class="field-box note-info hidden">
+            <p class="hint note-title">
+              裏地の型紙（<span id="lining-part-count">0</span>枚）— 表地とは別の生地です
+            </p>
+            <p class="hint" id="lining-need" style="margin:0 0 8px;"></p>
+            <div class="download-row" style="margin:0 0 8px;">
+              <a id="download-lining-pdf" href="#" class="btn-solid">裏地のA4分割PDF</a>
+              <a id="download-lining-svg" href="#" target="_blank" class="btn-outline">裏地のSVGを開く</a>
+              <a id="download-lining-dxf" href="#" class="btn-outline">裏地のDXF</a>
+              <a id="download-lining-projector" href="#" class="btn-outline">裏地のプロジェクター投影用PDF</a>
+            </div>
+            <ul id="lining-notes" class="hint" style="margin:0; padding-left:1.2em;"></ul>
+          </div>
+
+          <div class="preview-frame">
+            <img id="preview-img" alt="生成された型紙のプレビュー">
+          </div>
+
+          <div id="rotation-warning" class="field-box note-warn hidden">
+            <p class="hint" style="margin:0;">
+              ⚠ 一部のパーツが90度回転して配置されています。布目線が生地の縦地からズレる可能性があるため、
+              方向性のある生地（先染めチェック・ストライプ等）を使う場合は配置を確認してください。
+            </p>
+          </div>
+
+          <div id="unplaced-warning" class="field-box note-danger hidden">
+            <p class="hint note-title">
+              ⚠ 型紙が不完全です。一部のパーツが生地に収まらず含まれていません。
+            </p>
+            <ul id="unplaced-warning-list"></ul>
+          </div>
+
+          <div id="measurement-clamp-warning" class="field-box note-danger hidden">
+            <!-- round32: 見出しの文言を実態に合わせた。ここに並ぶのは
+                 「採寸値が範囲外」だけでなく、ヒップが通らない・ダーツが
+                 収まらない・ウエストが絞りきれない、といった**型紙と体の
+                 食い違い**全般である(engine/pipeline.pyの各種notes)。 -->
+            <p class="hint note-title">
+              ⚠ 縫う前に確認してください（型紙と採寸値が食い違っているところ）
+            </p>
+            <ul id="measurement-clamp-warning-list"></ul>
+          </div>
+
+          <!-- round32: 「こう作りました」という説明。警告(赤)とは分ける。
+               round31まではゆとりの説明まで赤い「⚠採寸値が範囲を超えて
+               います」の中に出ていて、問題の無い生成でも赤が出ていた。 -->
+          <!-- round33: 縫う順番。PDFにも同じ内容を入れてあるが、
+               画面でも読めるようにする(裁つ前に全体を見通せる)。 -->
+          <details id="assembly-steps" class="field-box details-info hidden">
+            <summary>
+              縫う順番（<span id="assembly-step-count">0</span>工程）— PDFにも入っています
+            </summary>
+            <ol id="assembly-steps-list" style="margin:10px 0 0; padding-left:1.4em;"></ol>
+          </details>
+
+          <!-- round38: 買い物メモ。生地幅ごとの必要量・接着芯・縮み分・
+               柄合わせの上乗せ・素材の提案(出典付き)。 -->
+          <details id="shopping-list" class="field-box details-info hidden">
+            <summary>
+              買い物メモ（何を、どれだけ買うか）— PDFにも入っています
+            </summary>
+            <div style="margin-top:10px;">
+              <!-- round38: 表は狭い画面で横にはみ出すので、この入れ物の
+                   中だけでスクロールさせる(ページ本体は横スクロールさせない)。 -->
+              <p class="hint" style="margin:0 0 4px; font-weight:600;">表地</p>
+              <div class="shopping-table-wrap">
+                <table id="shopping-width-table" class="shopping-table"></table>
+              </div>
+              <!-- round41: 裏地は別の生地。表地の表と足し合わせないよう
+                   表ごと分ける。裏地を付けない生成では隠れる。 -->
+              <div id="shopping-lining-wrap" class="hidden" style="margin-top:12px;">
+                <p class="hint" style="margin:0 0 4px; font-weight:600;">裏地（表地とは別に買います）</p>
+                <div class="shopping-table-wrap">
+                  <table id="shopping-lining-table" class="shopping-table"></table>
+                </div>
+              </div>
+              <p class="hint" id="shopping-interfacing" style="margin:8px 0 0;"></p>
+              {# round68: ファスナー。縫う順番は「前開きファスナーを付ける」と
+                 言うのに、買い物メモに一度も出てこなかった。生地屋でこの
+                 メモを見て買う人は、生地と接着芯だけ買って帰ることになる。
+                 長さの選び方・詰め方は下の注記に出典付きで出る。 #}
+              <p class="hint hidden" id="shopping-zipper" style="margin:8px 0 0;"></p>
+              <ul id="shopping-notes" class="hint" style="margin:8px 0 0; padding-left:1.2em;"></ul>
+              <div id="shopping-suggestions" style="margin-top:10px;"></div>
+            </div>
+          </details>
+
+          <div id="design-note" class="field-box note-info hidden">
+            <p class="hint note-title">
+              この型紙の作り方
+            </p>
+            <ul id="design-note-list"></ul>
+          </div>
+
+          <details id="costume-project-result" class="field-box details-info hidden">
+            <summary>衣装プロジェクトの制作指示</summary>
+            <div style="margin-top:10px;">
+              <p class="hint" id="costume-project-name" style="margin:0 0 8px; font-weight:600;"></p>
+              <p class="hint" style="margin:8px 0 4px; font-weight:600;">市販セットとの照合</p>
+              <ul id="costume-project-benchmark" class="hint" style="margin:0; padding-left:1.2em;"></ul>
+              <p class="hint" style="margin:8px 0 4px; font-weight:600;">型紙に含めたもの</p>
+              <ul id="costume-project-patterns" class="hint" style="margin:0; padding-left:1.2em;"></ul>
+              <p class="hint" style="margin:8px 0 4px; font-weight:600;">別工程で作るもの</p>
+              <ul id="costume-project-separate" class="hint" style="margin:0; padding-left:1.2em;"></ul>
+              <p class="hint" style="margin:8px 0 4px; font-weight:600;">素材・副資材</p>
+              <ul id="costume-project-materials" class="hint" style="margin:0; padding-left:1.2em;"></ul>
+              <p class="hint" style="margin:8px 0 4px; font-weight:600;">組立順</p>
+              <ol id="costume-project-construction" class="hint" style="margin:0; padding-left:1.2em;"></ol>
+              <p class="hint" style="margin:8px 0 4px; font-weight:600;">確認事項</p>
+              <ul id="costume-project-limitations" class="hint" style="margin:0; padding-left:1.2em;"></ul>
+            </div>
+          </details>
+
+          <details id="reference-review-result" class="field-box details-info hidden" open>
+            <summary>資料画像の読み取り確認</summary>
+            <div style="margin-top:10px;">
+              <p id="reference-review-summary" class="hint" style="margin:0;"></p>
+              <p class="hint" style="margin:8px 0 4px; font-weight:600;">読み取り結果</p>
+              <ul id="reference-review-detected" class="hint" style="margin:0; padding-left:1.2em;"></ul>
+              <p class="hint" style="margin:8px 0 4px; font-weight:600;">裁断前に追加する資料・確認</p>
+              <ul id="reference-review-missing" class="hint" style="margin:0; padding-left:1.2em;"></ul>
+            </div>
+          </details>
+
+          {# round65: ここには以前「身頃のウエスト/脇ダーツ、タイトスカートの
+             ウエストダーツなど」とパーツ名が**手書き**してあった。実測すると
+             この文が出る11通りのうち10通りで、挙げたパーツにダーツは入って
+             いない(標準体型ではタイトスカートにも入らない/パンツに8本入っても
+             文はパンツに触れない)。裁つ前に「どこを探すか」の話なので、
+             実際に入ったパーツを engine/pipeline.py の darts_by_part から
+             受け取って並べる。**パーツ名をここに書かない。** #}
+          <div id="dart-note" class="field-box note-info hidden">
+            <p class="hint" style="margin:0 0 6px;">
+              ✓ 体型に合わせて、ダーツを合計<span id="dart-count">0</span>本入れました。
+              入っているのは次のパーツです（型紙の上ではV字の切り込み、または
+              両端が尖ったひし形が目印です）。
+            </p>
+            <ul id="dart-note-list"></ul>
+            <p class="hint" style="margin:6px 0 0;">
+              線形の比例変形だけでは表現できない体型差を補正しています。
+            </p>
+          </div>
+
+          <div id="compatibility-warning" class="field-box note-warn hidden">
+            <p class="hint note-title">
+              ⚠ パーツ間の縫い合わせ長さに、無視できない差があります。
+            </p>
+            <ul id="compatibility-warning-list"></ul>
           </div>
 
           <div class="field-box">
-            <h3 style="margin:0 0 10px;">詰め合わせ効果（素朴に縦積みした場合との比較）</h3>
+            <h3 style="margin:0 0 10px;">生成されたパーツ一覧</h3>
+            <div id="parts-chip-list" class="chip-list"></div>
+          </div>
+
+          <!-- round34: 布ロス率・詰め合わせ効果・処理時間は、作る人の判断を
+               変えない内部指標なので、いちばん下にたたんで置く。消しては
+               いない(「どれくらい生地を無駄にしているのか」は知りたい人が
+               いる。開けば全部見られる)。 -->
+          <details class="field-box result-details">
+            <summary>この配置について（布の使い方・処理時間）</summary>
+            <div class="stat-grid" style="margin-top:12px;">
+              <div class="stat-tile"><div class="value" id="stat-parts">-</div><div class="label">パーツ数</div></div>
+              <div class="stat-tile"><div class="value" id="stat-waste">-</div><div class="label">布ロス率</div></div>
+              <div class="stat-tile"><div class="value" id="stat-length">-</div><div class="label">使用生地丈(cm)</div></div>
+              <div class="stat-tile"><div class="value" id="stat-width">-</div><div class="label">生地幅(cm)</div></div>
+              <div class="stat-tile"><div class="value" id="stat-time">-</div><div class="label">処理時間(秒)</div></div>
+              <div class="stat-tile"><div class="value" id="stat-unplaced">-</div><div class="label">配置不能パーツ</div></div>
+            </div>
+            <h3 style="margin:14px 0 10px;">詰め合わせ効果（素朴に縦積みした場合との比較）</h3>
             <div class="compare-row">
               <div class="compare-label">詰めない場合</div>
               <div class="compare-track"><div id="bar-naive" class="compare-fill naive"></div></div>
@@ -319,58 +1135,7 @@
               「詰めない場合」は各パーツを1枚ずつ縦に積んだだけの参考値で、実際の裁断現場の
               標準的な配置手法と比較したものではありません。バーの長さは使用生地丈(cm)に対応します。
             </p>
-          </div>
-
-          <div class="preview-frame">
-            <img id="preview-img" alt="生成された型紙のプレビュー">
-          </div>
-
-          <div class="download-row">
-            <a id="download-svg" href="#" target="_blank" class="btn-outline">SVGを開く</a>
-            <a id="download-pdf" href="#" class="btn-solid">A4分割PDFをダウンロード</a>
-            <a id="download-dxf" href="#" class="btn-outline">DXFをダウンロード（業務用裁断機・CAD向け）</a>
-          </div>
-
-          <div id="rotation-warning" class="field-box hidden" style="border-color:#d97706;">
-            <p class="hint" style="margin:0; color:#92400e;">
-              ⚠ 一部のパーツが90度回転して配置されています。布目線が生地の縦地からズレる可能性があるため、
-              方向性のある生地（先染めチェック・ストライプ等）を使う場合は配置を確認してください。
-            </p>
-          </div>
-
-          <div id="unplaced-warning" class="field-box hidden" style="border-color:#dc2626; background:#fef2f2;">
-            <p class="hint" style="margin:0 0 6px; color:#991b1b; font-weight:700;">
-              ⚠ 型紙が不完全です。一部のパーツが生地に収まらず含まれていません。
-            </p>
-            <ul id="unplaced-warning-list" style="margin:0; padding-left:1.2em; color:#991b1b;"></ul>
-          </div>
-
-          <div id="measurement-clamp-warning" class="field-box hidden" style="border-color:#dc2626;">
-            <p class="hint" style="margin:0 0 6px; color:#991b1b; font-weight:600;">
-              ⚠ 入力した採寸値の一部が、テンプレートを正確に変形できる範囲を超えています。
-            </p>
-            <ul id="measurement-clamp-warning-list" style="margin:0; padding-left:1.2em; color:#991b1b;"></ul>
-          </div>
-
-          <div id="dart-note" class="field-box hidden" style="border-color:#2563eb;">
-            <p class="hint" style="margin:0; color:#1d4ed8;">
-              ✓ 体型に応じて、ダーツを合計<span id="dart-count">0</span>本追加しました
-              （身頃のウエスト/脇ダーツ、タイトスカートのウエストダーツなど、V字の
-              切り込みが目印です）。線形の比例変形だけでは表現できない体型差を補正しています。
-            </p>
-          </div>
-
-          <div id="compatibility-warning" class="field-box hidden" style="border-color:#d97706; background:#fffbeb;">
-            <p class="hint" style="margin:0 0 6px; color:#92400e; font-weight:600;">
-              ⚠ パーツ間の縫い合わせ長さに、無視できない差があります(round6で追加したチェック)。
-            </p>
-            <ul id="compatibility-warning-list" style="margin:0; padding-left:1.2em; color:#92400e;"></ul>
-          </div>
-
-          <div class="field-box">
-            <h3 style="margin:0 0 10px;">生成されたパーツ一覧</h3>
-            <div id="parts-chip-list" class="chip-list"></div>
-          </div>
+          </details>
 
           <div class="field-box ai-badge-box">
             <span id="ai-badge" class="ai-badge">AI</span>
@@ -404,18 +1169,42 @@
             <a id="download-zip" href="#" class="btn-solid">全サイズをまとめてZIPダウンロード</a>
           </div>
 
-          <div id="size-consistency-warning" class="field-box hidden" style="border-color:#d97706; background:#fffbeb;">
-            <p class="hint" style="margin:0 0 6px; color:#92400e; font-weight:600;">
-              ⚠ サイズ間でダーツ本数の変化が不連続になっている箇所があります(round6で追加したチェック)。
+          <div id="size-consistency-warning" class="field-box note-warn hidden">
+            <p class="hint note-title">
+              ⚠ サイズ間でダーツ本数の変化が不連続になっている箇所があります。
             </p>
-            <ul id="size-consistency-warning-list" style="margin:0; padding-left:1.2em; color:#92400e;"></ul>
+            <ul id="size-consistency-warning-list"></ul>
           </div>
 
-          <div id="grading-precision-note" class="field-box hidden" style="border-color:#2563eb;">
-            <p class="hint" style="margin:0 0 6px; color:#1d4ed8; font-weight:600;">
-              ℹ グレーディング(号数展開)の刻み幅について、参考情報があります(round6で追加)。
+          {# round49: 頼まれたのにやらなかったことを伝える箱。
+             いまのところ「サイズ展開では裏地を引かない」がこれに当たる。 #}
+          <div id="multi-size-note" class="field-box note-warn hidden">
+            <p class="hint note-title">
+              ⚠ このモードでは行っていないことがあります。
             </p>
-            <ul id="grading-precision-note-list" style="margin:0; padding-left:1.2em; color:#1d4ed8;"></ul>
+            <ul id="multi-size-note-list"></ul>
+          </div>
+
+          {# round69: 全サイズを合わせた「何枚刷るか・何を買うか」。
+             サイズ展開を使うのは同じ衣装を何人ぶんか作る人なので、
+             1人ぶんの数字だけでは買い物も印刷も見積もれない。
+             round68まで、画面に出ていたのはサイズごとのパーツ数・
+             布ロス率・生地丈だけだった(実測: S/M/Lで143枚刷るのに、
+             その数字はどこにも出ていなかった)。 #}
+          <div id="multi-size-totals" class="field-box note-info hidden">
+            <h3 class="note-title">
+              全サイズ合わせて（買う量・刷る枚数）
+            </h3>
+            <ul id="multi-size-totals-list"></ul>
+            <p class="hint" id="multi-size-totals-caveat"
+               style="margin:8px 0 0;"></p>
+          </div>
+
+          <div id="grading-precision-note" class="field-box note-info hidden">
+            <p class="hint note-title">
+              ℹ グレーディング(号数展開)の刻み幅について、参考情報があります。
+            </p>
+            <ul id="grading-precision-note-list"></ul>
           </div>
 
           <div id="multi-size-list"></div>

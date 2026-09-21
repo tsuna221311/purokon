@@ -4,15 +4,147 @@
    自己完結させておくのが安全なため、素のCSSで最小限のデザインシステムを
    組んでいる。 */
 
+/* round34: 色の役割を分けた。
+   round33まで `--accent` はほぼ黒(#1e293b)で、ヘッダーの背景・主ボタン・
+   リンク・選択状態のすべてに同じ色を使っていた。その結果**画面の中で
+   いちばん押してほしい物と、ただの帯が同じ色**になり、視線の順番が
+   生まれていなかった。ヘッダーの色(--header-bg)と、操作の色(--accent)を
+   別にする。--accent は「次に押す物」「いま選ばれている物」だけに使う。
+   藍系にしたのは、型紙プレビューの布目線(青)・基準線(紫)と喧嘩せず、
+   生成りの背景に沈まないため。 */
 :root {
+  /* ---- round70: 設計トークン ------------------------------------------
+     色・余白・角丸・影・字の大きさを、名前で呼べる形にまとめた。
+     round69まで、状態の色(青の注記・橙の確認・赤の警告)は
+     `style="color:#1d4ed8"` のように**HTMLとJavaScriptに直接**書かれて
+     いた(実測: index.htmlに43か所、app.jsに30か所)。
+     直接書いてあると、(1)配色を変えるたびに全部を探し直すことになり、
+     (2)**ダークモードが原理的に作れない**。名前にして1か所へ集める。
+
+     生成り＋藍という今の個性は変えない。変えたのは、余白の刻み・
+     角丸・影・フォーカスの見え方と、暗い画面での見え方である。 */
+
+  /* 面(surface): 奥から手前へ */
+  --bg: #f4f1ea;            /* ページの地 */
+  --surface: #ffffff;       /* カード */
+  --surface-sunken: #faf8f4; /* カードの中の一段沈んだ面(field-box) */
+  --surface-raised: #ffffff;
+  --header-bg: #1b2030;
+
+  /* 線 */
+  --border: #e5e0d6;
+  --border-strong: #d6d0c4;
+
+  /* 文字 */
   --ink: #1c1c1e;
-  --muted: #78716c;
-  --border: #e7e2d9;
-  --bg: #f5f2ec;
-  --panel: #ffffff;
-  --accent: #1e293b;
-  --accent-hover: #334155;
+  --ink-soft: #44403c;
+  --muted: #6f6862;
+
+  /* 操作の色(「次に押す物」「いま選ばれている物」だけに使う) */
+  --accent: #3b4a8f;
+  --accent-hover: #2f3c75;
+  --accent-soft: #eef0fb;
+  --accent-ink: #ffffff;
+
+  /* 「なし」のサムネイルに描く横棒。文字ではなく**選択肢を表す図**
+     なので 3:1 (WCAG 2.1 SC 1.4.11)。round37が「基準を満たす中で
+     いちばん控えめな値」として選んだ値をそのまま名前にした。
+     白で3.44:1 / 選択中の地(--accent-soft)で3.01:1。 */
+  --thumb-mark: #97896b;
+
+  /* 状態。fg=文字、bg=地、bd=枠。3つ揃いで1つの意味を表す */
+  --info-fg: #1d4ed8;
+  --info-bg: #eff4ff;
+  --info-bd: #bfd0fb;
+  --warn-fg: #8a4b09;
+  --warn-bg: #fff8ed;
+  --warn-bd: #f0c68a;
+  --danger-fg: #991b1b;
+  --danger-bg: #fef2f2;
+  --danger-bd: #f4b8b8;
+  --success-fg: #15803d;
+  --success-bg: #f0fdf4;
+  --success-bd: #a7e3bf;
+  --plan-fg: #6d28d9;
+  --plan-bg: #f5f3ff;
+  --plan-bd: #d6c8f7;
   --danger: #dc2626;
+
+  /* 余白の刻み(4の倍数) */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+
+  /* 角丸 */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+
+  /* 影。薄く2枚重ねて「紙が浮いている」ところまでにする */
+  --shadow-sm: 0 1px 2px rgba(28, 26, 22, 0.05);
+  --shadow-md: 0 1px 2px rgba(28, 26, 22, 0.05),
+               0 8px 24px -12px rgba(28, 26, 22, 0.18);
+  --shadow-lg: 0 2px 4px rgba(28, 26, 22, 0.06),
+               0 16px 40px -16px rgba(28, 26, 22, 0.22);
+  --ring: 0 0 0 3px var(--accent-soft);
+}
+
+/* ---- round70: ダークモード -------------------------------------------
+   OSの設定に追従する。夜に作業する人が多い道具なので効く。
+   面は「奥ほど暗い」のではなく**手前ほど明るい**(Material と同じ考え方)。
+   型紙のプレビューは白地のSVGなので、沈まないよう専用の面を用意する。
+   両モードともWCAG 2.1 SC 1.4.3を実測で確認している
+   (scripts/audit_contrast.py --scheme dark)。 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161b;
+    --surface: #1c1f26;
+    --surface-sunken: #23262e;
+    --surface-raised: #262a33;
+    --header-bg: #0f1115;
+
+    --border: #343841;
+    --border-strong: #454a55;
+
+    --ink: #eceef2;
+    --ink-soft: #c9cdd6;
+    --muted: #a0a6b2;
+
+    --accent: #9fb0ef;
+    --accent-hover: #b6c3f5;
+    --accent-soft: #2a3150;
+    --accent-ink: #14161b;
+    /* 暗い側も同じ考え方で、選択中の地で3.08:1・通常の地で4.00:1。 */
+    --thumb-mark: #857c6c;
+
+    --info-fg: #a8c2fb;
+    --info-bg: #1b2440;
+    --info-bd: #33457a;
+    --warn-fg: #f0bf7d;
+    --warn-bg: #2d2416;
+    --warn-bd: #5d4522;
+    --danger-fg: #f6a7a7;
+    --danger-bg: #2e1a1a;
+    --danger-bd: #6a3232;
+    --success-fg: #86e0aa;
+    --success-bg: #14261b;
+    --success-bd: #2f5c3f;
+    --plan-fg: #cbb6fb;
+    --plan-bg: #241b3a;
+    --plan-bd: #4a3a75;
+    --danger: #f87171;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.4),
+                 0 8px 24px -12px rgba(0, 0, 0, 0.7);
+    --shadow-lg: 0 2px 4px rgba(0, 0, 0, 0.45),
+                 0 16px 40px -16px rgba(0, 0, 0, 0.8);
+  }
 }
 
 * { box-sizing: border-box; }
@@ -38,13 +170,32 @@ body {
   white-space: nowrap;
 }
 
-header.app-header {
+/* round44: 本文へのスキップリンク。ふだんは画面の外にあり、
+   Tabでフォーカスが当たったときだけ左上に現れる。 */
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -48px;
+  z-index: 100;
   background: var(--accent);
-  color: white;
-  padding: 20px 24px;
+  color: var(--accent-ink);
+  padding: 8px 14px;
+  border-radius: 0 0 8px 8px;
+  text-decoration: none;
+  font-size: 0.85rem;
+  transition: top 0.15s ease-in-out;
 }
-header.app-header h1 { margin: 0; font-size: 1.5rem; letter-spacing: -0.01em; }
-header.app-header p { margin: 4px 0 0; color: #cbd5e1; font-size: 0.85rem; }
+.skip-link:focus { top: 0; }
+
+header.app-header {
+  background: var(--header-bg);
+  color: #f2f4f8;
+  /* round34: 20px→14pxに詰めた。最初の画面で90px使っていて、そのぶん
+     本題(採寸欄)が下がっていた。 */
+  padding: 14px 24px;
+}
+header.app-header h1 { margin: 0; font-size: 1.35rem; letter-spacing: -0.01em; }
+header.app-header p { margin: 3px 0 0; color: #b9c0cf; font-size: 0.8rem; }
 .header-logo-link { color: inherit; text-decoration: none; }
 
 .header-inner {
@@ -57,39 +208,40 @@ header.app-header p { margin: 4px 0 0; color: #cbd5e1; font-size: 0.85rem; }
   gap: 12px;
 }
 .header-nav { display: flex; align-items: center; gap: 14px; font-size: 0.85rem; }
-.header-nav a { color: #e2e8f0; text-decoration: none; }
+.header-nav a { color: #dde2ec; text-decoration: none; border-radius: var(--r-sm); }
 .header-nav a:hover { text-decoration: underline; }
 .header-nav .inline-form { display: inline; margin: 0; }
 .link-button {
   background: none;
   border: none;
-  color: #e2e8f0;
+  color: #dde2ec;
   font-size: 0.85rem;
   cursor: pointer;
   padding: 0;
   text-decoration: underline;
 }
 .nav-cta {
-  background: white;
-  color: var(--accent) !important;
-  padding: 5px 12px;
-  border-radius: 999px;
+  background: #ffffff;
+  color: #2f3c75 !important;
+  padding: 6px 14px;
+  border-radius: var(--r-pill);
   font-weight: 600;
 }
+.nav-cta:hover { background: #eef0fb; text-decoration: none; }
 .nav-plan-pill {
   padding: 2px 9px;
   border-radius: 999px;
   font-size: 0.72rem;
   font-weight: 700;
-  background: rgba(255,255,255,0.15);
-  color: #e2e8f0;
+  background: rgba(255,255,255,0.16);
+  color: #dde2ec;
 }
-.nav-plan-pill.nav-plan-pro { background: #7c3aed; color: white; }
+.nav-plan-pill.nav-plan-pro { background: #7c3aed; color: #ffffff; }
 
 .container {
-  max-width: 1080px;
+  max-width: 1120px;
   margin: 0 auto;
-  padding: 24px;
+  padding: var(--sp-5);
 }
 .container.narrow { max-width: 460px; }
 
@@ -100,43 +252,127 @@ header.app-header p { margin: 4px 0 0; color: #cbd5e1; font-size: 0.85rem; }
   border-radius: 8px;
   font-size: 0.85rem;
 }
-.flash-success { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; }
-.flash-error { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+.flash-success {
+  background: var(--success-bg); border: 1px solid var(--success-bd);
+  color: var(--success-fg);
+}
+.flash-error {
+  background: var(--danger-bg); border: 1px solid var(--danger-bd);
+  color: var(--danger-fg);
+}
 
-.mock-note { border-color: #c4b5fd; background: #f5f3ff; }
-.mock-note p.hint { color: #5b21b6; }
+.mock-note { border-color: var(--plan-bd); background: var(--plan-bg); }
+.mock-note p.hint { color: var(--plan-fg); }
 
 .usage-note { margin-top: 10px; }
 
 .layout {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 24px;
+  gap: var(--sp-5);
 }
+/* round38: グリッドの列は既定で「中身が縮められる最小幅(min-content)」より
+   細くならない。中に**折り返せない要素**が1つでもあると、その幅まで列が
+   広がり、ページ全体が横スクロールする。
+
+   実測(320px): 買い物メモの表を足した直後、生成後だけページが394px幅に
+   なった。はみ出していたのは表ではなく`.panel`そのもので、表の
+   min-contentが列を押し広げていた——表側に`overflow-x:auto`を付けても、
+   列の最小幅の計算はそれより先に効くので直らない。
+
+   round32で`<select>`が同じ形で画面をはみ出させたときと同じ原因である
+   (あのときは`select{width:100%;min-width:0}`で直した)。列の側にも
+   同じ手当てをして、再発の経路をひとつ塞ぐ。 */
+.layout > .panel { min-width: 0; }
+
+/* round41: 注記の中にURLを書くと、そのURLが**1語**なので折り返せず、
+   段組みの列の最小幅がURLの長さまで広がる——`min-width: 0`は列の縮小を
+   許すが、**中身が縮まない**ので、結局そこがはみ出す。
+
+   実測: 裏地の注記に出典URL
+   (https://yousai.net/how_to/bubunnui/migoro/urajituke)を入れたところ、
+   320px幅でページ全体が184px、390px幅で114px横にはみ出した
+   (裏地を付けない生成では0)。二分して`#lining-notes`だけが原因と確認した。
+
+   出典のURLは**注記に必ず書く**方針(出典の無い数字を出さない)なので、
+   URLを短くする・消すという直し方は採らない。どこでも折り返せるようにする。
+   `.hint`と注記のリストにまとめてかけているのは、今後どの注記に出典URLが
+   入っても同じ事故が起きないようにするため(round32のselect、round38の
+   買い物メモの表に続く、同じ形の3例目)。 */
+.hint, .field-box li, .field-box p { overflow-wrap: anywhere; }
 @media (min-width: 1000px) {
   .layout { grid-template-columns: 1fr 1fr; }
+  /* round34: 右のパネルを画面に貼り付ける。左のフォームは縦に長いので、
+     ここを固定しないと**スクロールしている間ずっと右半分が空白**になる
+     (実測: パーツ構成のあたりまで下げると、右は完全に白紙)。
+     採寸図も生成結果も、フォームを触りながら見るものなので、視界に
+     残っている方がよい。パネル自身が画面より高くなる場合は、その中で
+     スクロールする。 */
+  .layout > .panel:last-child {
+    position: sticky;
+    top: 16px;
+    align-self: start;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+  }
 }
 
+/* round70: カードは「浮いた紙」にする。1pxの線だけだと、
+   どこからどこまでが1枚なのかが目で追えなかった。 */
 .panel {
-  background: var(--panel);
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 24px;
+  border-radius: var(--r-lg);
+  padding: var(--sp-5);
+  box-shadow: var(--shadow-md);
 }
 
-.panel h2 { font-size: 1.05rem; margin: 24px 0 14px; }
+/* round70: 見出しの階層をはっきりさせた。round69まで h2 と本文の
+   大きさの差が小さく、①②③がどこで切り替わるのか目で追いにくかった。 */
+.panel h2 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  margin: var(--sp-6) 0 var(--sp-4);
+  padding-bottom: var(--sp-2);
+  border-bottom: 1px solid var(--border);
+}
 .panel h2:first-child { margin-top: 0; }
-.panel h3 { font-size: 0.9rem; margin: 0 0 8px; }
+.panel h3 { font-size: 0.95rem; font-weight: 700; margin: 0 0 var(--sp-2); }
 
 .mode-row { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 20px; }
 .mode-row label, .checkbox-row label { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.9rem; }
 
 .field-box {
-  margin-bottom: 20px;
-  padding: 14px;
-  background: #faf8f4;
+  margin-bottom: var(--sp-5);
+  padding: var(--sp-4);
+  background: var(--surface-sunken);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-md);
+}
+
+/* 衣装カタログは50件あるため、単なる長い<select>では探しにくい。
+   検索・ジャンル・よく使う候補を同じ視線のまとまりにし、選択後に
+   「個別設計済み」か「検証ベース」かもその場で伝える。 */
+.project-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-3); }
+.project-section-heading label { display: block; }
+.project-section-subtitle { margin: var(--sp-1) 0 0; color: var(--muted); font-size: 0.78rem; }
+.project-count { flex: 0 0 auto; background: var(--accent-soft); color: var(--accent); border-radius: var(--r-pill); padding: 3px 9px; font-size: 0.75rem; font-weight: 700; }
+.reference-first-callout { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin: 0 0 var(--sp-4); padding: var(--sp-3) var(--sp-4); background: var(--accent-soft); border: 1px solid var(--info-bd); border-radius: var(--r-md); }
+.reference-first-callout strong { color: var(--accent); font-size: 0.92rem; }
+.reference-first-callout p { margin: 4px 0 0; color: var(--ink-soft); font-size: 0.78rem; line-height: 1.5; }
+.reference-first-callout button { flex: 0 0 auto; border: 0; border-radius: var(--r-sm); background: var(--accent); color: var(--accent-ink); cursor: pointer; font: inherit; font-size: 0.82rem; font-weight: 700; padding: 8px 12px; }
+.reference-first-callout button:hover, .reference-first-callout button:focus-visible { background: var(--accent-hover); outline: var(--ring); }
+.project-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(130px, 0.45fr); gap: var(--sp-2); margin-bottom: var(--sp-2); }
+.project-filters .field label { display: block; font-size: 0.76rem; font-weight: 600; margin-bottom: 4px; }
+.project-selection-summary { margin: var(--sp-2) 0 0; border-left: 3px solid var(--border-strong); padding: 6px 9px; color: var(--ink-soft); font-size: 0.8rem; line-height: 1.55; }
+.project-selection-summary.is-curated { border-color: var(--success-fg); background: var(--success-bg); color: var(--success-fg); }
+.project-selection-summary.is-catalog { border-color: var(--info-fg); background: var(--info-bg); color: var(--info-fg); }
+@media (max-width: 480px) {
+  .project-filters { grid-template-columns: 1fr; }
+  .project-section-heading { align-items: center; }
+  .reference-first-callout { align-items: stretch; flex-direction: column; }
+  .reference-first-callout button { width: 100%; }
 }
 .field-box p.hint { font-size: 0.78rem; color: var(--muted); margin: 8px 0 0; }
 
@@ -154,14 +390,52 @@ header.app-header p { margin: 4px 0 0; color: #cbd5e1; font-size: 0.85rem; }
 .profile-save-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .profile-save-row input[type="text"] { flex: 1 1 200px; min-width: 0; }
 .profile-save-row button { flex: 0 0 auto; white-space: nowrap; }
-#profile-save-message.error-text { color: #b91c1c; }
+#profile-save-message.error-text { color: var(--danger-fg); }
 
+/* round32: 採寸欄は3列固定だったが、グリッドの列は既定で「中身の最小幅
+   より狭くならない」(min-width:auto)。数値入力欄の既定の最小幅が約131px
+   あるため、390px幅のスマホでは3列で417px必要になり、**ページ全体が横に
+   100pxはみ出して横スクロールが出ていた**(実測: 画面390pxに対し
+   document.scrollWidth=490px)。実機幅では2列に落とし、あわせて各欄が
+   縮めるようにする。 */
 .grid-measurements {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 12px;
   margin-bottom: 20px;
 }
+@media (min-width: 560px) {
+  .grid-measurements { grid-template-columns: repeat(3, 1fr); }
+}
+/* グリッドの子が中身の最小幅に縛られないようにする(上記の横あふれの根本原因)。*/
+.grid-measurements .field,
+.grid-parts .field,
+.stat-grid .stat-tile { min-width: 0; }
+
+/* round32: <select>は「いちばん長い選択肢が入る幅」より狭くならない。
+   ゆとりの選択肢「ゆったり(重ね着・動きの大きい衣装)（身頃 バスト+14.0cm）」
+   だけで451px必要で、これが**画面幅によらず横スクロールを出していた真犯人**
+   (実測: 画面320pxでも390pxでもdocument.scrollWidthが一定の490px。
+   `.field`の中に無い#fitには、既存の width:100% が当たっていなかった)。
+   選択肢の文言は情報として要るので短くせず、コントロール側を縮める。 */
+select {
+  width: 100%; min-width: 0; max-width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 0.92rem;
+}
+
+/* ダウンロードボタンの行も、3つ横並びのままでは文言(「DXFをダウンロード
+   （業務用裁断機・CAD向け）」)が縮まずにはみ出す。狭い画面では縦に積む。 */
+/* round34: 主役はA4分割PDF(家庭用プリンタで印刷して裁断に使う物)なので
+   1行を丸ごと使い、SVG/DXFはその下に並べる。3つ横並びだと、狭い列では
+   「A4分割PDFをダウ / ンロード」と割れて読みにくかった。 */
+.download-row { flex-wrap: wrap; }
+.download-row .btn-solid { flex: 1 1 100%; font-size: 0.92rem; padding: 12px; }
+.download-row .btn-outline { flex: 1 1 40%; min-width: 0; }
 .grid-parts {
   display: grid;
   grid-template-columns: 1fr;
@@ -174,18 +448,25 @@ header.app-header p { margin: 4px 0 0; color: #cbd5e1; font-size: 0.85rem; }
 
 .field label {
   display: block;
-  font-size: 0.72rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   color: var(--muted);
-  margin-bottom: 4px;
+  margin-bottom: var(--sp-1);
 }
 .field input, .field select {
   width: 100%;
-  padding: 8px 10px;
-  border: 1px solid #d6d0c4;
-  border-radius: 6px;
-  font-size: 0.88rem;
-  background: white;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  font-size: 0.92rem;
+  color: var(--ink);
+  background: var(--surface);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
+.field input::placeholder { color: var(--muted); }
+/* 数値欄は数字が並ぶので、字幅をそろえた方が読み比べやすい。 */
+.grid-measurements input[type="number"] { font-variant-numeric: tabular-nums; }
 
 /* パスワード表示/隠すトグル(password_toggle.js参照)。確認用入力欄が無い
    サインアップ・パスワード再設定画面で、タイプミスに気付けないまま送信
@@ -222,29 +503,56 @@ header.app-header p { margin: 4px 0 0; color: #cbd5e1; font-size: 0.85rem; }
 .checkbox-row.option-with-style select:disabled { opacity: 0.5; }
 
 button.primary {
-  margin-top: 20px;
   width: 100%;
   background: var(--accent);
-  color: white;
+  color: var(--accent-ink);
   border: none;
-  padding: 12px;
-  border-radius: 8px;
-  font-size: 0.95rem;
-  font-weight: 600;
+  padding: 14px;
+  border-radius: var(--r-md);
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
   cursor: pointer;
-  transition: background 0.15s ease;
+  box-shadow: var(--shadow-sm);
+  transition: background 0.15s ease, transform 0.08s ease;
 }
 button.primary:hover { background: var(--accent-hover); }
-button.primary:disabled { background: #a8a29e; cursor: not-allowed; }
+button.primary:active { transform: translateY(1px); }
+button.primary:disabled {
+  background: var(--border-strong);
+  color: var(--muted);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* round34: フォーカスの見え方を統一する。ブラウザ既定のままだと、
+   キーボードで操作している人がどこにいるか分からない場面があった。 */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.field input:focus,
+.field select:focus,
+select:focus,
+.grid-measurements input:focus {
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+  outline: none;
+}
 
 .error-text {
-  margin-top: 12px;
+  margin-top: var(--sp-3);
   font-size: 0.85rem;
-  color: #991b1b;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-  border-radius: 8px;
-  padding: 10px 12px;
+  color: var(--danger-fg);
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-bd);
+  border-radius: var(--r-md);
+  padding: var(--sp-3);
 }
 .muted-text { color: var(--muted); font-size: 0.88rem; }
 
@@ -267,14 +575,25 @@ button.primary:disabled { background: #a8a29e; cursor: not-allowed; }
 }
 @keyframes pf-spin { to { transform: rotate(360deg); } }
 
+/* round32: 結果の数値タイルも3列固定で、スマホでは「使用生地丈(cm)」
+   「配置不能パーツ」のラベルが右端で切れていた(実機で確認)。狭い画面では
+   2列にする。 */
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 10px;
   margin-bottom: 18px;
   text-align: center;
 }
-.stat-tile { background: #faf8f4; border: 1px solid var(--border); border-radius: 10px; padding: 12px 6px; }
+@media (min-width: 560px) {
+  .stat-grid { grid-template-columns: repeat(3, 1fr); }
+}
+.stat-tile {
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-2);
+}
 .stat-tile .value { font-size: 1.4rem; font-weight: 700; word-break: break-word; }
 .stat-tile .value.value-email { font-size: 0.95rem; overflow-wrap: anywhere; }
 .stat-tile .label { font-size: 0.7rem; color: var(--muted); margin-top: 2px; }
@@ -307,14 +626,14 @@ button.primary:disabled { background: #a8a29e; cursor: not-allowed; }
   font-weight: 600;
   text-decoration: none;
 }
-.btn-outline { border: 1px solid var(--accent); color: var(--accent); background: white; }
-.btn-outline:hover { background: #f4f4f5; }
-.btn-solid { background: var(--accent); color: white; border: 1px solid var(--accent); }
+.btn-outline { border: 1px solid var(--accent); color: var(--accent); background: var(--surface); }
+.btn-outline:hover { background: var(--accent-soft); }
+.btn-solid { background: var(--accent); color: var(--accent-ink); border: 1px solid var(--accent); }
 .btn-solid:hover { background: var(--accent-hover); }
 
 table.log-table { width: 100%; font-size: 0.78rem; border-collapse: collapse; border: 1px solid var(--border); }
 table.log-table th, table.log-table td { padding: 6px 8px; text-align: left; border-top: 1px solid #f0ece3; }
-table.log-table thead th { background: #faf8f4; border-top: none; }
+table.log-table thead th { background: var(--surface-sunken); border-top: none; }
 table.log-table td:first-child, table.log-table th:first-child { white-space: nowrap; }
 .table-scroll { overflow-x: auto; }
 
@@ -325,8 +644,8 @@ table.log-table td:first-child, table.log-table th:first-child { white-space: no
   font-size: 0.72rem;
   font-weight: 600;
 }
-.mode-pill.mock { background: #f1f5f9; color: #475569; }
-.mode-pill.claude { background: #ede9fe; color: #6d28d9; }
+.mode-pill.mock { background: var(--surface-sunken); color: var(--muted); }
+.mode-pill.claude { background: var(--plan-bg); color: var(--plan-fg); }
 
 .compare-row {
   display: grid;
@@ -340,12 +659,12 @@ table.log-table td:first-child, table.log-table th:first-child { white-space: no
 .compare-value { text-align: right; font-weight: 600; font-size: 0.8rem; }
 .compare-track {
   height: 14px;
-  background: #f0ece3;
+  background: var(--surface-sunken);
   border-radius: 999px;
   overflow: hidden;
 }
 .compare-fill { height: 100%; border-radius: 999px; transition: width 0.4s ease; }
-.compare-fill.naive { background: #cbd5e1; }
+.compare-fill.naive { background: var(--border-strong); }
 .compare-fill.actual { background: var(--accent); }
 
 .chip-list { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -354,13 +673,248 @@ table.log-table td:first-child, table.log-table th:first-child { white-space: no
   flex-direction: column;
   gap: 2px;
   padding: 8px 12px;
-  background: white;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
   font-size: 0.78rem;
 }
 .part-chip-name { font-weight: 600; }
 .part-chip-size { color: var(--muted); font-size: 0.72rem; }
+/* round32: 裁ち方の指示(表地/枚数/わ裁ち/接着芯)。 */
+.part-chip-note { color: var(--muted); font-size: 0.7rem; }
+
+/* round34: 結果のいちばん上「用意する生地」。 */
+.fabric-need {
+  padding: 16px 18px;
+  margin-bottom: 14px;
+  background: var(--accent-soft);
+  border: 1.5px solid var(--accent);
+  border-radius: 10px;
+}
+.fabric-need-lead { margin: 0 0 4px; font-size: 0.75rem; font-weight: 600; color: var(--accent); }
+.fabric-need-main { margin: 0; font-size: 1.05rem; color: var(--ink); }
+.fabric-need-main strong { font-size: 1.7rem; font-weight: 700; margin: 0 2px; }
+.fabric-need-sub { margin: 8px 0 0; font-size: 0.72rem; line-height: 1.7; color: var(--muted); }
+
+/* round34: 内部指標のたたみ。 */
+.result-details > summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--muted);
+  list-style: none;
+}
+.result-details > summary::-webkit-details-marker { display: none; }
+.result-details > summary::after { content: "\00a0\00a0▾"; color: var(--accent); }
+.result-details[open] > summary::after { content: "\00a0\00a0▴"; }
+
+/* round34: 形をサムネイルで選ぶ(web/templates/index.html の style-picker)。
+   ラジオボタン自体は見せず、カード全体を押せるようにする
+   (指でもマウスでも狙いやすい大きさにする)。 */
+.style-picker { margin-bottom: 18px; }
+.style-picker-label {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+.style-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 8px;
+}
+.style-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 4px 6px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.style-option:hover { border-color: var(--accent); }
+/* ラジオは視覚的に隠すが、キーボード操作と読み上げのために残す。 */
+.style-option input[type="radio"] {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  clip: rect(0 0 0 0); clip-path: inset(50%);
+  overflow: hidden; white-space: nowrap;
+}
+.style-option img,
+.style-option .style-none-mark {
+  width: 100%;
+  height: 52px;
+  object-fit: contain;
+}
+.style-option .style-none-mark {
+  display: flex; align-items: center; justify-content: center;
+  /* round37: #c4bcab から暗くした。「なし」のサムネイルに描く横棒で、
+     実測では白の上で1.89:1しかなく、ほとんど見えていなかった。
+     これは文字ではなく**選択肢を表す図**なので、必要なのは4.5:1ではなく
+     3:1(WCAG 2.1 SC 1.4.11 非テキストのコントラスト)。#97896b にすると
+     白で3.42:1、選択中の背景 #eef0fb の上で3.01:1 になる。
+     4.5:1まで濃くすると、他のサムネイルの線画より目立って
+     「なし」が強調されて見えてしまうので、3:1で止める。 */
+  color: var(--thumb-mark); font-size: 1.6rem; line-height: 1;
+}
+.style-option span:last-child {
+  font-size: 0.68rem;
+  line-height: 1.35;
+  color: var(--muted);
+  /* 2行になる名前(「スウィートハートネック」)があるので、行数が違っても
+     カードの高さが揃うように下限を決める。 */
+  min-height: 2.7em;
+  display: flex;
+  align-items: center;
+}
+.style-option:has(input:checked) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+  background: var(--accent-soft);
+}
+.style-option:has(input:checked) span:last-child { color: var(--accent); font-weight: 600; }
+/* キーボードでたどっているときも、どこにいるか分かるようにする。 */
+.style-option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* round34: 採寸図(web/templates/_measure_figure.html)。
+   線は全部うっすら描いておき、フォーカスされた項目だけを強調する。
+   全部にラベルを出すと図が文字だらけで読めなくなるため、ラベルも
+   強調されたものだけ表示する。 */
+.measure-figure { display: flex; flex-direction: column; align-items: center; }
+.measure-figure svg { width: 100%; max-width: 340px; height: auto; }
+
+.mf-body path,
+.mf-body ellipse { fill: #f3efe6; stroke: #cec6b6; stroke-width: 1.4;
+                    stroke-linejoin: round; stroke-linecap: round; }
+.mf-body .mf-neck { fill: none; }
+
+.mf-marks .mf-line,
+.mf-marks .mf-tick { fill: none; stroke: #b9b0a0; stroke-width: 1.2;
+                      stroke-linecap: round; }
+.mf-marks .mf-line-back { fill: none; stroke: #b9b0a0; stroke-width: 1.2;
+                           stroke-dasharray: 2.5 2.5; stroke-linecap: round; }
+.mf-marks ellipse.mf-line { fill: none; }
+.mf-marks .mf-dot { fill: #b9b0a0; stroke: none; }
+.mf-marks .mf-label { display: none; }
+
+/* 強調中の項目 */
+.mf-marks g.is-active .mf-line,
+.mf-marks g.is-active .mf-tick,
+.mf-marks g.is-active .mf-line-back { stroke: var(--accent); stroke-width: 2.1; }
+.mf-marks g.is-active .mf-dot { fill: var(--accent); }
+.mf-marks g.is-active .mf-label {
+  display: block;
+  fill: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  text-anchor: middle;
+  paint-order: stroke;
+  stroke: #fdfcf9;
+  stroke-width: 3.5;
+  stroke-linejoin: round;
+}
+
+.measure-caption {
+  width: 100%;
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.measure-caption-title { margin: 0 0 4px; font-size: 0.85rem; font-weight: 700; }
+.measure-caption-how { margin: 0; font-size: 0.78rem; line-height: 1.7; color: var(--ink-soft); }
+.measure-caption-caution {
+  margin: 6px 0 0; font-size: 0.74rem; line-height: 1.7; color: var(--warn-fg);
+}
+
+/* round64: 狭い画面用の、採寸欄のすぐ下に出る測り方
+   (web/templates/index.html の #measure-inline-guide)。
+   図とその説明は、欄にフォーカスした時点で実測0px——キーボードを
+   出すと画面外なので、測りながら読む文をここにも出す。
+   1000px以上では図の説明が見えている(実測712px)ので隠す。
+   境目は app.js の placeMeasureFigure と同じ 1000px。 */
+.measure-inline-guide {
+  margin: -8px 0 16px;
+  padding: 10px 12px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+}
+.measure-inline-guide-title {
+  margin: 0 0 4px; font-size: 0.85rem; font-weight: 700; color: var(--accent);
+}
+.measure-inline-guide-how {
+  margin: 0; font-size: 0.82rem; line-height: 1.7; color: var(--ink-soft);
+}
+.measure-inline-guide-caution {
+  margin: 6px 0 0; font-size: 0.8rem; line-height: 1.7; color: var(--warn-fg);
+}
+@media (min-width: 1000px) {
+  .measure-inline-guide { display: none; }
+}
+
+/* round33: 縫う順番(engine/assembly.py)。 */
+.assembly-step { margin-bottom: 12px; }
+.assembly-step-title { font-weight: 700; font-size: 0.88rem; color: var(--info-fg); }
+.assembly-step-detail { font-size: 0.8rem; line-height: 1.75; color: var(--ink-soft); margin-top: 2px; }
+.assembly-step-parts { font-size: 0.72rem; color: var(--muted); margin-top: 2px; }
+
+/* round32: 長い説明文をたたむ(web/static/app.jsのcollapseLongHints)。 */
+.hint-collapsible { margin: 0 0 12px; }
+.hint-collapsible > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.6;
+  list-style: none;
+}
+.hint-collapsible > summary::-webkit-details-marker { display: none; }
+.hint-collapsible > summary::after {
+  content: "\00a0▾ くわしく";
+  color: var(--accent);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+.hint-collapsible[open] > summary::after { content: "\00a0▴ 閉じる"; }
+.hint-collapsible-body { margin: 6px 0 0; }
+
+/* round32: 任意の設定セクション(④カスタムパーツ・⑤生地の配置・⑥縫い代)を
+   折りたたむ。見出し(h2)と同じ見え方にして、開閉できることだけを足す。 */
+.optional-section { margin: 24px 0 14px; }
+.optional-section > summary {
+  cursor: pointer;
+  font-size: 1.05rem;
+  font-weight: 700;
+  list-style: none;
+  /* flexだと狭い画面で丸数字だけ別行に落ちる(390pxで実測)。
+     文章として流れるようインラインのままにする。 */
+  display: block;
+  line-height: 1.7;
+}
+.optional-section > summary .optional-step { margin-right: 4px; }
+.optional-section > summary::-webkit-details-marker { display: none; }
+.optional-section > summary::after {
+  content: "\00a0\00a0▾ 開く";
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.optional-section[open] > summary::after { content: "\00a0\00a0▴ 閉じる"; }
+.optional-section > summary .optional-hint {
+  margin-left: 8px;
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+.optional-section > summary + * { margin-top: 14px; }
 
 .ai-badge-box { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 18px; }
 .ai-badge {
@@ -372,19 +926,19 @@ table.log-table td:first-child, table.log-table th:first-child { white-space: no
   white-space: nowrap;
   margin-top: 2px;
 }
-.ai-badge-active { background: #ede9fe; color: #6d28d9; }
-.ai-badge-inactive { background: #f1f5f9; color: #475569; }
+.ai-badge-active { background: var(--plan-bg); color: var(--plan-fg); }
+.ai-badge-inactive { background: var(--surface-sunken); color: var(--muted); }
 
 /* round8で追加: 退会(アカウント削除)・APIキー失効等、取り消せない/
    注意を要する操作のための強調表示。誤操作を防ぐため、通常のボタン
    (primary/btn-outline)とは視覚的に区別する。 */
-.danger-zone { border-color: #fecaca; background: #fef2f2; }
+.danger-zone { border-color: var(--danger-bd); background: var(--danger-bg); }
 .btn-danger {
   display: inline-block;
   width: 100%;
   box-sizing: border-box;
-  background: white;
-  color: var(--danger);
+  background: var(--surface);
+  color: var(--danger-fg);
   border: 1px solid var(--danger);
   padding: 10px;
   border-radius: 8px;
@@ -393,7 +947,7 @@ table.log-table td:first-child, table.log-table th:first-child { white-space: no
   cursor: pointer;
   text-align: center;
 }
-.btn-danger:hover { background: #fef2f2; }
+.btn-danger:hover { background: var(--danger-bg); }
 
 .key-value-mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -415,7 +969,10 @@ footer.app-footer {
 .legal-content h3 { margin-top: 22px; margin-bottom: 6px; font-size: 1rem; }
 .legal-content p, .legal-content li { color: var(--ink); line-height: 1.7; }
 .legal-content ul { margin: 0 0 12px; padding-left: 20px; }
-.legal-placeholder { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; padding: 2px 6px; border-radius: 4px; font-size: 0.85em; }
+.legal-placeholder {
+  background: var(--warn-bg); border: 1px solid var(--warn-bd);
+  color: var(--warn-fg); padding: 2px 6px; border-radius: 4px; font-size: 0.85em;
+}
 
 .plan-grid {
   display: grid;
@@ -438,8 +995,8 @@ footer.app-footer {
 .plan-badge {
   font-size: 0.65rem;
   font-weight: 700;
-  background: #ede9fe;
-  color: #6d28d9;
+  background: var(--plan-bg);
+  color: var(--plan-fg);
   padding: 2px 8px;
   border-radius: 999px;
 }
@@ -468,7 +1025,13 @@ footer.app-footer {
   border-radius: 6px;
   font-size: 0.88rem;
 }
-.custom-panel-card-header label { font-size: 0.82rem; display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+/* round56: 押せる範囲を24px以上にする(WCAG 2.2 SC 2.5.8)。
+   カスタムパーツのカードは「＋ カスタムパーツを追加」を押すまでDOMに
+   存在しないので、round44から続けている押せる範囲の検査が**一度も
+   測っていなかった**。実測すると「左右反転パーツも作る」が152×18pxで、
+   マント・翼・装甲プレートというコスプレ向けのいちばん特徴的な画面に
+   不足が残っていた。min-heightを与えて、行ごと押せるようにする。 */
+.custom-panel-card-header label { font-size: 0.82rem; display: flex; align-items: center; gap: 4px; white-space: nowrap; min-height: 24px; }
 .custom-panel-trace-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
 .custom-panel-canvas-wrap { margin-bottom: 10px; }
 .custom-panel-canvas {
@@ -477,13 +1040,13 @@ footer.app-footer {
   height: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: #faf9f6;
+  background: var(--surface-sunken);
   cursor: crosshair;
   touch-action: none;
 }
 .custom-panel-tools { margin-bottom: 10px; }
 .custom-panel-tool-btn { font-size: 0.78rem; padding: 6px 10px; }
-.custom-panel-tool-btn.is-active { background: var(--accent); color: white; }
+.custom-panel-tool-btn.is-active { background: var(--accent); color: var(--accent-ink); }
 .custom-panel-calibration { margin-bottom: 8px; }
 .custom-panel-calib-manual-field, .custom-panel-calib-measurement-field { margin-top: 6px; }
 .custom-panel-calib-manual-field input, .custom-panel-calib-measurement-field select {
@@ -495,16 +1058,382 @@ footer.app-footer {
 .custom-panel-status { margin-top: 8px !important; }
 #add-custom-panel-btn { margin-top: 4px; }
 #add-custom-panel-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.plan-cta { width: 100%; display: block; text-align: center; }
+/* round44: 料金ページのCTAは「文章の中のリンク」ではなく押すための帯なので、
+   タップ目標の最小(24px)を満たす必要がある(実測21px)。 */
+.plan-cta {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  text-align: center;
+}
 
 /* round11: カスタムパーツの実寸(cm)予告表示。
    通常は控えめな色、寸法の上限/下限に触れたときだけ error-text で目立たせる。 */
 .custom-panel-size-preview {
   margin-top: 8px !important;
   font-weight: 600;
-  color: #1e293b;
+  color: var(--ink);
 }
 .custom-panel-size-preview.is-muted {
   font-weight: 400;
   color: var(--muted);
 }
+
+/* round38: 買い物メモの表。生地幅ごとの必要量を並べる。
+   実測(320px/390px)で、この表を足した直後にページ本体が横スクロール
+   するようになった。表そのものは削れないので、入れ物の中だけで
+   スクロールさせる。 */
+.shopping-table-wrap { overflow-x: auto; min-width: 0; -webkit-overflow-scrolling: touch; }
+.shopping-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+.shopping-table th, .shopping-table td {
+  padding: 5px 8px; border-bottom: 1px solid var(--border); text-align: right;
+}
+.shopping-table th:first-child, .shopping-table td:first-child { text-align: left; }
+.shopping-table thead th { color: var(--muted); font-weight: 600; }
+.shopping-table tr.is-recommended td { background: var(--accent-soft); font-weight: 600; }
+.shopping-table .shopping-badge {
+  font-size: 0.7rem; color: var(--accent); margin-left: 6px; white-space: nowrap;
+}
+.shopping-table td.shopping-nofit { color: var(--danger-fg); }
+.shopping-suggestion { margin: 0 0 8px; font-size: 0.78rem; line-height: 1.7; }
+.shopping-suggestion .shopping-part { font-weight: 600; }
+.shopping-suggestion .shopping-source { color: var(--muted); font-size: 0.72rem; }
+.shopping-suggestion .shopping-source a { color: var(--muted); }
+
+
+/* --- round44: タップ目標の大きさ(WCAG 2.2 SC 2.5.8 Target Size (Minimum)) ---
+ *
+ * 【実測した状態】Playwrightで7ページ×2幅を回り、クリックできる要素の
+ * 外接矩形を全部測ったところ、**222件が24×24px未満**だった:
+ *
+ *   ヘッダーのナビ(使い方・料金・ログイン)  42×18 / 28×18 / 56×18
+ *   チェックボックス・ラジオ                13×13
+ *   <select>(ゆとり・原型・バリエーション)   19〜23px
+ *   <summary>(▼くわしく)                   20px
+ *   フッターのリンク                        14px
+ *
+ * 13×13pxのチェックボックスは、指では**まず当たらない**。この製品は
+ * 「ネックラインを選ぶ」「ゆとりを選ぶ」がチェックとセレクトなので、
+ * 入力そのものが押しにくい状態だった。
+ *
+ * 【基準】WCAG 2.2 SC 2.5.8 は 24×24 CSS px を最小とする(Level AA)。
+ * 文章の中に埋まったリンク(出典のURLなど)は同SCの Inline 例外に当たるので
+ * 触らない——本文の行間まで広げると、かえって読みにくくなる。
+ * ここで広げるのは「押すためにある部品」だけ。
+ *
+ * 【どう広げるか】見た目の大きさは変えず、**当たり判定だけ**広げる。
+ * 文字やチェックの絵を大きくすると画面の密度が変わってしまうので、
+ * padding と min-height で囲いを広げる。 */
+
+/* ナビ・フッターの行リンク。文章の中ではなく、並んだ導線なので対象。 */
+.header-nav a,
+.header-nav .link-button,
+.app-footer-links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 4px;
+}
+/* 行が詰まって隣を押してしまわないよう、並びの隙間も確保する。 */
+.header-nav { gap: 10px; row-gap: 4px; flex-wrap: wrap; }
+.app-footer-links a { margin-right: 10px; }
+
+/* チェックボックス・ラジオ。絵の大きさは18pxに留め、囲い(label)を24pxにする
+ * ——絵そのものを24pxにすると、並んだ選択肢の見た目が急に重くなる。 */
+input[type="checkbox"],
+input[type="radio"] {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  margin: 0;
+}
+.mode-row label,
+.checkbox-row label,
+.grid-parts label,
+.custom-grade-grid label,
+label.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  padding: 2px 0;
+}
+
+/* セレクトと数値入力。高さだけ確保する(幅は既存の width:100% のまま)。 */
+select,
+input[type="number"],
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="file"] {
+  min-height: 32px;
+}
+
+/* たたむ見出し(▼くわしく / 任意セクション)。押す場所なので24px以上。 */
+summary {
+  min-height: 24px;
+  display: list-item;
+  padding: 2px 0;
+}
+
+/* 小さなボタン(パスワードの「表示」など)。 */
+button,
+.btn-outline,
+.btn-solid,
+.link-button {
+  min-height: 24px;
+}
+
+/* 段落にぽつんと1つだけ置かれたリンクは、文章の中のリンクではなく
+   「押すために置いた導線」なので対象にする(例: ログイン画面の
+   「パスワードをお忘れですか？」)。文中のリンク——「アカウントを
+   お持ちでない方は <a>無料登録</a>」のような——は only-child にならないので、
+   この規則には当たらない(SC 2.5.8 の Inline 例外のまま)。 */
+p > a:only-child {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+}
+
+/* --- round45: 動きを減らす設定を尊重する (WCAG 2.1 SC 2.3.3 / 2.2.2) -------
+ *
+ * 【実測した状態】Playwrightで prefers-reduced-motion: reduce にして
+ * 開いたところ、**何も変わらなかった**。とくに生成中のスピナーは
+ *
+ *     animation: pf-spin 0.8s linear infinite;
+ *
+ * と infinite で回り続ける。前庭障害や動きに酔う人にとって、
+ * 画面の中で止まらずに回り続けるものは実害のある動きである。
+ * 生成には1秒足らずしかかからない(round45の実測)が、通信が遅ければ
+ * その間ずっと回っている。
+ *
+ * 【どう直すか】動きを消しても**何が起きているかは分かるようにする**
+ * ——スピナーは回転を止める代わりに明滅(opacityのみ)にし、
+ * 「生成中です…」の文字と読み上げ(round44)で状態は伝わる。
+ * ここで一律に animation: none にしないのは、それだと
+ * 「動いているのか固まっているのか分からない」状態になるため。
+ * 明滅も2秒周期のゆっくりしたものにとどめる。
+ */
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: pf-fade 2s ease-in-out infinite;
+  }
+  @keyframes pf-fade {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.35; }
+  }
+  /* そのほかの装飾的な動き(ホバーの色変化、スキップリンクの滑り出し等)は
+     即時に切り替わるようにする。押した結果が分からなくならないよう、
+     0ではなく 0.01ms にして transitionend を発火させる。 */
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+  /* 上の一括指定よりスピナーを優先する(明滅は残す)。 */
+  .spinner {
+    animation-duration: 2s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
+
+/* round47: 「押したあとの行き先」にした見出し。
+ *
+ * `tabindex="-1"` を付けた要素は、JSでフォーカスを当てたときに既定の
+ * 枠線が出る。マウスで押した人にまで枠が出ると「何か選ばれた」ように
+ * 見えてしまうので、キーボード操作のときだけ出す(:focus-visible)。
+ * 既存の入力欄・リンク・summary と同じ扱いに揃える。 */
+#result-heading:focus { outline: none; }
+#result-heading:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+/* --- round48: 結果パネルに「続きがある」ことを見せる ------------------------
+ *
+ * 【実測した状態】1440×950 で生成すると、結果パネルは
+ *
+ *     見えている高さ 918px / 中身の高さ 1836px / 隠れている分 **918px**
+ *
+ * ——ちょうど半分が画面の外にある。しかもスクロールバーは重ねて描かれる
+ * 種類(offsetWidth - clientWidth = 2px = 枠線の分だけ)なので、
+ * **触るまで現れない**。隠れている側には、縫う順番・パーツ一覧・買い物メモ・
+ * 注意書きが全部入っている。「PDFを落として終わり」と思われて、
+ * それらが読まれないまま終わる。
+ *
+ * 中身を減らすのでも、パネルを伸ばすのでもなく、
+ * **スクロールできることを常に見えるようにする**。
+ * 画面の作りは変えないので、round34からの「フォームを触りながら結果を見る」
+ * という並びはそのまま。
+ *
+ * 【色の根拠】`scrollbar-color` のつまみは操作できる部分なので、
+ * WCAG 2.1 SC 1.4.11 Non-text Contrast の 3:1 を満たす必要がある。
+ * 最初 `var(--border)` (#e7e2d9) を指定したが、白に対して **1.29:1** で
+ * 実測しても1画素も見えなかった(スクリーンショットの該当列が全部 #ffffff)。
+ * #8b93a3 は白に対して 3.09:1 で、この基準を満たす。
+ *
+ * `::-webkit-scrollbar` は**書かない**。`scrollbar-width` を指定すると
+ * Chrome系はその擬似要素を無視するので、両方書くと片方が死んだ規則になる。 */
+@media (min-width: 1024px) {
+  .layout > .panel:last-child {
+    /* 幅を先に確保しておく。あとから出入りすると中身が横にずれる。 */
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: #8b93a3 transparent;
+  }
+}
+
+/* round48: 結果パネルの下端の合図(まだ続きがあることを示す)。
+ * JS(updateResultPanelOverflowHint)が、実際にあふれていて、かつ
+ * 下まで読んでいないときだけ `has-more-below` を付ける。
+ * 2段組で自前のスクロールになる幅でだけ意味があるので、その幅に限る。
+ *
+ * `background-image` ではなく `::after` にするのは、背景は中身の**下**に
+ * 描かれるため、パーツ図や表に隠れて見えないからである(最初そう書いて、
+ * 実測で下端の明るさが 247.4 → 246.2 と1しか変わらず、作り直した)。
+ * スクロールする箱の中で `position: sticky; bottom: 0` にすると、
+ * 中身の上に重なったまま、見えている下端に貼り付く。
+ * `margin-top` で自分の高さを打ち消し、中身の長さを変えない。
+ * 操作の邪魔をしないよう `pointer-events: none`。 */
+@media (min-width: 1024px) {
+  .layout > .panel.has-more-below::after {
+    content: "";
+    display: block;
+    position: sticky;
+    bottom: 0;
+    height: 40px;
+    margin-top: -40px;
+    background: linear-gradient(to top,
+                  rgba(15, 23, 42, 0.20) 0,
+                  rgba(15, 23, 42, 0.06) 55%,
+                  rgba(15, 23, 42, 0) 100%);
+    pointer-events: none;
+  }
+}
+
+/* round67: 同時に選べない組み合わせの理由(前開きファスナー × 切り替え線)。
+   `.hint`にしないのは、round32のcollapseLongHintsが長い説明文を
+   <details>へ畳むため。理由が畳まれると、押せない理由が読めなくなる。 */
+.conflict-note {
+  /* round67: 最初 margin-top を負にしていたら、すぐ上のチェックボックスの
+     ラベルに**重なって**読めなくなった(実測・画面写真で確認)。
+     詰めたい気持ちより、重ならないことが先。 */
+  margin: 6px 0 14px;
+  padding: 8px 10px;
+  font-size: 0.82rem;
+  line-height: 1.7;
+  color: var(--warn-fg);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-bd);
+  border-radius: 8px;
+}
+
+/* round67: 選べない方のチェックボックスは、見た目でも選べないと分かるように。
+   理由は隣の .conflict-note に出す(色だけで伝えない)。 */
+.checkbox-row label:has(input:disabled) { color: var(--muted); cursor: not-allowed; }
+.checkbox-row input:disabled { cursor: not-allowed; }
+
+
+/* ---- round70: 生成ボタンを、いつでも押せる位置に ----------------------
+   【実測した状態】既定値のままでも生成できるのに、ボタンは
+     1440x900  y=2,965px（3.3画面ぶん下）
+     390x844   y=4,253px（5画面ぶん下）
+   にあった。採寸を入れ終わるのは y=923px（desktop）なので、そこから
+   2,042px、**触らなくてよい設定の上を**スクロールしないと押せない。
+
+   `position: sticky` を使う。DOMの並びは変えないので、Enterで押した
+   ときのフォーカスの戻し先(round47)も、押した後のスクロール(round46)も
+   そのまま効く。フォームの終わりまで来たら、そこで止まる。 */
+.action-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  margin: var(--sp-5) calc(var(--sp-5) * -1) calc(var(--sp-5) * -1);
+  padding: var(--sp-4) var(--sp-5) var(--sp-5);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 var(--r-lg) var(--r-lg);
+}
+/* backdrop-filter が効かないブラウザでは、透けると読めなくなる。
+   そのときは透けない地にする。 */
+@supports not (backdrop-filter: blur(8px)) {
+  .action-bar { background: var(--surface); }
+}
+.action-bar .usage-note { margin: var(--sp-2) 0 0; text-align: center; }
+.action-bar .error-text { margin-top: var(--sp-3); }
+
+/* ---- round70: 説明文と注記 -------------------------------------------- */
+.hint { color: var(--muted); }
+.field-box p.hint { color: var(--muted); }
+
+/* 状態の箱。色は3つ揃いのトークンで持つので、ダークモードでも
+   文字と地の関係が崩れない。 */
+.note-box {
+  margin-bottom: var(--sp-4);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--surface-sunken);
+}
+.note-box > :first-child { margin-top: 0; }
+.note-box > :last-child { margin-bottom: 0; }
+.note-info { color: var(--info-fg); background: var(--info-bg); border-color: var(--info-bd); }
+.note-warn { color: var(--warn-fg); background: var(--warn-bg); border-color: var(--warn-bd); }
+.note-danger { color: var(--danger-fg); background: var(--danger-bg); border-color: var(--danger-bd); }
+.note-success { color: var(--success-fg); background: var(--success-bg); border-color: var(--success-bd); }
+.note-plan { color: var(--plan-fg); background: var(--plan-bg); border-color: var(--plan-bd); }
+.note-info .hint, .note-info p, .note-info li, .note-info h3,
+.note-info summary { color: var(--info-fg); }
+.note-warn .hint, .note-warn p, .note-warn li, .note-warn h3,
+.note-warn summary { color: var(--warn-fg); }
+.note-danger .hint, .note-danger p, .note-danger li, .note-danger h3,
+.note-danger summary { color: var(--danger-fg); }
+.note-success .hint, .note-success p, .note-success li, .note-success h3,
+.note-success summary { color: var(--success-fg); }
+.note-plan .hint, .note-plan p, .note-plan li, .note-plan h3,
+.note-plan summary { color: var(--plan-fg); }
+.note-title { font-weight: 700; margin: 0 0 var(--sp-2); }
+/* 畳んである箱（縫う順番・買い物メモ）。中身は普通の本文なので、
+   色を持たせるのは枠と見出しだけにする。 */
+.details-info { border-color: var(--info-bd); }
+.details-info > summary {
+  cursor: pointer; color: var(--info-fg);
+  font-weight: 700; font-size: 0.85rem;
+}
+.details-info > summary:hover { color: var(--accent-hover); }
+
+/* 箱に入れるほどでもない、一文だけの注意書き。 */
+.hint-warn, .field-box p.hint.hint-warn { color: var(--warn-fg); }
+.hint-info, .field-box p.hint.hint-info { color: var(--info-fg); }
+.hint-success, .field-box p.hint.hint-success { color: var(--success-fg); }
+.hint-danger, .field-box p.hint.hint-danger { color: var(--danger-fg); }
+/* 箇条書きは箱の色を継ぐ。round69まで ul ごとに色を書いていたので、
+   暗い画面で取り残された。 */
+.note-info ul, .note-warn ul, .note-danger ul,
+.note-success ul, .note-plan ul { margin: 0; padding-left: 1.2em; }
+.note-info li + li, .note-warn li + li, .note-danger li + li,
+.note-success li + li, .note-plan li + li { margin-top: 2px; }
+
+
+/* ---- round70: リンク --------------------------------------------------
+   round69まで色の指定が無く、ブラウザ既定の濃い青のままだった。
+   明るい画面では読めるが、**暗い画面では地に沈む**(実測で確認)。
+   操作の色(--accent)に合わせる。 */
+a { color: var(--accent); }
+a:hover { color: var(--accent-hover); }
+header.app-header a { color: #dde2ec; }
+header.app-header a.nav-cta { color: #2f3c75 !important; }
+.note-info a { color: var(--info-fg); }
+.note-warn a { color: var(--warn-fg); }
+.note-danger a { color: var(--danger-fg); }
+.note-success a { color: var(--success-fg); }
+.note-plan a { color: var(--plan-fg); }
+
+/* ---- round70: 型紙のプレビューは白地のSVG -----------------------------
+   暗い画面では、白い図が黒い面に直接乗ると縁が痛い。白い「紙」を
+   1枚敷いて、その上に載っているように見せる。 */
