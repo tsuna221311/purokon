@@ -32,19 +32,41 @@ def test_index_page_loads(client):
     assert "PatternForge" in response.get_data(as_text=True)
 
 
-def test_illustration_mode_step_number_placeholder_present(client):
-    # 実際にブラウザで操作して見つかった不具合の回帰チェック: 「イラストから
-    # AI判定」に切り替えると「③ パーツ構成」の見出しが非表示になるのに、直後の
-    # 見出しが常に固定の「④」だったため、画面上は①②④としか見えず壊れて
-    # 見えていた。app.jsのsetMode()が表示中の見出しに応じて③/④を振り直す
-    # ようになったが、その前提であるプレースホルダー要素(id="fabric-step-number")
-    # がテンプレートから誤って削除されるとJS側の修正も無意味になるため、
-    # 存在し続けることをここで保証する。
+def test_optional_step_numbers_are_renumbered_from_the_dom(client):
+    """任意セクションの見出し番号が、DOMの順に振り直せる形になっていること。
+
+    【round32の元の不具合】「イラストからAI判定」に切り替えると
+    「③ パーツ構成」の見出しが消えるのに、直後の見出しが固定の「④」のままで、
+    画面上は①②④としか見えなかった。round32はこれを、**セクションごとに
+    idを振ってJSがモード別の三項演算子で書き換える**やり方で直した。
+
+    【round40で壊れた】その三項演算子は2か所に散っていて、round40で
+    「⑥ 着てみて合わなかったら」を割り込ませたとき、HTML側の縫い代だけを
+    ⑦へ書き換えてJS側は"⑥"のまま残った。初回表示はHTMLの値が出るので
+    気付かないが、**モードを切り替えて手動に戻すと**JSが上書きして
+    ⑥が2つ並ぶ。番号を2か所で管理していたことが原因である。
+
+    【round41の直し方】番号を手で管理するのをやめ、`syncStepNumbers`が
+    DOMの順に「表示されている任意セクション」を数えて振り直すようにした。
+    このテストは、その前提——(1)全ての任意セクションの見出しが
+    `class="optional-step"`という同じ目印を持つこと、(2)初期表示(手動モード)の
+    番号が重複せず連続していること——を保証する。目印が1つでも外れると、
+    そのセクションだけ番号が飛ぶ。
+    """
     body = client.get("/").get_data(as_text=True)
-    assert 'id="fabric-step-number"' in body
+    steps = re.findall(r'<span class="optional-step">(.)</span>', body)
+    assert len(steps) >= 4, "任意セクションの見出しに目印が付いていない"
+    assert len(set(steps)) == len(steps), f"番号が重複している: {steps}"
+    # 初期表示は手動モード。①入力モード ②採寸値 ③パーツ構成 の次から始まる。
+    circled = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮"
+    expected = list(circled[3:3 + len(steps)])
+    assert steps == expected, f"初期表示の番号が連続していない: {steps}"
 
     js = (pathlib.Path(app_module.BASE_DIR) / "web" / "static" / "app.js").read_text(encoding="utf-8")
-    assert "fabricStepNumber" in js
+    assert "syncStepNumbers" in js
+    # 番号をモード別に決め打ちする書き方に戻っていないこと(round40の再発防止)。
+    assert "fabricStepNumber" not in js
+    assert "seamStepNumber" not in js
 
 
 def test_healthz(client):
@@ -181,14 +203,24 @@ def test_generate_warns_when_measurement_exceeds_template_scale_range(client):
     確認する。"""
     form = _valid_form()
     form["bust"] = "160"  # Measurements側の入力検証(50〜160cm)は通るが、
-    # テンプレートの変形限界(標準サイズの0.7〜1.6倍 ≒ 58.1〜132.8cm)は超える。
+    # テンプレートの変形限界(標準サイズの0.7〜1.6倍)は超える。
     response = client.post("/api/generate", data=form)
     assert response.status_code == 200
     data = response.get_json()
     assert data["ok"] is True
-    assert len(data["measurement_warnings"]) == 1
-    assert "バスト" in data["measurement_warnings"][0]
-    assert "132.8" in data["measurement_warnings"][0]
+    # 採寸クランプの注記だけを見る(round27で「ウエストが絞りきれていない」
+    # など別の注記も出うるため)。
+    clamp = [w for w in data["measurement_warnings"] if "変形可能範囲" in w]
+    assert len(clamp) == 1
+    assert "バスト" in clamp[0]
+    # 注記に出る境界は、実際にクランプされる値と一致していること。round23で
+    # 身頃の幅を「バスト + 一定のゆとり」で決めるようにしたとき、注記側だけ
+    # 古い式のままで 137.6cm を 132.8cm と説明する状態になった(数値を直書き
+    # していると、この種の食い違いを取り逃がす)。
+    from engine.bodice_fit import bodice_bust_cm_for_scale
+    from engine.part_specs import MAX_SCALE
+
+    assert f"{bodice_bust_cm_for_scale(MAX_SCALE):.1f}" in clamp[0]
 
 
 def test_generate_rejects_invalid_measurement(client):
@@ -222,8 +254,10 @@ def test_generate_supports_front_zip_with_split_front_panel(client):
     assert data["ok"] is True
     # 前パネル(左右2枚) + 後身頃(1枚) = 3
     assert data["part_count"] == 3
-    names = [p["display_name"] for p in data["parts"]]
-    assert any("front_bodice_zip_panel" in n for n in names)
+    # round32: 表示名は日本語になったので、機械向けの`part_type`で見る
+    # (表示名の文字列に依存すると、ラベルを直すたびにテストが壊れる)。
+    assert any(p["part_type"] == "front_bodice_zip_panel" for p in data["parts"])
+    assert any("ファスナーパネル" in p["display_name"] for p in data["parts"])
 
 
 def test_generate_reports_darts_applied_for_hourglass_measurements(client):
@@ -236,11 +270,19 @@ def test_generate_reports_darts_applied_for_hourglass_measurements(client):
     assert data["darts_applied"] > 0
 
 
-def test_generate_reports_zero_darts_for_standard_measurements(client):
+def test_generate_reports_the_waist_darts_for_standard_measurements(client):
+    """標準採寸でも、ウエストのダーツ本数が報告されること。
+
+    round26まで、標準採寸(バスト84/ウエスト68)ではダーツが0本だった。
+    ウエストのダーツは**裾の線**に入る仕組みだったが、身頃の裾はヒップの
+    高さにあり、そこで摘むとヒップが通らなくなるため摘めなかったからである。
+    round27でウエストの線に両端の尖ったダーツ(ダイヤモンドダーツ)を置ける
+    ようにしたので、標準採寸でもウエストが絞られる。
+    """
     response = client.post("/api/generate", data=_valid_form())
     assert response.status_code == 200
     data = response.get_json()
-    assert data["darts_applied"] == 0
+    assert data["darts_applied"] > 0
 
 
 def test_generate_returns_naive_baseline_and_parts_list(client):
@@ -460,6 +502,60 @@ def test_generate_illustration_mode_with_uploaded_image(client, monkeypatch):
     data = response.get_json()
     assert data["ok"] is True
     assert len(data["classification_log"]) > 0
+
+
+def test_generate_illustration_mode_accepts_multiple_images(client, monkeypatch):
+    """round18: 同じ入力欄に複数枚を投げても受け付け、枚数を開示すること。"""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    from PIL import ImageDraw
+
+    def _png(width_ratio):
+        image = Image.new("RGB", (400, 800), "white")
+        half = int(100 * width_ratio)
+        ImageDraw.Draw(image).rectangle([200 - half, 150, 200 + half, 700], fill="black")
+        buf = io.BytesIO()
+        image.save(buf, format="PNG")
+        buf.seek(0)
+        return buf
+
+    form = _valid_form()
+    form["mode"] = "illustration"
+    response = client.post("/api/generate", data={
+        **form,
+        "illustration": [(_png(1.0), "front.png"), (_png(0.8), "back.png")],
+    }, content_type="multipart/form-data")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["ok"] is True
+    assert any("2枚" in note for note in data["measurement_warnings"]), data["measurement_warnings"]
+
+
+def test_generate_illustration_mode_rejects_too_many_images(client, monkeypatch):
+    """枚数の上限を超えたら、黙って切り捨てずにエラーにすること。
+
+    1枚ごとに分割と判定が走る(APIキーがあればClaude API呼び出し)ため、
+    処理時間と費用が枚数に比例する。
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    from app import MAX_ILLUSTRATION_IMAGES
+    from PIL import ImageDraw
+
+    def _png():
+        image = Image.new("RGB", (400, 800), "white")
+        ImageDraw.Draw(image).rectangle([100, 150, 300, 700], fill="black")
+        buf = io.BytesIO()
+        image.save(buf, format="PNG")
+        buf.seek(0)
+        return buf
+
+    files = [(_png(), f"cut{i}.png") for i in range(MAX_ILLUSTRATION_IMAGES + 1)]
+    form = _valid_form()
+    form["mode"] = "illustration"
+    response = client.post("/api/generate", data={**form, "illustration": files},
+                            content_type="multipart/form-data")
+    data = response.get_json()
+    assert data["ok"] is False
+    assert "枚まで" in data["error"]
 
 
 def test_load_uploaded_image_applies_exif_orientation(client):
@@ -997,6 +1093,11 @@ def test_guide_page_explains_the_measurement_clamp_warning(client):
     # ドリフト防止)。
     guide_body = client.get("/guide").get_data(as_text=True)
     assert "テンプレートを正確に変形できる範囲" in guide_body
+    # round32: 結果画面の赤枠の見出しを実態に合わせて変えた
+    # （そこに並ぶのは「採寸値が範囲外」だけでなく、ヒップが通らない・
+    #  ダーツが収まらない等の型紙と体の食い違い全般のため）。ガイドが
+    # 古い見出しを引用したままにならないよう、現在の文言も確認する。
+    assert "縫う前に確認してください" in guide_body
 
 
 def test_legal_pages_load(client):

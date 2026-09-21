@@ -1,18 +1,33 @@
 import pytest
 from PIL import Image, ImageDraw
 
+from engine.bodice_fit import bodice_bust_cm_for_scale
 from engine.measurements import Measurements
+from engine.part_specs import MAX_SCALE
 from engine.part_classifier import ClassificationResult, PartClassifier
 from engine.pipeline import PatternForgePipeline, build_garment_spec
+
 
 STANDARD = Measurements(bust=84, waist=68, hip=92, height=160, sleeve_length=54, shoulder_width=37)
 
 
 def _illustration_test_image():
+    """イラストモードのテスト用シルエット。
+
+    round22で**袖を実際に描き足した**。round21まではただの塊で、袖にあたる
+    張り出しが胴と同じ幅で下まで続いていた。round22でシルエットから袖の
+    有無を読むようにしたため、この絵は「ノースリーブ」と読まれて袖が
+    付かなくなり、袖を数えるテストが落ちた——つまり**絵の側が、テストの
+    意図(袖がある服)を表していなかった**。左右の袖を胴より高い位置で
+    水平に終わらせ、輪郭に袖の裾の段差ができるようにしてある。
+    """
     image = Image.new("RGB", (400, 800), "white")
     draw = ImageDraw.Draw(image)
     draw.polygon([(150, 50), (250, 50), (260, 300), (300, 300), (300, 340),
                   (100, 340), (100, 300), (140, 300)], fill="black")
+    # 左右の袖(胴の外側へ張り出し、y=520で水平に終わる)。
+    draw.rectangle([60, 300, 140, 520], fill="black")
+    draw.rectangle([260, 300, 340, 520], fill="black")
     draw.rectangle([100, 340, 300, 780], fill="black")
     return image
 
@@ -96,6 +111,14 @@ def test_front_zip_panel_gets_one_bust_dart_per_panel_on_the_outer_edge_only(tmp
     # バスト比とウエスト比を揃えてウエストダーツが発火しない採寸を使い、
     # 脇ダーツだけを単独で確認する。ウエストダーツ側の挙動は
     # tests/test_darts.pyの round11 節で個別に確認している。
+    #
+    # round67: この「ウエストダーツが発火しない採寸」という前提は、
+    # **不具合のおかげで成り立っていた**。前開きのパネルには
+    # ひし形のウエストダーツが一度も入っておらず(半身ぶんのパーツに
+    # 左右対称の数え方を当てていたため)、どんな採寸でも0本だった。
+    # round67でそれを直したので、この採寸でもひし形が2本入る。
+    # テストの本来の意図は脇ダーツの本数なので、ひし形(internal_lines)を
+    # 引いて**脇ダーツだけ**を数える。
     from engine.measurements import STANDARD_M
 
     proportional_waist = 110 / STANDARD_M.bust * STANDARD_M.waist
@@ -109,7 +132,8 @@ def test_front_zip_panel_gets_one_bust_dart_per_panel_on_the_outer_edge_only(tmp
     front_parts = [p for p in result.finalized_parts if p.part_type == "front_bodice_zip_panel"]
     assert len(front_parts) == 2
     for p in front_parts:
-        assert p.dart_count == 1  # パネル1枚あたり脇ダーツ1本(外側の脇線のみ)
+        bust_darts = p.dart_count - len(p.internal_lines)
+        assert bust_darts == 1  # パネル1枚あたり脇ダーツ1本(外側の脇線のみ)
 
 
 def test_front_zip_panel_gets_both_bust_and_waist_darts_for_an_hourglass(tmp_path):
@@ -135,7 +159,15 @@ def test_front_zip_panel_gets_both_bust_and_waist_darts_for_an_hourglass(tmp_pat
     assert back_darts > 0
 
 
-def test_front_zip_panel_gets_no_dart_when_bust_is_not_excessive(tmp_path):
+def test_front_zip_panel_gets_a_bust_dart_at_the_standard_size(tmp_path):
+    """前開きの片側パネルにも、標準体型で胸ぐせダーツが入ること(round29)。
+
+    round28まで、この関数は`front_darts == 0`——「標準体型なら胸ダーツは
+    要らない」——を固定していた。それは摘み量を「標準Mからのバスト超過分」
+    で決めていた実装の裏返しでしかない。新文化式では胸ぐせダーツの大きさは
+    (B/4 − 2.5)度で、バスト84cmでも18.5度ある。胸の丸みは標準サイズを
+    超えた人だけのものではないので、期待値の方を直した。
+    """
     standard = Measurements(bust=84, waist=68, hip=92, height=160,
                              sleeve_length=54, shoulder_width=37)
     pipeline = PatternForgePipeline(output_dir=str(tmp_path))
@@ -145,7 +177,7 @@ def test_front_zip_panel_gets_no_dart_when_bust_is_not_excessive(tmp_path):
 
     front_darts = sum(p.dart_count for p in result.finalized_parts
                        if p.part_type == "front_bodice_zip_panel")
-    assert front_darts == 0
+    assert front_darts > 0
 
 
 @pytest.mark.parametrize("neckline", ["round_neck", "v_neck", "square_neck", "boat_neck", "sweetheart"])
@@ -394,9 +426,16 @@ def test_summary_warns_and_actually_reveals_the_silent_clamp_bug(tmp_path):
     pipeline = PatternForgePipeline(output_dir=str(tmp_path))
     spec = build_garment_spec(neckline="round_neck", sleeve_style="straight", skirt_style="flare")
 
+    # クランプの上限(MAX_SCALE)に**ちょうど**当たるバストを、係数から逆算する。
+    # round23で身頃の幅の決め方を「バスト比」から「バスト+一定のゆとり」へ
+    # 変えたため、上限に当たるバストも83×1.6=132.8cmから137.6cmへ動いた。
+    # ここに数値を直書きしていると、倍率の決め方を変えたときに
+    # 「実は型紙が同一ではなくなっていた」ことを取り逃がす。
+    effective_bust = bodice_bust_cm_for_scale(MAX_SCALE)
+
     m_requested = Measurements(bust=160, waist=68, hip=92, height=160,
                                 sleeve_length=54, shoulder_width=37)
-    m_effective = Measurements(bust=83 * 1.6, waist=68, hip=92, height=160,
+    m_effective = Measurements(bust=effective_bust, waist=68, hip=92, height=160,
                                 sleeve_length=54, shoulder_width=37)
 
     result_requested = pipeline.generate_from_selection(spec, m_requested)
@@ -405,13 +444,38 @@ def test_summary_warns_and_actually_reveals_the_silent_clamp_bug(tmp_path):
     # 警告が出ていること(利用者への開示)。
     summary_requested = result_requested.summary()
     assert any("バスト" in w for w in summary_requested["measurement_warnings"])
-    assert result_effective.summary()["measurement_warnings"] == []  # 132.8cmはクランプ範囲の境界内
+    # 境界ちょうどならクランプの注記は出ない(他の注記——round27で追加した
+    # 「ウエストが絞りきれていない」等——は出うるので、採寸クランプの注記
+    # だけを見る)。
+    assert not [w for w in result_effective.summary()["measurement_warnings"]
+                if "変形可能範囲" in w]
 
     # 実際の型紙の寸法が今も同一であること(=これは正しい挙動。テンプレート
     # 自体を160cm相当に対応させたわけではなく、正直に開示しているだけ)。
     front_requested = next(p for p in result_requested.finalized_parts if p.part_type == "front_bodice")
     front_effective = next(p for p in result_effective.finalized_parts if p.part_type == "front_bodice")
-    assert front_requested.width_cm == pytest.approx(front_effective.width_cm)
+    # round71: 前身頃ではなく**後ろ身頃**で比べる。
+    #
+    # 胸ぐせダーツの大きさは、クランプ前の(=入力された)バスト160cmから
+    # 決まる(摘みきれない分は別に注記する)。round71でダーツの脚を揃える
+    # ようにして口が脇線から少し外れるようになったので、**前身頃の外接
+    # 矩形はダーツの大きさに左右される**ようになった(実測: 75.498 対
+    # 75.561 と0.063cm違った)。このテストが見たいのは「テンプレートの
+    # 変形がクランプされて同じ型紙になること」なので、ダーツの入らない
+    # 後ろ身頃で見る。前身頃の差はダーツの差そのものであって、身頃の
+    # 大きさの差ではない。
+    back_requested = next(p for p in result_requested.finalized_parts
+                          if p.part_type == "back_bodice")
+    back_effective = next(p for p in result_effective.finalized_parts
+                          if p.part_type == "back_bodice")
+    # 許容は0.1cm(1mm)——型紙に引く線の太さより細かい。
+    # 実測の残差は 後ろ身頃 0.0038cm(38ミクロン)、前身頃 0.063cm。
+    # 前身頃の方が大きいのは、ダーツの大きさがクランプ前のバストから
+    # 決まるぶんだけ口の位置が違うからで、身頃そのものの大きさの差ではない。
+    assert back_requested.width_cm == pytest.approx(back_effective.width_cm,
+                                                     abs=0.1)
+    assert front_requested.width_cm == pytest.approx(front_effective.width_cm,
+                                                      abs=0.1)
 
 
 def test_summary_naive_baseline_is_never_better_than_actual_nesting(tmp_path):

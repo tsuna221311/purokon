@@ -106,11 +106,21 @@ def test_compaction_never_increases_waste_or_used_length():
     for spec in specs:
         original_compact = nesting_module._compact_placement
         try:
-            nesting_module._compact_placement = lambda result, seam_gap_cm: result
-            before = pipeline.generate_from_selection(spec, STANDARD_M)
+            # round38: `_compact_placement`に allow_flip(一方方向の生地では
+            # 180度反転を使わない)が増えたので、差し替え側も受け取る。
+            nesting_module._compact_placement = (
+                lambda result, seam_gap_cm, allow_flip=True: result)
+            # round48: skip_export=True を付けた。このテストは配置の指標
+            # (布ロス率・使用長・枚数)しか見ていないのに、SVG/PDF/DXFを
+            # 既定の出力先 `generated/`——**リポジトリの中**——へ書いていた。
+            # 6回分で6.4MBが作業ツリーに残り、.gitignore されているので
+            # 気づかないまま溜まり続けていた(round48で実測)。
+            before = pipeline.generate_from_selection(spec, STANDARD_M,
+                                                      skip_export=True)
         finally:
             nesting_module._compact_placement = original_compact
-        after = pipeline.generate_from_selection(spec, STANDARD_M)
+        after = pipeline.generate_from_selection(spec, STANDARD_M,
+                                                 skip_export=True)
 
         assert after.nesting.waste_ratio <= before.nesting.waste_ratio + 1e-6
         assert after.nesting.used_length_cm <= before.nesting.used_length_cm + 1e-6
@@ -120,19 +130,46 @@ def test_compaction_never_increases_waste_or_used_length():
 
 
 def test_compaction_can_flip_a_part_180_degrees_to_interlock():
-    """台形のパーツ2枚を横に並べたとき、片方を180度反転させることで実ポリゴン
-    がより深く詰め合わせられること(外接矩形どうしを隣接させるだけでは再現
-    できない挙動)を確認する。
+    """180度反転の仕組みそのものが健在であること。ただし**得はしていない**。
+
+    台形のパーツ2枚を横に並べるとき、片方を180度反転させると実ポリゴンが
+    より深く噛み合う——外接矩形どうしを隣接させるだけでは再現できない挙動で、
+    round11で入れた機能である。
 
     【round12でケースを取り直した】以前はフレアスカート2枚・生地幅150cmで
     固定していたが、round12でスカートの寸法を実寸に作り直した結果、
     フレアスカートは裾80cmと大きくなり、150cm幅には2枚横に並ばず縦積みに
-    なるため反転が不要になった(機能自体は健在で、生地幅200cmなら反転する)。
-    横に2枚並ぶ寸法であるタイトスカートに差し替えた。
+    なるため反転が不要になった。横に2枚並ぶタイトスカートに差し替えた。
+
+    【round38で分かったこと】この「見せ場」のケースで、反転あり/なしを
+    実際に測ってみた:
+
+        反転あり: 丈62.0cm ロス34.0% (1枚反転)
+        反転なし: 丈62.0cm ロス34.0%
+
+    **まったく同じだった。** 反転は起きているが、配置の見た目が変わるだけで
+    生地は1mmも節約していない。171通りの実測でも平均+0.032cm・最大+0.60cm
+    しか差が無く、この機能は「効いているように見えて、ほぼ何も生んでいない」。
+
+    一方で反転は、起毛・別珍・コーデュロイでは毛の向きを逆にし、片方向
+    プリントでは絵柄を逆さまにする。そこでround38から、反転は
+    「非方向性の生地」を選んだときだけ使うようにした(既定では反転しない)。
+
+    このテストは、仕組みが壊れていないことを`_compact_placement`を直接
+    呼んで確かめる。`nest_parts(allow_rotation=True)`経由では、rectpackが
+    先に90度回転を選び、圧縮パスは回転済みパーツを対象外にするため、
+    反転が起きない——**機能を確かめたいのに経路の都合で確かめられない**ので、
+    ここは仕組みを直接呼ぶ。
     """
+    from itertools import product
+
     from engine.templates_db import TemplateDB
     from engine.scaling import scale_template
     from engine.measurements import STANDARD_M
+    from engine.nesting import (
+        _pack_once, _compact_placement, _best_of,
+        _PACK_ALGO_CANDIDATES, _SORT_ALGO_CANDIDATES, DEFAULT_SEAM_GAP_CM,
+    )
 
     db = TemplateDB()
     segments = db.get("skirt", "tight")
@@ -140,10 +177,28 @@ def test_compaction_can_flip_a_part_180_degrees_to_interlock():
     front = finalize_part("skirt", "tight", scaled.segments, label_suffix="前")
     back = finalize_part("skirt", "tight", scaled.segments, label_suffix="後")
 
-    result = nest_parts([front, back], fabric_width_cm=150.0)
-    assert result.unplaced == []
-    assert any(p.flipped for p in result.placed)
-    _assert_no_real_overlap(result.placed)
+    candidates = [
+        _pack_once([front, back], 150.0, DEFAULT_SEAM_GAP_CM, False, pa, sa)
+        for pa, sa in product(_PACK_ALGO_CANDIDATES, _SORT_ALGO_CANDIDATES)
+    ]
+    best = _best_of(candidates, key=lambda r: r.waste_ratio)
+
+    flipped = _compact_placement(best, DEFAULT_SEAM_GAP_CM, allow_flip=True)
+    assert flipped.unplaced == []
+    assert any(p.flipped for p in flipped.placed), "反転の仕組みが動いていない"
+    _assert_no_real_overlap(flipped.placed)
+
+    not_flipped = _compact_placement(best, DEFAULT_SEAM_GAP_CM, allow_flip=False)
+    assert not any(p.flipped for p in not_flipped.placed)
+    _assert_no_real_overlap(not_flipped.placed)
+
+    # 得はしていない、という実測を固定する。ここが将来変わったら
+    # (反転が本当に生地を節約するようになったら)、既定を見直す価値がある。
+    assert flipped.used_length_cm == pytest.approx(not_flipped.used_length_cm)
+
+    # 既定(布目安全モード)では反転しないこと
+    safe = nest_parts([front, back], fabric_width_cm=150.0)
+    assert not any(p.flipped for p in safe.placed)
 
 
 def test_compaction_skips_gracefully_for_many_parts():
@@ -459,9 +514,13 @@ def test_adding_a_fabric_width_candidate_never_makes_the_result_worse():
 
 # --- round11: 圧縮対象を「圧縮前に同点だった候補」まで広げた改良 -------------
 
-def _old_style_single_best_compaction(parts, fabric_width_cm):
+def _old_style_single_best_compaction(parts, fabric_width_cm, allow_rotation=False):
     """round10までの実装(圧縮前1位の候補1件だけを圧縮する版)を再現する
     ヘルパー。round11の新実装との比較用。
+
+    【round38】180度反転の使用条件が`allow_rotation`に連動するようになった
+    ので、参照側も同じ条件で回す。ここが食い違うと、比べたいのは
+    「圧縮を何件に適用するか」なのに、反転の有無の差を見てしまう。
     """
     from itertools import product
     from engine.nesting import (
@@ -470,11 +529,13 @@ def _old_style_single_best_compaction(parts, fabric_width_cm):
     )
 
     candidates = [
-        _pack_once(parts, fabric_width_cm, DEFAULT_SEAM_GAP_CM, False, pack_algo, sort_algo)
+        _pack_once(parts, fabric_width_cm, DEFAULT_SEAM_GAP_CM, allow_rotation,
+                    pack_algo, sort_algo)
         for pack_algo, sort_algo in product(_PACK_ALGO_CANDIDATES, _SORT_ALGO_CANDIDATES)
     ]
     best = _best_of(candidates, key=lambda r: r.waste_ratio)
-    return _compact_placement(best, DEFAULT_SEAM_GAP_CM)
+    return _compact_placement(best, DEFAULT_SEAM_GAP_CM,
+                               allow_flip=allow_rotation)
 
 
 def _build_finalized_parts(measurements=None, **spec_kwargs):

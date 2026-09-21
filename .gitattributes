@@ -1,0 +1,15 @@
+# 改行コードの正規化(round15の納品後に追加)。
+# リポジトリ内では常にLFで保存し、環境をまたいでも「中身は同じなのに
+# 全行が変更扱い」になるのを防ぐ。Windowsで `git add` したときに大量に出る
+# "LF will be replaced by CRLF" の警告もこれで止まる。
+* text=auto eol=lf
+
+# SVGテンプレートはテキストとして扱う(型紙の実体なので差分を見たい)。
+*.svg text eol=lf
+
+# バイナリは変換しない。
+*.ttf binary
+*.ico binary
+*.png binary
+*.pdf binary
+*.zip binary

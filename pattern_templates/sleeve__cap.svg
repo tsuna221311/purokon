@@ -3,6 +3,7 @@
   <path
     data-part="sleeve"
     data-variation="cap"
+    data-fit-y="cap:0.000 underarm:12.000 hem:17.000"
     fill="none" stroke="black" stroke-width="0.1"
     d="M 0 12 C 4.8 3, 11.2 0, 16 0 C 20.8 0, 27.2 3, 32 12 C 27.2 15, 20.8 17, 16 17 C 11.2 17, 4.8 15, 0 12 Z" />
 </svg>

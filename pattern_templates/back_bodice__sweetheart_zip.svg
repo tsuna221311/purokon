@@ -4,6 +4,7 @@
     data-part="back_bodice"
     data-variation="sweetheart_zip"
     data-fit-x="side:0.000 shoulder:4.250 neck:15.892 cf:22.750 neck:29.608 shoulder:41.250 side:45.500"
+    data-fit-y="neck:0.000 underarm:23.500 waist:38.000 hem:58.000"
     fill="none" stroke="black" stroke-width="0.1"
     d="M 4.250 4.500 C 6.875 12.100, 3.125 18.750, 0.000 23.500 L 0 58.000 L 45.500 58.000 L 45.500 23.500 C 42.375 18.750, 38.625 12.100, 41.250 4.500 L 29.608 0.000 C 29.471 2.200, 27.002 4.400, 22.750 1.680 C 18.498 4.400, 16.029 2.200, 15.892 0.000 L 4.250 4.500 Z" />
 </svg>

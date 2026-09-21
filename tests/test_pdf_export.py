@@ -53,15 +53,23 @@ def test_unplaced_parts_do_not_silently_vanish_from_svg_or_pdf(tmp_path):
     """配置できなかったパーツ(unplaced)が、以前はSVG/PDFのどちらからも
     完全に無言で消えていた問題の回帰テスト。
 
-    実際に全テンプレート×採寸(有効な採寸値の最も極端な範囲を含む1200通り)
-    を総当たりして確認したところ、現状のテンプレート・MIN_SCALE/MAX_SCALEの
-    範囲ではunplacedが発生するケースは存在しない(=製品としては到達不能)。
-    ただし`nesting.py`はunplacedを検出できる作りになっている一方、
+    `nesting.py`はunplacedを検出できる作りになっている一方、
     `render_layout_svg`/`render_a4_pdf`は`result.placed`しか描画しないため、
     到達した場合は配置できなかったパーツが出力から完全に消え、画面上も
     他の統計と同じ見た目の数値表示のみだった。ここでは生地幅より明らかに
-    幅の広いパーツを直接`nest_parts()`に渡すことで、到達不能な状態を
-    直接作り出し、実際に生成したSVG/PDFの両方に警告として残ることを確認する。
+    幅の広いパーツを直接`nest_parts()`に渡してその状態を作り出し、
+    実際に生成したSVG/PDFの両方に警告として残ることを確認する。
+
+    【round35で訂正】round11当時この文には「1200通り総当たりして確認した
+    ところunplacedは発生しない(=製品としては到達不能)」と書いていた。
+    だがround9で入ったサーキュラースカートは幅がヒップにほぼ比例するので、
+    **その時点で既に到達可能になっていた**(ヒップ143cm以上、10cm刻みの
+    110通り中70通りでスカートが型紙から消えていた)。round35で分割(`engine/panel_split.py`)を
+    入れて大半は救えるようになったが、分けてはいけない種類のパーツや、
+    分けても収まらない極端な幅では今も発生する。したがってこのテストは
+    「到達不能な状態をわざと作る」テストではなく、**実際に起こりうる状態の
+    回帰テスト**である。到達可能性そのものは
+    `tests/test_round35_fixes.py`の体型スイープが見ている。
     """
     import pypdf
 
@@ -76,14 +84,20 @@ def test_unplaced_parts_do_not_silently_vanish_from_svg_or_pdf(tmp_path):
 
     outputs = export_pattern(result, str(tmp_path), basename="job")
 
+    # round32: パーツ名は日本語で印字される(内部識別子ではない)。
+    # 「どのパーツが欠けたのか」が読み手に伝わることを確かめたいので、
+    # 実際に印字される名前で見る。
+    skirt_name = result.unplaced[0].display_name
+    assert skirt_name == "スカート（フレア）", skirt_name
+
     svg_content = open(outputs["svg"], encoding="utf-8").read()
     assert "型紙に含まれていない" in svg_content
-    assert "skirt" in svg_content
+    assert skirt_name in svg_content
 
     reader = pypdf.PdfReader(outputs["pdf"])
     full_text = "\n".join(page.extract_text() for page in reader.pages)
     assert "型紙が不完全です" in full_text
-    assert "skirt" in full_text
+    assert skirt_name in full_text
 
 
 def test_svg_and_pdf_have_no_unplaced_warning_when_everything_is_placed(tmp_path):
@@ -140,6 +154,52 @@ def test_jp_label_font_contains_every_character_the_pdf_actually_draws():
     required_text += "(90度回転・布目確認)"
     required_text += "[ダーツ2本]"
     required_text += "seam allowance: 1.0cm"
+    # round31: 裁ち方の指示(engine/cutting.py)。実際に生成されうる全文言。
+    from engine.cutting import INTERFACED_PART_TYPES, cutting_note
+    required_text += cutting_note("front_bodice")
+    required_text += cutting_note(sorted(INTERFACED_PART_TYPES)[0], 2, True)
+    # round32: パーツ名を日本語にした。型紙の上に**実際に印字される**ので、
+    # 全part_type × 全variationの組み合わせを列挙して1文字も欠けていない
+    # ことを確かめる(1文字欠けるとその字だけ黙って空白になる)。
+    from engine.part_names import (
+        PART_TYPE_LABELS_JA, VARIATION_LABELS_JA, part_display_name,
+    )
+    for part_type in PART_TYPE_LABELS_JA:
+        for variation in VARIATION_LABELS_JA:
+            for suffix in ("", "左", "右", "前", "後", "中央"):
+                required_text += part_display_name(part_type, variation, suffix, 2)
+
+    # round35: **縫製手順(engine/assembly.py)を入れ忘れていた**。
+    #
+    # round33で足した「縫う順番」のページは、手順の本文がPDFへ丸ごと印刷
+    # される——このテストがカバーしていた中で最も文字数が多い。それなのに
+    # ここに入っておらず、round35で「スカートのパネルを縫い合わせる」工程を
+    # 足したとき、フォントを再ビルドし忘れたまま気付けなかった。
+    # 実際に生成したPDFを画像化して初めて、
+    #   「生地幅に□まらないため…1枚に□します」(収・戻が空白)
+    # と印刷されているのを見つけた。テストは全部通っていた。
+    #
+    # 手順は選んだパーツ構成で変わるので、分岐する組み合わせを全部通す。
+    from types import SimpleNamespace
+
+    from engine.assembly import assembly_steps
+
+    def _fake(part_type):
+        return SimpleNamespace(part_type=part_type, dart_count=2,
+                                display_name=part_type, label_suffix="左")
+
+    all_types = ["front_bodice", "back_bodice", "sleeve", "skirt",
+                  "front_pants", "back_pants", "collar", "cuffs",
+                  "waistband", "front_bodice_zip_panel"]
+    for front_zip in (False, True):
+        for splits in (None, {"skirt": 2}, {"front_pants": 3, "back_pants": 3}):
+            for step in assembly_steps([_fake(t) for t in all_types],
+                                        seam_allowance_cm=1.0,
+                                        hem_seam_allowance_cm=3.0,
+                                        sleeve_cap_ease_cm=2.0,
+                                        front_zip=front_zip,
+                                        split_panels=splits):
+                required_text += step.title + step.detail + "".join(step.parts)
 
     missing = sorted({ch for ch in required_text if ord(ch) not in face.charToGlyph})
     assert not missing, f"フォントに存在しない文字: {missing}"
@@ -169,7 +229,9 @@ def test_render_a4_pdf_draws_part_label_and_correct_manai_character(tmp_path):
 
     assert "枚" in full_text
     assert PAIR_LABELS["sleeve"][0] in full_text  # "左"
-    assert "sleeve" in full_text
+    # round32: 型紙に印字されるパーツ名は日本語("sleeve(curve) 左"ではない)。
+    assert part.display_name == "袖・カーブ（フィット） 左", part.display_name
+    assert "袖" in full_text
 
 
 def test_a4_pdf_page_is_actually_physical_a4_size_for_1to1_printing(tmp_path):
@@ -277,12 +339,22 @@ def test_svg_preview_rotation_note_matches_pdf_wording_and_font_coverage(tmp_pat
 
     rotation_note = "(90度回転・布目確認)"
     assert rotation_note in svg_text
-    assert "↻" not in svg_text and "要" not in svg_text
+    # 旧文言「↻90°(要:布目確認)」が復活していないこと。round31で
+    # 「わ裁ち不要」を書くようになったため、「要」の1文字だけを見る条件は
+    # 使えない(それでは正しい注記まで禁じてしまう)。旧文言に固有の
+    # 文字と並びで見る。
+    assert "↻" not in svg_text and "要:" not in svg_text and "°" not in svg_text
+
+    # round31: 裁ち方の指示も同じSVGに書かれる。
+    from engine.cutting import cutting_note
+    note = cutting_note("front_bodice")
+    assert note in svg_text
 
     if pdf_export._LABEL_FONT == "Helvetica":
         pytest.skip("このテスト環境では日本語フォントが読み込めていないため対象外")
     face = getFont(pdf_export._LABEL_FONT).face
-    missing = sorted({ch for ch in rotation_note if ord(ch) not in face.charToGlyph})
+    missing = sorted({ch for ch in rotation_note + note
+                      if ord(ch) not in face.charToGlyph})
     assert not missing, f"フォントに存在しない文字: {missing}"
 
 
@@ -446,8 +518,12 @@ def _render_sample_pdf(tmp_path, **spec_kwargs):
     pipeline = PatternForgePipeline(output_dir=str(tmp_path))
     spec = build_garment_spec(**spec_kwargs)
     result = pipeline.generate_from_selection(spec, STANDARD_M)
-    pdf_path = [str(p) for p in tmp_path.iterdir() if str(p).endswith(".pdf")][0]
-    return pdf_path, result.nesting
+    # round39: 出力に「プロジェクター投影用PDF」が増えたので、拡張子だけで
+    # 拾うとどちらが来るか分からなくなった(実際、この行が
+    # `<job>_projector.pdf`を拾ってA4分割PDFのテストが落ちた)。
+    # どのファイルが欲しいのかを名指しする。
+    return result.output_files["pdf"], result
+
 
 
 def test_every_static_pdf_text_character_exists_in_the_embedded_font():
@@ -482,6 +558,9 @@ def test_pdf_starts_with_an_overview_page_showing_the_assembly_map_and_legend(tm
 
     pdf_path, result = _render_sample_pdf(
         tmp_path, neckline="round_neck", sleeve_style="straight", skirt_style="flare")
+    # round33: `_render_sample_pdf`はPipelineResultを返す(縫製手順を
+    # 取り出すため)。配置結果はその中のnesting。
+    result = result.nesting
     assert result.placed
 
     text = pypdf.PdfReader(pdf_path).pages[0].extract_text()
@@ -502,22 +581,54 @@ def test_overview_page_lists_every_placed_part_name(tmp_path):
         tmp_path, neckline="round_neck", sleeve_style="straight", skirt_style="flare",
         include_collar=True, include_cuffs=True, include_waistband=True)
     text = pypdf.PdfReader(pdf_path).pages[0].extract_text()
-    for placed in result.placed:
+    for placed in result.nesting.placed:
         # 縮小図では幅に応じて省略されることがあるため、先頭数文字で確認する。
         head = placed.part.display_name[:6]
         assert head in text, f"{placed.part.display_name} が全体図に見当たらない"
 
 
-def test_overview_page_adds_exactly_one_page(tmp_path):
-    """全体図ページが1枚だけ増えること(タイル枚数は変わらないこと)。"""
+def test_the_extra_pages_do_not_change_the_tile_count(tmp_path):
+    """先頭に足したページの分だけ増え、タイル枚数は変わらないこと。
+
+    round11で全体図(1枚)、round33で縫う順番(工程数に応じた枚数)、
+    round38で買い物メモ(1枚)を先頭に足した。実寸タイルの枚数がそれに
+    巻き込まれて変わっていないことを、生地の寸法から計算した理論値と
+    突き合わせて確かめる。
+    """
     import math
     from engine.pdf_export import A4_USABLE_W_CM, A4_USABLE_H_CM
 
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas as rl_canvas
+
+    from engine.pdf_export import _draw_assembly_pages, _draw_shopping_page
+
     pdf_path, result = _render_sample_pdf(
         tmp_path, neckline="round_neck", sleeve_style=None, skirt_style=None)
-    cols = max(1, math.ceil(result.fabric_width_cm / A4_USABLE_W_CM))
-    rows = max(1, math.ceil(result.used_length_cm / A4_USABLE_H_CM)) if result.used_length_cm else 1
-    assert _pdf_page_count(pdf_path) == rows * cols + 1
+    nesting = result.nesting
+    cols = max(1, math.ceil(nesting.fabric_width_cm / A4_USABLE_W_CM))
+    rows = max(1, math.ceil(nesting.used_length_cm / A4_USABLE_H_CM)) if nesting.used_length_cm else 1
+
+    # round33: 全体図の次に「縫う順番」のページが入る。工程数はパーツ構成で
+    # 変わるので枚数を定数で書かず、同じ手順を同じ描画関数へ通して数える。
+    probe = str(tmp_path / "_assembly_probe.pdf")
+    c = rl_canvas.Canvas(probe, pagesize=A4)
+    _draw_assembly_pages(c, result.assembly_steps())
+    c.save()
+    assembly_pages = _pdf_page_count(probe)
+    assert assembly_pages >= 1
+
+    # round38: 全体図の次に「買い物メモ」のページも入る。こちらも枚数を
+    # 定数で書かず、同じ描画関数へ通して数える(内容の量で変わりうるため)。
+    shopping_probe = str(tmp_path / "_shopping_probe.pdf")
+    c2 = rl_canvas.Canvas(shopping_probe, pagesize=A4)
+    _draw_shopping_page(c2, result.shopping_list)
+    c2.save()
+    shopping_pages = _pdf_page_count(shopping_probe)
+    assert shopping_pages >= 1
+
+    assert _pdf_page_count(pdf_path) == (
+        rows * cols + 1 + shopping_pages + assembly_pages)
 
 
 def test_overview_page_is_skipped_when_nothing_could_be_placed(tmp_path):
@@ -535,3 +646,56 @@ def test_overview_page_is_skipped_when_nothing_could_be_placed(tmp_path):
     # 全体図ページは付かず、タイルページ(1行×必要列数)だけになる。
     expected_tiles = max(1, math.ceil(110.0 / A4_USABLE_W_CM))
     assert _pdf_page_count(out) == expected_tiles
+
+
+def test_the_bundled_font_is_up_to_date_with_the_sources_it_is_built_from():
+    """同梱フォントが、いま収集対象になっている文字を全部持っていること。
+
+    【なぜこのテストが要るのか — 事故6回目を止めるため】
+    埋め込みフォントはサブセットで、収録外の文字は豆腐(□)ですらなく
+    **何も描かれずに黙って消える**。この形の事故はround11・round11・
+    round32・round35・round38と**5回**起きている。
+
+    round38で、収集の側は直した——`scripts/build_pattern_label_font.py`が
+    `pdf_export.py`と`fabric.py`の文字列リテラルを全部拾うようにしたので、
+    「一覧に書き忘れる」経路は消えた。だが**もう1つ経路が残っていた**:
+    文言を足したあとに`build_pattern_label_font.py`を**実行し忘れる**。
+    実際round39で、プロジェクター用ページの「投影したら、まず格子1マスが
+    10cmになるよう…」を足した直後、フォントを作り直さずにPDFを出したら
+    その行が丸ごとヌル文字になった。
+
+    そこで、テストの側で「フォントが古くなっていないか」を見る。
+    ビルドスクリプトが集める文字集合を**同じ関数で計算し直して**、
+    同梱フォントがそれを全部持っているか確かめる。
+    足りなければ「`python scripts/build_pattern_label_font.py` を実行して
+    ください」と落ちる。
+    """
+    import importlib.util
+    from pathlib import Path
+
+    if pdf_export._LABEL_FONT == "Helvetica":
+        pytest.skip("このテスト環境では日本語フォントが読み込めていないため対象外")
+
+    script = (Path(__file__).resolve().parent.parent
+              / "scripts" / "build_pattern_label_font.py")
+    spec = importlib.util.spec_from_file_location("_font_builder", script)
+    builder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(builder)
+
+    from reportlab.pdfbase.pdfmetrics import getFont
+    face = getFont(pdf_export._LABEL_FONT).face
+
+    # 収集した文字集合には、グリフを持ちようがないものが混ざる:
+    # 改行などの制御文字と、ひらがな・カタカナ領域の未割り当てコードポイント
+    # (U+3040, U+3097, U+3098)。サブセッタはこれらを落とすので、
+    # 「足りない」と数えると常に落ちるテストになってしまう。除く。
+    import unicodedata
+
+    def _can_have_glyph(ch: str) -> bool:
+        return not ch.isspace() and unicodedata.category(ch) not in {"Cc", "Cn", "Cf"}
+
+    expected = [ch for ch in builder._build_char_set() if _can_have_glyph(ch)]
+    missing = sorted({ch for ch in expected if ord(ch) not in face.charToGlyph})
+    assert not missing, (
+        f"同梱フォントに {len(missing)} 字足りません: {''.join(missing[:30])}"
+        " … `python scripts/build_pattern_label_font.py` を実行してください")

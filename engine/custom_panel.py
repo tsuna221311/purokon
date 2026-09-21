@@ -81,6 +81,23 @@ MAX_LABEL_LENGTH = 40
 MAX_CUSTOM_PANEL_QUANTITY = 8
 
 
+def validate_boolean(raw_value: object, field_name: str) -> bool:
+    """JSON入力の真偽値を、曖昧に解釈せず検証する。
+
+    ブラウザUIは ``true`` / ``false`` というJSONのbooleanを送るが、外部APIを
+    直接使う利用者が ``"false"`` のような文字列を送ることもある。Pythonでは
+    空でない文字列はすべて真なので、単純な ``bool(raw_value)`` では
+    ``"false"`` がTrueとなり、左右反転やパネル分割を利用者の意図に反して
+    有効化してしまう。裁断結果を変える設定なので、boolean以外は明示的に
+    拒否する。
+    """
+    if isinstance(raw_value, bool):
+        return raw_value
+    if raw_value is None:
+        return False
+    raise CustomPanelError(f"{field_name}はtrueまたはfalseで指定してください。")
+
+
 def validate_label(raw_label: object) -> str:
     if not isinstance(raw_label, str) or not raw_label.strip():
         raise CustomPanelError("カスタムパーツにはラベル(名前)を入力してください。")
@@ -273,3 +290,7 @@ class CustomPanelSpec:
     points_cm: list[tuple[float, float]]
     quantity: int = 1
     mirror: bool = False
+    #: round57: 生地幅に収まらないときに、縦に分けて縫い合わせてよいか。
+    #: マントは中心で縫い合わせるのがふつうだが、EVAフォームの装甲に
+    #: 縫い目を入れるのは別の話なので、既定は「分けない」。
+    allow_split: bool = False

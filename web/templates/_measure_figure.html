@@ -1,0 +1,123 @@
+{# round34: 採寸図。
+   1440px幅で画面の右半分がずっと空白だったところに置く。採寸ミスは
+   このサービスがうまくいかない最大の原因なのに、round33で足したのは
+   「入れた値が辻褄に合わない」という**事後の指摘**だけで、正しく測る
+   手助けは何もしていなかった。とくに肩幅は腕の付け根から付け根までを
+   測ってしまう人が多く、指摘文でわざわざ否定する羽目になっていた。
+
+   仕組み: 測る線は全部うっすら描いておき、入力欄にフォーカスが入った
+   項目だけを色と太さで強調し、その項目のラベルと測り方を出す。
+   全部にラベルを付けると図が文字だらけになって読めないため。
+   測り方の文は engine/measure_guide.py が唯一の出どころ(図と文が
+   別々に管理されると片方だけ古くなる)。 #}
+<div id="measure-figure" class="measure-figure"
+     data-measure-guides='{{ measure_guides_json }}'>
+  <svg viewBox="0 0 240 430" role="img"
+       aria-label="採寸する位置を示した人体の図">
+    <title>採寸する位置</title>
+
+    {# 体は**1本の連続した輪郭**として描く。腕・脚を別の閉じた形で
+       重ねると、重なった部分に二重の線が出て「腕が体から離れている」
+       ように見える(最初にそう描いて実際にそうなった)。 #}
+    <g class="mf-body">
+      <ellipse cx="120" cy="34" rx="15" ry="18"/>
+      <path d="M 127 62
+               C 133 64, 148 66, 156 73
+               C 164 92, 172 122, 175 152
+               C 176 172, 176 186, 176 196
+               C 174 199, 170 199, 168 197
+               C 167 186, 166 170, 163 152
+               C 159 130, 154 116, 150 107
+               C 152 122, 152 140, 143 158
+               C 139 176, 152 188, 153 205
+               C 154 214, 153 220, 152 231
+               C 151 280, 149 340, 147 392
+               L 129 392
+               C 128 340, 127 290, 124 238
+               L 120 232 L 116 238
+               C 113 290, 112 340, 111 392
+               L 93 392
+               C 91 340, 89 280, 88 231
+               C 87 220, 86 214, 87 205
+               C 88 188, 101 176, 97 158
+               C 88 140, 88 122, 90 107
+               C 86 116, 81 130, 77 152
+               C 74 170, 73 186, 72 197
+               C 70 199, 66 199, 64 196
+               C 64 186, 64 172, 65 152
+               C 68 122, 76 92, 84 73
+               C 92 66, 107 64, 113 62
+               Z"/>
+      <path class="mf-neck" d="M 113 50 L 113 63 M 127 50 L 127 63"/>
+    </g>
+
+    {# --- 測る線。data-measure が入力欄の名前と対応する --- #}
+    <g class="mf-marks">
+      <g data-measure="shoulder_width">
+        <path class="mf-line" d="M 86 62 L 154 62"/>
+        <path class="mf-tick" d="M 86 57 L 86 67 M 154 57 L 154 67"/>
+        <text class="mf-label" x="120" y="51">肩幅</text>
+      </g>
+
+      <g data-measure="bust">
+        <path class="mf-line" d="M 88 112 C 100 118, 140 118, 152 112"/>
+        <path class="mf-line-back" d="M 88 112 C 100 106, 140 106, 152 112"/>
+        <text class="mf-label" x="168" y="110">バスト</text>
+      </g>
+
+      <g data-measure="waist">
+        <path class="mf-line" d="M 96 157 C 108 163, 132 163, 144 157"/>
+        <path class="mf-line-back" d="M 96 157 C 108 151, 132 151, 144 157"/>
+        <text class="mf-label" x="160" y="155">ウエスト</text>
+      </g>
+
+      <g data-measure="hip">
+        <path class="mf-line" d="M 87 203 C 100 210, 140 210, 153 203"/>
+        <path class="mf-line-back" d="M 87 203 C 100 196, 140 196, 153 203"/>
+        <text class="mf-label" x="169" y="201">ヒップ</text>
+      </g>
+
+      <g data-measure="height">
+        <path class="mf-line" d="M 212 14 L 212 404"/>
+        <path class="mf-tick" d="M 205 14 L 219 14 M 205 404 L 219 404"/>
+        <text class="mf-label mf-label-rot" x="206" y="209"
+              transform="rotate(-90 206 209)">身長</text>
+      </g>
+
+      <g data-measure="sleeve_length">
+        <path class="mf-line" d="M 160 66 C 176 92, 186 140, 184 202"/>
+        <path class="mf-tick" d="M 155 62 L 166 70 M 178 204 L 190 200"/>
+        <text class="mf-label" x="196" y="132">袖丈</text>
+      </g>
+
+      <g data-measure="upper_arm">
+        <ellipse class="mf-line" cx="167" cy="120" rx="12" ry="5"/>
+        <text class="mf-label" x="188" y="118">二の腕</text>
+      </g>
+
+      <g data-measure="bust_point_spacing">
+        <path class="mf-line" d="M 110 114 L 130 114"/>
+        <circle class="mf-dot" cx="110" cy="114" r="2"/>
+        <circle class="mf-dot" cx="130" cy="114" r="2"/>
+        <text class="mf-label" x="120" y="132">乳間</text>
+      </g>
+
+      <g data-measure="bust_point_drop">
+        <path class="mf-line" d="M 120 63 L 120 114"/>
+        <path class="mf-tick" d="M 114 63 L 126 63"/>
+        <circle class="mf-dot" cx="120" cy="114" r="2"/>
+        <text class="mf-label" x="94" y="92">乳下がり</text>
+      </g>
+    </g>
+  </svg>
+
+  <div class="measure-caption">
+    <p class="measure-caption-title" id="measure-caption-title">
+      採寸する場所
+    </p>
+    <p class="measure-caption-how" id="measure-caption-how">
+      左の採寸欄をクリックすると、その項目をどこで測るかを図の上に示します。
+    </p>
+    <p class="measure-caption-caution hidden" id="measure-caption-caution"></p>
+  </div>
+</div>

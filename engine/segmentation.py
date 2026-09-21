@@ -180,15 +180,271 @@ class SimpleSilhouetteSegmenter(Segmenter):
                 return alpha > 127
 
         rgb = np.array(image.convert("RGB")).astype(np.int16)
+        background_color = self._corner_background(rgb)
+
+        # round73: 背景が1色とは限らない。
+        #
+        # 【実測】公式の宣材ポスター(602×1200)を入れたら、画像の**50.3%**が
+        # 「服」になった。背景に床のグラデーションが敷いてあり、上は白(252)・
+        # 下は灰(159)と93も離れている。四隅はどこも白なので背景色は白と
+        # 推定され、下半分の灰色が丸ごと前景に入る。
+        #
+        # 行ごとに、その行の左右の端から背景色を取り直すと、グラデーション
+        # そのものを背景として追える(実測で前景は50.3%→38.1%に落ち、
+        # 床が消えて人物が残った)。
+        #
+        # 一様な背景の絵では、行ごとに取っても四隅から取っても同じ結果に
+        # なる。「はっきり違うときだけ行ごとに切り替える」という歯止めを
+        # 一度入れたが、**外しても落ちるテストを1枚も作れなかった**ので
+        # 置かないことにした。実測: 背景が真っ白の絵3枚と、そこへ標準偏差4の
+        # ノイズを乗せた絵で、両者の差は0画素。
+        row_background = self._row_background(rgb, background_color)
+        if row_background is not None:
+            distance = np.linalg.norm(rgb - row_background[:, None, :], axis=2)
+            return distance > self.COLOR_DISTANCE_THRESHOLD
+
+        distance = np.linalg.norm(rgb - background_color, axis=2)
+        return distance > self.COLOR_DISTANCE_THRESHOLD
+
+    def _corner_background(self, rgb: "np.ndarray") -> "np.ndarray":
+        """4隅のパッチから推定した背景色。"""
         h, w, _ = rgb.shape
         p = min(self.CORNER_PATCH_SIZE, h // 2 or 1, w // 2 or 1)
         corners = np.concatenate([
             rgb[:p, :p].reshape(-1, 3), rgb[:p, -p:].reshape(-1, 3),
             rgb[-p:, :p].reshape(-1, 3), rgb[-p:, -p:].reshape(-1, 3),
         ])
-        background_color = corners.mean(axis=0)
-        distance = np.linalg.norm(rgb - background_color, axis=2)
-        return distance > self.COLOR_DISTANCE_THRESHOLD
+        return corners.mean(axis=0)
+
+    #: 行ごとの背景色を取るときに、左右それぞれの端から見る画素数。
+    EDGE_SAMPLE_PX = 8
+    #: その行の左端と右端の色がこれ以内なら、両方とも背景とみなす。
+    #: 人物が片側の端に掛かっている行では、左右が大きく食い違う。
+    EDGE_AGREE_LIMIT = 20.0
+    #: 行ごとの背景色を縦に均すときの窓の高さ(画像の高さに対する比)。
+    #:
+    #: 左右が一致していても背景とは限らない——人物が**両側**の端に掛かって
+    #: いる行では、左右そろって人物の色になる。ただしその行は続いても
+    #: せいぜい数十行で、背景のグラデーションは画像の端から端まで続く。
+    #: 窓を大きく取った中央値なら、前者だけが落ちる。窓の半分より短い
+    #: 偽の背景は必ず落ちるので、1/4なら画像の高さの1/8まで耐える
+    #: (1200pxの絵で150行。横へ伸ばした腕でも、その太さは50行ほど)。
+    EDGE_SMOOTH_RATIO = 1 / 4
+    EDGE_SMOOTH_MIN_PX = 31
+    def _row_background(self, rgb: "np.ndarray",
+                         corner: "np.ndarray") -> "np.ndarray | None":
+        """行ごとの背景色(round73)。
+
+        その行の左端と右端から中央値をひとつずつ取り、**左右が一致している
+        行**だけを背景として採る。一致しない行は、人物が片側の端に掛かって
+        いるので使わず、上下の採れた行から引き継ぐ。最後に縦へ大きな窓の
+        中央値をかけて、左右そろって人物になっている行を落とす。
+
+        【なぜ「四隅の色に近い方」ではないか】最初はそう書いた。ところが
+        グラデーションの下の方では、背景そのものが四隅の色から100近く離れる。
+        そこでは人物の色の方が四隅に近いことがあり、**人物を背景として拾う**。
+        """
+        h, w, _ = rgb.shape
+        if h < 4 or w < 8:
+            return None
+        n = min(self.EDGE_SAMPLE_PX, max(1, w // 8))
+        left = np.median(rgb[:, :n], axis=1).astype(np.float64)
+        right = np.median(rgb[:, -n:], axis=1).astype(np.float64)
+        agree = np.linalg.norm(left - right, axis=1) <= self.EDGE_AGREE_LIMIT
+        if not agree.any():
+            return None
+        picked = (left + right) / 2.0
+        # 採れなかった行は、いちばん近い採れた行から引き継ぐ。
+        index = np.where(agree, np.arange(h), 0)
+        index = np.maximum.accumulate(index)
+        first = int(np.argmax(agree))
+        index[:first] = first
+        picked = picked[index]
+        size = max(self.EDGE_SMOOTH_MIN_PX, int(h * self.EDGE_SMOOTH_RATIO))
+        size |= 1                                   # 中央値フィルタは奇数窓
+        return np.stack([ndimage.median_filter(picked[:, k], size=size,
+                                                mode="nearest")
+                         for k in range(3)], axis=1)
+
+    #: 線画(輪郭線だけ)を塗りつぶすときに、線の途切れを埋めるために膨張させる
+    #: 画素数の、画像の短辺に対する比率。ラフスケッチは線が途切れがちで、
+    #: 途切れたまま塗りつぶすと外へ漏れて画像全体が前景になる。
+    OUTLINE_CLOSE_RATIO = 0.006
+    #: 上の膨張量の下限・上限(px)。小さい画像で0にならないように、また
+    #: 大きい画像で形が潰れないように。
+    OUTLINE_CLOSE_MIN_PX = 1
+    OUTLINE_CLOSE_MAX_PX = 12
+    #: 塗りつぶした結果がこの割合を超えたら「線が途切れていて外へ漏れた」と
+    #: みなし、塗りつぶしを採用しない(元のマスクへ戻す)。
+    OUTLINE_FILL_MAX_RATIO = 0.92
+
+    #: 塗りつぶした面積が元の何倍以上なら「線画だった」とみなすか。
+    #:
+    #: 実測: 同じ服の線画は3,108px、塗りつぶしは50,921px(16.7倍)。一方、
+    #: 元から塗りつぶされた画像に同じ処理をかけても面積は変わらない。
+    #: 腕と胴の間のような小さな隙間が埋まる程度(数%〜十数%)では発動しない
+    #: 値として1.5倍を採る。
+    OUTLINE_FILL_MIN_GAIN = 1.5
+
+    def _solid_foreground_mask(self, image: Image.Image) -> "np.ndarray | None":
+        """前景マスクを求め、線画だった場合は内部を塗りつぶして返す(round19)。
+
+        `segment()`・`silhouette_mask()`・`auto_trace_outline()`の3箇所が
+        同じ前処理を通るようにするための共通の入口。線画かどうかは
+        「塗りつぶすと面積が大幅に増えるか」で判定する(`_fill_outline`と
+        `OUTLINE_FILL_MIN_GAIN`のコメント参照)ので、元から塗りつぶされた
+        画像の挙動は変わらない。
+        """
+        mask = self._foreground_mask(image)
+        if mask is None or not mask.any():
+            return mask
+        # round72: 採否の判断は`_fill_outline`の中だけで行う。
+        #
+        # round71まではここでも「1.5倍以上に増えたか」を見ていた。ところが
+        # `_fill_outline`は既に同じ判断をしており、**2か所で同じ値を見て
+        # いた**。しかもここの判断が後勝ちなので、中で「閉じた穴を埋めた
+        # だけ」と正しく決めた結果が、ここで捨てられていた。
+        return self._fill_outline(mask, image)
+
+    #: 「紙の色ではない色で塗られている」と言える、背景色からの隔たり(RGB距離)。
+    #: 前景の判定(`COLOR_DISTANCE_THRESHOLD`)よりずっと小さい。塗られてさえ
+    #: いれば、前景と呼べるほど背景から離れていなくてもよいため。
+    PAINTED_DISTANCE_THRESHOLD = 8.0
+    #: 閉じた穴を「服の内側」とみなすのに必要な、塗られている画素の割合。
+    HOLE_PAINTED_MIN_RATIO = 0.5
+
+    def _painted_pixels(self, image: Image.Image) -> "np.ndarray | None":
+        """紙の色と違う色が置かれている画素(round72)。
+
+        前景マスクより**ゆるい**判定である。淡い水色の身頃は、前景の
+        しきい値から見れば背景と区別が付かないが、紙とは違う色で塗られて
+        いる。この差が、「服の内側の空洞」と「腕と胴のあいだの隙間」を
+        分ける——隙間には紙しかない。
+        """
+        try:
+            rgb = np.array(image.convert("RGB")).astype(np.int16)
+        except Exception:
+            return None
+        h, w, _ = rgb.shape
+        p = min(self.CORNER_PATCH_SIZE, h // 2 or 1, w // 2 or 1)
+        corners = np.concatenate([
+            rgb[:p, :p].reshape(-1, 3), rgb[:p, -p:].reshape(-1, 3),
+            rgb[-p:, :p].reshape(-1, 3), rgb[-p:, -p:].reshape(-1, 3),
+        ])
+        distance = np.linalg.norm(rgb - corners.mean(axis=0), axis=2)
+        return distance > self.PAINTED_DISTANCE_THRESHOLD
+
+    def _fill_painted_holes(self, mask: "np.ndarray",
+                             image: "Image.Image | None") -> "np.ndarray":
+        """閉じた穴のうち、**塗られているもの**だけを埋める(round72)。
+
+        穴を無条件に埋めると、腕と胴のあいだの隙間まで塞がる。隙間が
+        閉じると腕は胴と1つの塊になり、シルエットの上では腕が消える
+        (実測: 袖なしの絵で腕が1行も見えなくなり、袖の読み取りが
+        「腕が胴から離れて見えません」で落ちた)。紙しか無い穴は隙間、
+        色が置いてある穴は服の内側である。
+        """
+        plain = ndimage.binary_fill_holes(mask)
+        if plain is None or not plain.any():
+            return mask
+        holes = plain & ~mask
+        if not holes.any():
+            return mask
+        painted = self._painted_pixels(image) if image is not None else None
+        if painted is None:
+            return mask
+        labels, count = ndimage.label(holes)
+        out = mask.copy()
+        for index in range(1, count + 1):
+            blob = labels == index
+            size = int(blob.sum())
+            if size and float(painted[blob].sum()) / size >= self.HOLE_PAINTED_MIN_RATIO:
+                out |= blob
+        return out
+
+    def _fill_outline(self, mask: "np.ndarray",
+                       image: "Image.Image | None" = None) -> "np.ndarray":
+        """輪郭線だけのマスクを、閉じた内部を塗りつぶしたマスクに変える
+        (round19で追加)。
+
+        【なぜ必要か】このアプリが想定する入力のひとつが「舞台衣装のラフ
+        イラスト」、つまり**線画**である。ところが前景マスクは「背景色から
+        離れた画素」なので、線画では線そのものしか拾えない。実測では、
+        線画を入れると前景が画像の約1%にしかならず、`silhouette_mask`は
+        MIN_FOREGROUND_RATIOを下回ってNoneを返し、`segment()`も領域を
+        1件も返さず、生成が「パーツ種を判定できませんでした」で止まっていた。
+        塗りつぶしのシルエットでしか動かない状態だった。
+
+        【やり方】線を少し太らせて途切れを埋めてから、画像の外周から
+        背景を塗り広げ、**届かなかった領域**を前景とする(scipyの
+        `binary_fill_holes`と同じ考え方を、線の途切れに強くしたもの)。
+        塗りつぶした結果が画像のほぼ全体になった場合は、線が閉じていなくて
+        外へ漏れたということなので、採用せず元のマスクを返す。
+        """
+        if not mask.any():
+            return mask
+        structure = np.ones((3, 3), dtype=bool)
+
+        def _accept(candidate) -> bool:
+            if candidate is None or not candidate.any():
+                return False
+            ratio = float(candidate.sum()) / candidate.size if candidate.size else 0.0
+            if ratio > self.OUTLINE_FILL_MAX_RATIO:
+                return False   # 線が閉じておらず外へ漏れた
+            return int(candidate.sum()) >= int(mask.sum()) * self.OUTLINE_FILL_MIN_GAIN
+
+        # 1. 線が閉じていれば、太らせずにそのまま塗れる(いちばん形が正確)。
+        plain = ndimage.binary_fill_holes(mask)
+        if _accept(plain):
+            return plain
+
+        # 2. もともと塗りつぶし済みの画像。**塗られた穴だけ**埋める。
+        #
+        # 【round71まで何が起きていたか】ここは黙って元のマスクを返して
+        # いた。線画かどうかを「塗ると1.5倍以上に増えるか」で見ており、
+        # 塗りつぶし済みの絵はそこに届かないからである。
+        #
+        # ところが、**背景に近い色の服**は前景から抜け落ちる。白い背景に
+        # 生成り・淡い水色といった衣装は珍しくない。実測(白背景・
+        # 淡い水色の身頃と濃いスカートの絵):
+        #
+        #     前景マスク         333,850px   ← 身頃の内側が空洞
+        #     閉じた穴を埋めた   386,126px   (1.16倍)
+        #
+        # 1.5倍に届かないので埋められず、身頃が**穴のまま**シルエットに
+        # なっていた。胸から服の色が1画素も拾えず、色の読み取りが丸ごと
+        # 落ちていた。
+        #
+        # 「塗られた穴だけ」という条件が要る。無条件に埋めると、腕と胴の
+        # あいだの隙間まで塞がって腕が胴と1つの塊になる
+        # (`_fill_painted_holes`のdocstring参照)。外周に枠線のある絵では
+        # 画像全体が1つの閉じた穴になるが、その中身は紙なので埋まらない。
+        # ここに`OUTLINE_FILL_MAX_RATIO`の歯止めも置いていたが、外すと
+        # 落ちるテストを1つも作れなかったので**置かないことにした**
+        # (枠線の絵は「塗られた穴だけ」の条件だけで弾ける)。
+        density = float(mask.sum()) / mask.size if mask.size else 0.0
+        if density >= self.MIN_FOREGROUND_RATIO:
+            if image is not None:
+                return self._fill_painted_holes(mask, image)
+            return mask
+
+        # 3. 前景がごく僅か = 線画なのに線が途切れている。太らせて途切れを
+        #    埋めながら、小さい方から順に試す(太らせるほど輪郭が鈍るため)。
+        #    実測: 途切れ4pxは基準の膨張で埋まり、12pxでは3倍で初めて埋まった。
+        short_side = min(mask.shape)
+        step = max(self.OUTLINE_CLOSE_MIN_PX,
+                    int(round(short_side * self.OUTLINE_CLOSE_RATIO)))
+        radius = step
+        while radius <= self.OUTLINE_CLOSE_MAX_PX:
+            closed = ndimage.binary_dilation(mask, structure=structure, iterations=radius)
+            filled = ndimage.binary_fill_holes(closed)
+            if filled is not None and filled.any():
+                shrunk = ndimage.binary_erosion(filled, structure=structure,
+                                                 iterations=radius, border_value=1)
+                if _accept(shrunk):
+                    return shrunk
+            radius += step
+        return mask
 
     def _largest_component_mask(self, mask: "np.ndarray") -> "np.ndarray":
         """前景マスクから、最大の連結領域だけを残したマスクを返す。
@@ -215,9 +471,33 @@ class SimpleSilhouetteSegmenter(Segmenter):
         largest_label = int(counts.argmax())
         return labeled == largest_label
 
+    def silhouette_mask(self, image: Image.Image) -> "np.ndarray | None":
+        """前景シルエットの2値マスクを返す(round17で公開した)。
+
+        `segment()`と`auto_trace_outline()`が内部で使っているのと同じ計算
+        (アルファ→隅の色距離の2段構え、最大連結成分の抽出、解析用の縮小)を、
+        そのまま外へ出しただけのもの。`engine/illustration_fit.py`が
+        「描かれた服の丈と広がり」を測るのに使う。
+
+        判定を2箇所に書くと必ずずれるので、こうして1つの実装を共有する
+        (このプロジェクトで縫い付け辺・首幅・フォントで繰り返し起きた失敗)。
+        マスクは解析用に縮小された座標系のままだが、測るのは**比率**だけ
+        なので縮小の影響を受けない。前景が検出できない場合はNone。
+        """
+        analysis_image, _scale = self._analysis_image_and_scale(image)
+        mask = self._solid_foreground_mask(analysis_image)
+        if mask is None:
+            return None
+        mask = self._largest_component_mask(mask)
+        total = mask.size
+        ratio = float(mask.sum()) / total if total else 0.0
+        if not (self.MIN_FOREGROUND_RATIO <= ratio <= self.MAX_FOREGROUND_RATIO):
+            return None
+        return mask
+
     def segment(self, image: Image.Image) -> list[SegmentedRegion]:
         analysis_image, scale = self._analysis_image_and_scale(image)
-        mask = self._foreground_mask(analysis_image)
+        mask = self._solid_foreground_mask(analysis_image)
         if mask is None:
             return []
         mask = self._largest_component_mask(mask)
@@ -280,7 +560,7 @@ class SimpleSilhouetteSegmenter(Segmenter):
         （呼び出し側は「手動トレースをお試しください」という案内に倒す）。
         """
         analysis_image, scale = self._analysis_image_and_scale(image)
-        mask = self._foreground_mask(analysis_image)
+        mask = self._solid_foreground_mask(analysis_image)
         if mask is None:
             return None
         mask = self._largest_component_mask(mask)

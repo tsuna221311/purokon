@@ -1,9 +1,14 @@
 <meta name="csrf-token" content="{{ csrf_token }}">
+{# round44: キーボードだけで操作する人が、ヘッダーのナビを毎回全部
+   たどらずに本文へ飛べるようにする。フォーカスが当たったときだけ見える。 #}
+<a class="skip-link" href="#main-content">本文へスキップ</a>
 <header class="app-header">
   <div class="header-inner">
     <div>
       <h1><a href="{{ url_for('index') }}" class="header-logo-link">PatternForge</a></h1>
-      <p>AI型紙生成支援システム — 採寸値から縫える型紙を自動生成</p>
+      {# round34: 「AI型紙生成支援システム」は作り手側の呼び名で、
+         使う人には何が手に入るのか伝わらない。手に入る物を書く。 #}
+      <p>採寸値から、縫い代・合印つきの型紙をつくります</p>
     </div>
     <nav class="header-nav">
       <a href="{{ url_for('guide') }}">使い方</a>

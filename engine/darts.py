@@ -278,8 +278,12 @@ front_bodice / back_bodice の裾ラインに対して、標準的な運針・�
 """
 
 from __future__ import annotations
+from math import atan2, ceil, cos, hypot, radians, sin
 from dataclasses import dataclass
 
+from .blocks import ADULT_FEMALE, Block
+from .compatibility import DART_TRUING_MAX_OFFSET_CM
+from .bodice_fit import bust_point_from_cf_cm, bust_point_y_cm
 from .measurements import Measurements, STANDARD_M
 from .part_specs import clamp_scale
 
@@ -321,11 +325,55 @@ BUST_DART_ZIP_PANEL_PART_TYPES = {"front_bodice_zip_panel"}
 # 摘み込む量(cm)を比例配分する経験則の係数。実測に基づく厳密な値ではなく、
 # 「バストが大きいほど脇の丸みを補うダーツが必要になる」という定性的な
 # 傾向を、既存のウエストダーツと同程度の大きさ感で近似したもの。
+#
+# 【round29で既定から外した】この係数は上のコメントが認めている通り
+# 当てずっぽうで、しかも「標準Mより大きい分」しか見ないため、
+# **バスト83cm以下の体型にはバストダーツが1本も入らなかった**。実測:
+#
+#   バスト  60 → 0.00cm   83 → 0.00cm   110 → 2.70cm   120 → 3.00cm(上限)
+#
+# 胸の丸みは標準サイズを超えた人だけのものではないので、これは
+# 「精度が粗い」ではなく**欠落**である。round29からは新文化式の
+# 胸ぐせダーツ角(BUST_DART_ANGLE_*)から求める。この係数は、BPの位置が
+# 分からない呼び出し(単体テスト等)のフォールバックとしてのみ残す。
 BUST_DART_COEFFICIENT = 0.10
 # これ未満の摘み量は「差分ノイズ」として無視する。
 MIN_BUST_DART_INTAKE_CM = 0.3
-# 暴走防止のクランプ。
+# 暴走防止のクランプ(フォールバック経路のみ)。
 MAX_BUST_DART_INTAKE_CM = 3.0
+
+# --- 胸ぐせダーツ(新文化式の角度式。round29) ------------------------------
+#
+# 新文化式原型では、胸ぐせダーツの大きさを**BPを頂点とする角度**で決める:
+#
+#     胸ぐせダーツ角 = (B/4 − 2.5) 度
+#
+# 角度で決まるのは理にかなっている。ダーツが担うのは「胸の丸みの分だけ
+# 布を立体にする」ことで、必要な立体の量はBPからの距離ではなく開き角で
+# 決まるからである。摘み量(口の幅)は、そこからBPまでの距離Lを使って
+#
+#     摘み量 = 2 L sin(角/2)
+#
+# で求まる。同じ角度でも、BPから遠いところに口を開ければ摘み量は大きく
+# なる——という関係が自然に出る。
+#:
+#: 【round42】数値は`engine/blocks.py`の`ADULT_FEMALE`が持つようになった
+#: (原型ごとに角が違う。子ども原型は一律8°)。ここはその読み出しで、
+#: 既存の名前はテストと注記が参照しているため残してある。
+BUST_DART_ANGLE_DIVISOR = ADULT_FEMALE.bust_dart_angle.divisor
+BUST_DART_ANGLE_CONST_DEG = -ADULT_FEMALE.bust_dart_angle.const
+
+#: 脇線に開く1本のダーツの摘み量の上限(cm)。これを超える分は、実務と
+#: 同じくウエストへ回す(`engine/scaling.py`のダーツ移動)。1本で摘む量が
+#: 大きすぎると、口が縦に長くなりすぎて縫いにくく、胸の下に「角」が出る。
+MAX_SIDE_BUST_DART_INTAKE_CM = 6.0
+
+#: 脇線に2本のダーツを並べるときの、口と口の間隔(cm)。縫い代が重なると
+#: 縫えないので、最低限の隙間を空ける。
+BUST_DART_GAP_CM = 2.0
+
+#: 脇線に並べられるダーツの本数の上限。
+MAX_SIDE_BUST_DART_COUNT = 2
 # 脇線のうち、袖付け側からの距離の割合でダーツの位置(バスト位置の簡易
 # 近似)を決める。0に近いほど袖付けに近く、1に近いほど裾に近い。
 BUST_DART_HEIGHT_RATIO = 0.30
@@ -351,6 +399,13 @@ BUST_DART_MIN_MOUTH_CM = 0.6
 # 脇線としてみなす直線(L)セグメントの最小の縦方向の長さ。これより短い
 # 縦線は脇線ではない（誤検出防止）とみなす。
 MIN_SIDE_SEAM_LENGTH_CM = 10.0
+#: 脇線を「ほぼ垂直」とみなす横ずれの上限(縦の長さに対する比)。
+#: `engine/compatibility.py`の`NEAR_VERTICAL_MAX_DX_RATIO`と同じ値。
+#: 判定を2か所に書くと片方だけ直して静かに食い違うため、そちらから取る。
+SIDE_SEAM_MAX_DX_RATIO = 0.25
+#: 「その高さでの輪郭の外側に乗っている」とみなす許容(cm)。
+#: `engine/compatibility.py`の`side_seam_length`が使う値と同じ。
+SIDE_SEAM_EDGE_TOL_CM = 0.5
 
 # --- バスト頂点(BP)推定(round5: 脇ダーツをBPへ収束させる改良) ----------
 # BP(バストポイント)の水平位置を、中心前(CF)から脇線までの距離
@@ -362,6 +417,59 @@ BUST_APEX_OFFSET_RATIO = 0.45
 # (BUST_DART_HEIGHT_RATIO)とは独立した値で、口の位置とBPの位置が
 # 完全には一致しない(ダーツの脚がやや斜めにBPへ向かう)ことを表現する。
 BUST_APEX_HEIGHT_RATIO = 0.42
+
+# --- round28: BPを「体の位置」で決める --------------------------------------
+#
+# 上のBUST_APEX_*_RATIOは、BPの位置を**脇線に沿った比率**で近似していた。
+# 脇線は袖付けから裾までなので、0.42という比率が指す高さはウエストの
+# あたりになる。つまりバストダーツがバストではなくウエストを向いていた
+# (engine/bodice_fit.pyの`bust_point_from_cf_cm`に実測を記載)。
+#
+# round28からは、テンプレートが持つ基準線(data-fit-y の underarm =
+# バストライン)と、バストから決まるBP間隔を使って、BPの位置を
+# **体の座標**で決める。基準線を渡せない呼び出し(ダーツの幾何だけを
+# 単体で確かめるテスト等)では従来の比率へフォールバックする。
+
+#: ダーツの口の中心を、バストラインからどれだけ下げるか(cm)。
+#:
+#: BPはバストラインの上にあり、身頃のテンプレートでは**袖ぐりの底も同じ
+#: バストラインの上**にある(袖ぐり深さの定義がそうなっている)。つまり
+#: 口をBPと同じ高さに開けると、脇の下すれすれ——脇線の一番上——になり、
+#: 縫えない。実物の型紙でも脇ダーツは脇の下から数cm下げた位置に開け、
+#: そこから斜め上へBPへ向かう(あの「斜めに上がる脇ダーツ」の形)。
+#: 6cmは、脇線(袖ぐり底〜裾で約35cm)に対して縫い代とアームホールの
+#: 縫い止まりを避けられる標準的な位置。
+BUST_DART_MOUTH_DROP_CM = 6.0
+#: ダーツの先端をBPの手前で止める距離(cm)。BPまで刺すと、そこだけ布が
+#: 尖って浮くため、実務では2〜3cm手前で止める。
+BUST_APEX_SETBACK_CM = 2.5
+
+#: round71: たたみ出し(truing)で、ダーツの口が脇線から外れてよい上限(cm)。
+#:
+#: 【なぜ要るか】脇の胸ぐせダーツは、口を脇線の上に置き、先端をBPへ向けて
+#: 斜めに刺す。口の中心より先端が上にあるので、**2本の脚の長さが揃わない**。
+#: 実測(round71、全サイズ): 脚は 10.97〜20.76cm に対して差が 1.75〜2.22cm
+#: (8〜14%)あった。ダーツは脚どうしを合わせて縫うので、長い方が1.8〜2.2cm
+#: 余る——つまり**たたんでも平らにならず、脇線に段差が出る**。
+#:
+#: 洋裁では、ダーツをたたんだ状態で脇線を引き直して裁つ(たたみ出し)。
+#: その結果、片方の口は脇線の外へ少し出る。この定数は、その出っ張りが
+#: 大きくなりすぎたとき(想定外の形状)にたたみ出しを諦めるための上限。
+#:
+#: 見張る側(`engine/compatibility.py`の`_is_dart_notch_at`)も同じ値を
+#: 使うので、**値はあちらに置いて、ここでは読むだけにする**。2か所に
+#: 書くと、片方だけ動かしたときに「ダーツをダーツと認識できない」形で
+#: 静かに壊れる。
+BUST_DART_TRUING_MAX_OFFSET_CM = DART_TRUING_MAX_OFFSET_CM
+
+#: 仕上げの揃え直し(`retrue_bust_darts`)が直してよい、脚の長さのぶれ(cm)。
+#:
+#: ダーツを作った時点では脚はぴったり揃う。そのあとに掛かるウエスト絞り・
+#: 裾の開きが口を動かす量は、実測で0.138cmである。ここはその**ぶれ**を
+#: 直すためだけのもので、作るときに揃えるのを諦めたダーツを揃え直す
+#: 場所ではない。諦めたものをここで揃えると、既に済ませた「前身頃を
+#: 縮む量ぶん長くする」補正と釣り合わなくなる。
+RETRUE_MAX_DRIFT_CM = 0.6
 # ダーツの先端は、推定したBPそのものへは到達させない(実際の縫製でも
 # 先端がBPよりわずかに手前で止まるのが普通で、頂点そのものを突き刺すと
 # 不自然な尖りになる)。摘み量が小さいほど先端はBPの手前(REACH_MIN)、
@@ -425,6 +533,9 @@ PANTS_DEFAULT_APEX_LEN_CM = 7.0
 class DartPlan:
     darts_per_half: int
     intake_per_dart_cm: float
+    #: round26: ヒップが通る幅を確保するために摘み量を減らしたか。
+    #: 減らした場合、ウエストは本来より絞りきれていない(利用者へ開示する)。
+    limited_by_hip: bool = False
 
     def is_empty(self) -> bool:
         return self.darts_per_half == 0
@@ -434,14 +545,34 @@ NO_DART = DartPlan(darts_per_half=0, intake_per_dart_cm=0.0)
 
 
 def compute_dart_plan(part_type: str, scaled_half_width_cm: float,
-                       measurements: Measurements) -> DartPlan:
+                       measurements: Measurements,
+                       hip_ease_cm: float | None = None,
+                       dartless: bool = False) -> DartPlan:
     """バスト比・ウエスト比と、体型スケーリング後の裾半幅からダーツ計画を求める。
 
     scaled_half_width_cm: バスト比でX方向を変形した後の、身頃の裾半幅(cm)。
     「ウエスト比で変形した場合の目標半幅」との差分を、ダーツの摘み量とする。
+
+    【round26で加えた上限】このダーツは**裾の線**に入るが、身頃の裾は
+    ヒップの高さにある(テンプレートの丈58cmは首の付け根からヒップまで)。
+    つまり摘みすぎると、ヒップが通らない=着られない型紙になる。実測:
+
+      B/W/H        裾の開き   ヒップ+ゆとり     差
+      83/58/98      83.97      102.0       -18.0   ← 腰を通らない
+      83/50/100     72.94      104.0       -31.1
+
+    そこで「裾がヒップ+ゆとりを下回らない」ところで摘み量を止める。
+    止めた場合は`limited_by_hip`を立て、呼び出し側が
+    「ウエストは絞りきれていない」と開示する(黙って絞らないのでも、
+    黙って着られない型紙を出すのでもない)。
+
+    hip_ease_cm を渡さない場合はこの上限を適用しない(ダーツの幾何だけを
+    単体で確かめるテスト等、身頃以外の文脈から呼ばれるため)。
     """
     if part_type not in DART_ELIGIBLE_PART_TYPES or scaled_half_width_cm <= 0:
         return NO_DART
+    if dartless:
+        return NO_DART      # round30: 伸びる生地はダーツを入れない
 
     bust_ratio = clamp_scale(measurements.bust / STANDARD_M.bust)
     waist_ratio = clamp_scale(measurements.waist / STANDARD_M.waist)
@@ -453,12 +584,26 @@ def compute_dart_plan(part_type: str, scaled_half_width_cm: float,
     target_half_width = scaled_half_width_cm * (waist_ratio / bust_ratio)
     intake = scaled_half_width_cm - target_half_width - EASE_CM
     intake = min(intake, MAX_DART_INTAKE_PER_HALF_CM)
+
+    limited = False
+    if hip_ease_cm is not None:
+        # 裾(=ヒップの高さ)がヒップ+ゆとりを下回らない範囲に抑える。
+        # 前後2枚×左右2辺の計4辺で分担するので、1辺あたりの上限は
+        # 「半幅 - 必要な周長/4」。
+        hip_limit = scaled_half_width_cm - (measurements.hip + hip_ease_cm) / 4.0
+        if hip_limit < intake:
+            limited = intake >= MIN_DART_INTAKE_CM
+            intake = max(0.0, hip_limit)
+
     if intake < MIN_DART_INTAKE_CM:
-        return NO_DART
+        return DartPlan(darts_per_half=0, intake_per_dart_cm=0.0,
+                         limited_by_hip=limited)
 
     if intake <= MAX_SINGLE_DART_INTAKE_CM:
-        return DartPlan(darts_per_half=1, intake_per_dart_cm=intake)
-    return DartPlan(darts_per_half=2, intake_per_dart_cm=intake / 2.0)
+        return DartPlan(darts_per_half=1, intake_per_dart_cm=intake,
+                         limited_by_hip=limited)
+    return DartPlan(darts_per_half=2, intake_per_dart_cm=intake / 2.0,
+                     limited_by_hip=limited)
 
 
 def compute_skirt_dart_plan(variation: str, scaled_half_width_cm: float,
@@ -575,7 +720,9 @@ def _find_top_edge_segment_index(segments: list) -> int | None:
 
 
 def apply_waist_dart(part_type: str, segments: list,
-                      measurements: Measurements) -> tuple[list, int]:
+                      measurements: Measurements,
+                      hip_ease_cm: float | None = None,
+                      dartless: bool = False) -> tuple[list, int]:
     """裾(ウエスト)ラインにウエストダーツを追加する。
 
     ダーツが不要、または安全に置けない形状の場合は、元のsegmentsをそのまま
@@ -592,7 +739,8 @@ def apply_waist_dart(part_type: str, segments: list,
         return segments, 0
 
     if part_type in WAIST_DART_ZIP_PANEL_PART_TYPES:
-        return _apply_waist_dart_zip_panel(segments, measurements)
+        return _apply_waist_dart_zip_panel(segments, measurements, hip_ease_cm,
+                                            dartless=dartless)
 
     hem_idx = _find_hem_segment_index(segments)
     if hem_idx is None or hem_idx == 0:
@@ -609,7 +757,8 @@ def apply_waist_dart(part_type: str, segments: list,
     if half_width < 1e-6:
         return segments, 0
 
-    plan = compute_dart_plan(part_type, half_width, measurements)
+    plan = compute_dart_plan(part_type, half_width, measurements, hip_ease_cm,
+                              dartless=dartless)
     if plan.is_empty():
         return segments, 0
 
@@ -705,7 +854,9 @@ def _materialize_closing_edge(segments: list) -> list:
     return segments[:-1] + [("L", [start[0], start[1]])]
 
 
-def _apply_waist_dart_zip_panel(segments: list, measurements: Measurements) -> tuple[list, int]:
+def _apply_waist_dart_zip_panel(segments: list, measurements: Measurements,
+                                 hip_ease_cm: float | None = None,
+                                 dartless: bool = False) -> tuple[list, int]:
     """front_bodice_zip_panel(前開き用の片側パネル)にウエストダーツを追加する
     (round11で追加)。
 
@@ -756,7 +907,8 @@ def _apply_waist_dart_zip_panel(segments: list, measurements: Measurements) -> t
     if half_width < 1e-6:
         return segments, 0
 
-    plan = compute_dart_plan("front_bodice_zip_panel", half_width, measurements)
+    plan = compute_dart_plan("front_bodice_zip_panel", half_width, measurements,
+                              hip_ease_cm, dartless=dartless)
     if plan.is_empty():
         return segments, 0
 
@@ -825,6 +977,59 @@ def compute_bust_dart_intake_cm(measurements: Measurements) -> float:
     return intake if intake >= MIN_BUST_DART_INTAKE_CM else 0.0
 
 
+def bust_dart_angle_deg(bust_cm: float, block: Block = ADULT_FEMALE) -> float:
+    """胸ぐせダーツの開き角(度)。新文化式の (B/4 − 2.5)。
+
+    block: round42。子ども原型では一律8°(`engine/blocks.py`)。
+        6歳児(バスト60)にこの式を当てると12.5°になり、子ども原型の8°より
+        4.5°ぶん余計な立体が入っていた。
+    """
+    return max(0.0, block.bust_dart_angle.value(bust_cm))
+
+
+def total_bust_dart_intake_cm(bust_cm: float, bp_to_mouth_cm: float,
+                               block: Block = ADULT_FEMALE) -> float:
+    """胸ぐせダーツの摘み量の合計(cm)。
+
+    bp_to_mouth_cm: BPからダーツの口の中心までの距離(cm)。
+
+    角を摘み量へ直す式 2 L sin(角/2) をそのまま使う。角そのものは
+    `bust_dart_angle_deg`(新文化式)。
+    """
+    if bp_to_mouth_cm <= 0:
+        return 0.0
+    half = radians(bust_dart_angle_deg(bust_cm, block)) / 2.0
+    intake = 2.0 * bp_to_mouth_cm * sin(half)
+    return intake if intake >= MIN_BUST_DART_INTAKE_CM else 0.0
+
+
+def split_bust_dart_cm(total_intake_cm: float) -> tuple[list[float], float]:
+    """胸ぐせダーツの合計を、脇線に並べる**複数本**へ分ける(round29)。
+
+    Returns:
+        (1本あたりの摘み量のリスト, 収まりきらなかった量cm)。
+
+    1本のダーツで摘める量には実務上の上限がある
+    (`MAX_SIDE_BUST_DART_INTAKE_CM`)。胸が大きいほど胸ぐせダーツは大きく
+    なり、1本にまとめると口が縦に長くなりすぎて縫いにくく、胸の下に
+    「角」が出る。実際の型紙でも、大きい胸ぐせダーツは**分散**して2本に
+    することがある。ここでも上限を超えたら均等に2本へ分ける
+    (「片方だけ深い2本」より「同じ深さの2本」の方が、縫い縮めたときの
+    見た目が素直になる)。
+
+    2本でも収まらない分は諦めて開示する(`engine/pipeline.py`)。無理に
+    3本4本と増やすと、脇線がダーツの口だらけになって縫えなくなる。
+    """
+    if total_intake_cm <= 0:
+        return [], 0.0
+    if total_intake_cm <= MAX_SIDE_BUST_DART_INTAKE_CM:
+        return [total_intake_cm], 0.0
+    capacity = MAX_SIDE_BUST_DART_INTAKE_CM * MAX_SIDE_BUST_DART_COUNT
+    fitted = min(total_intake_cm, capacity)
+    each = fitted / MAX_SIDE_BUST_DART_COUNT
+    return [each] * MAX_SIDE_BUST_DART_COUNT, max(0.0, total_intake_cm - capacity)
+
+
 def _find_side_seam_segment_indices(segments: list) -> list[int]:
     """脇線（袖付け〜裾の間にある、ほぼ垂直な直線(L)セグメント）を探す。
 
@@ -832,22 +1037,79 @@ def _find_side_seam_segment_indices(segments: list) -> list[int]:
     (上→下/下→上)に依存せず、幾何(「ほぼ垂直かつ十分に長い直線」)から
     動的に探す。前身頃には左右2本の脇線があるはずなので、2本以外が
     見つかった場合は呼び出し側で安全側に倒す。
+
+    【round29で直した不具合】round28まで「垂直」を `dx < 1e-6`——つまり
+    **厳密な垂直**——で判定していた。ところがround26で、裾をヒップに
+    合わせるために脇線を開かせるようになっている(`apply_hip_widening`)。
+    開かせた瞬間に脇線は厳密な垂直でなくなるので、この関数は脇線を
+    1本も見つけられなくなり、**胸ぐせダーツが黙って消えていた**。実測
+    (前身頃・ダーツの本数):
+
+        B/W/H          裾の開き    round28   round29
+        83/66/91        あり        0本      1本
+        110/85/112      なし        2本      2本
+        120/110/130     あり        0本      2本
+
+    「ヒップがバストより大きい体型ほど、胸のダーツが消える」という、
+    理由の説明できない挙動になっていた。判定を
+    `engine/compatibility.py`の`_is_side_seam_edge`と同じ「ほぼ垂直」
+    (SIDE_SEAM_MAX_DX_RATIO)に揃えて直した。
     """
+    from .compatibility import _x_range_at_y
+
     positions = _segment_start_positions(segments)
+    outline = _closed_points_from_segments(segments)
     found: list[int] = []
     for i, (cmd, nums) in enumerate(segments):
         if cmd != "L":
             continue
         start = positions[i]
         end = (nums[0], nums[1])
-        if (abs(start[0] - end[0]) < 1e-6
-                and abs(start[1] - end[1]) > MIN_SIDE_SEAM_LENGTH_CM):
-            found.append(i)
+        dx, dy = abs(start[0] - end[0]), abs(start[1] - end[1])
+        if dy <= MIN_SIDE_SEAM_LENGTH_CM or dx > SIDE_SEAM_MAX_DX_RATIO * dy:
+            continue
+        # 「ほぼ垂直で十分に長い」だけでは、**ウエストダーツの脚**も条件を
+        # 満たす(裾から12cm上の先端へ向かう、ほぼ縦の辺)。実測では脇線の
+        # 候補が2本のはずが6〜10本になり、ダーツが黙って出なくなった。
+        # 脇線は必ずパーツの外周にあるので、その高さでの輪郭の外側と
+        # 一致することも確かめる(engine/compatibility.pyの
+        # `_is_side_seam_edge`と同じ考え方)。
+        span = _x_range_at_y(outline, (start[1] + end[1]) / 2.0)
+        if span is None:
+            continue
+        mid_x = (start[0] + end[0]) / 2.0
+        if min(abs(mid_x - span[0]), abs(mid_x - span[1])) > SIDE_SEAM_EDGE_TOL_CM:
+            continue
+        found.append(i)
     return found
 
 
+def _realised_mouth_cm(span: float, mouth_center: float, seam_x, tip_for,
+                        y_top: float, y_bottom: float) -> float | None:
+    """脇線に幅`span`で開けた口が、脚を揃えたあと実際に何cmになるか。
+
+    `_equalise_legs`は口を「先端から同じ距離」へ寄せるので、出来上がりの
+    口は元より少し狭くなる。その狭くなった後の値を返す。
+    """
+    y_a = mouth_center - span / 2.0
+    y_b = mouth_center + span / 2.0
+    if not (y_top <= y_a and y_b <= y_bottom):
+        return None
+    mouth_a = (seam_x(y_a), y_a)
+    mouth_b = (seam_x(y_b), y_b)
+    tip = tip_for((y_a + y_b) / 2.0)
+    trued = _equalise_legs(mouth_a, tip, mouth_b)
+    if trued is None:
+        return hypot(mouth_b[0] - mouth_a[0], mouth_b[1] - mouth_a[1])
+    return hypot(trued[1][0] - trued[0][0], trued[1][1] - trued[0][1])
+
+
 def _bust_dart_notch(start: tuple[float, float], end: tuple[float, float],
-                      cf_x: float, intake: float) -> list[tuple[str, list[float]]] | None:
+                      cf_x: float, intake: float,
+                      bust_line_y: float | None = None,
+                      bp_from_cf_cm: float | None = None,
+                      intakes_cm: list[float] | None = None
+                      ) -> list[tuple[str, list[float]]] | None:
     """脇線の1区間(start→end)に、中心前基準位置cf_xへ向けて収束する
     バストダーツのV字ノッチを1本分作る。
 
@@ -868,56 +1130,179 @@ def _bust_dart_notch(start: tuple[float, float], end: tuple[float, float],
     docstring参照)。この関数は必ず`end`を末尾に含める。
     """
     x0 = start[0]
+    # round29: 脇線は厳密な垂直ではなくなった(裾をヒップに合わせて開かせる
+    # ため)。口の2点は脇線の**上**に乗せる必要があるので、その高さでの
+    # 脇線のxを線形補間で求める。垂直なら従来とまったく同じ値になる。
+    _dy_seam = end[1] - start[1]
+    _slope = (end[0] - start[0]) / _dy_seam if abs(_dy_seam) > 1e-9 else 0.0
+
+    def seam_x(y: float) -> float:
+        return start[0] + _slope * (y - start[1])
+
     y_top = min(start[1], end[1])
     y_bottom = max(start[1], end[1])
     seam_len = y_bottom - y_top
     # 口の幅は摘み量そのもの(round14。それ以前は4.0cm固定だった)。
-    mouth = max(intake, BUST_DART_MIN_MOUTH_CM)
-    half_mouth = mouth / 2.0
-    if seam_len < 2 * MIN_CLEARANCE_CM + mouth:
+    intakes = [i for i in (intakes_cm if intakes_cm is not None else [intake]) if i > 0]
+    if not intakes:
+        return None
+    mouths = [max(i, BUST_DART_MIN_MOUTH_CM) for i in intakes]
+    gaps = BUST_DART_GAP_CM * (len(mouths) - 1)
+    total_mouth = sum(mouths) + gaps
+    if seam_len < 2 * MIN_CLEARANCE_CM + total_mouth:
         return None  # ダーツの口を安全に置けるだけの縦の余裕が無い
 
-    y_apex = y_top + seam_len * BUST_DART_HEIGHT_RATIO
-    y_apex = min(max(y_apex, y_top + MIN_CLEARANCE_CM + half_mouth),
-                 y_bottom - MIN_CLEARANCE_CM - half_mouth)
-    y_mouth_a = y_apex - half_mouth
-    y_mouth_b = y_apex + half_mouth
-
-    # BP(バスト頂点)の推定位置。x0がある側(cf_xより左右どちらか)へ
-    # ミラーして求める。half_width_sideはCF-脇線間の距離。
-    half_width_side = abs(cf_x - x0)
     sign = -1.0 if x0 < cf_x else 1.0
-    bp_x = cf_x + sign * half_width_side * BUST_APEX_OFFSET_RATIO
-    bp_y = y_top + seam_len * BUST_APEX_HEIGHT_RATIO
-    bp_y = min(max(bp_y, y_top + MIN_CLEARANCE_CM), y_bottom - MIN_CLEARANCE_CM)
+    if bust_line_y is not None and bp_from_cf_cm:
+        # round28: 体の位置で決める。BPはバストラインの上にあり、口はそこから
+        # 少し下げた高さに開ける。
+        bp_x = cf_x + sign * bp_from_cf_cm
+        # BPがこのパーツの脇線より外に出ることはない(前立て分割パーツのように
+        # 幅の狭いパーツでは起こりうる)。外に出る場合は脇線の手前へ寄せる。
+        if sign > 0:
+            bp_x = min(bp_x, x0 - MIN_CLEARANCE_CM)
+        else:
+            bp_x = max(bp_x, x0 + MIN_CLEARANCE_CM)
+        bp_y = bust_line_y
+        block_center = bust_line_y + BUST_DART_MOUTH_DROP_CM + total_mouth / 2.0 \
+            - mouths[0] / 2.0
+    else:
+        # 基準線が無い場合のフォールバック(round27までの近似)。
+        half_width_side = abs(cf_x - x0)
+        bp_x = cf_x + sign * half_width_side * BUST_APEX_OFFSET_RATIO
+        bp_y = y_top + seam_len * BUST_APEX_HEIGHT_RATIO
+        block_center = y_top + seam_len * BUST_DART_HEIGHT_RATIO
+    def _tip_for(y_apex: float) -> tuple[float, float]:
+        """口の中心の高さから、ダーツ先端の位置を決める。
 
-    # ダーツの先端は、脇線の口の中心(x0, y_apex)からBPへ向かう直線上の、
-    # 摘み量に応じた位置(reach_ratio)に置く。BPそのものには到達させない。
-    reach_ratio = BUST_APEX_REACH_MIN_RATIO + (
-        BUST_APEX_REACH_MAX_RATIO - BUST_APEX_REACH_MIN_RATIO
-    ) * min(1.0, intake / MAX_BUST_DART_INTAKE_CM)
-    tip_x = x0 + reach_ratio * (bp_x - x0)
-    tip_y = y_apex + reach_ratio * (bp_y - y_apex)
-    tip_y = min(max(tip_y, y_top + MIN_CLEARANCE_CM), y_bottom - MIN_CLEARANCE_CM)
+        round71でループの中から切り出した。脚を揃えたあとの口の広さを
+        測るために、同じ計算を繰り返し呼ぶ必要があるため。中身は
+        round28からまったく変えていない。
+        """
+        mouth_x = seam_x(y_apex)
+        reach = hypot(bp_x - mouth_x, bp_y - y_apex)
+        if bust_line_y is not None and bp_from_cf_cm and reach > BUST_APEX_SETBACK_CM:
+            reach_ratio = (reach - BUST_APEX_SETBACK_CM) / reach
+        else:
+            reach_ratio = BUST_APEX_REACH_MIN_RATIO + (
+                BUST_APEX_REACH_MAX_RATIO - BUST_APEX_REACH_MIN_RATIO
+            ) * min(1.0, intakes[0] / MAX_BUST_DART_INTAKE_CM)
+        tip_x = mouth_x + reach_ratio * (bp_x - mouth_x)
+        tip_y = y_apex + reach_ratio * (bp_y - y_apex)
+        tip_y = min(max(tip_y, y_top + MIN_CLEARANCE_CM),
+                    y_bottom - MIN_CLEARANCE_CM)
+        return tip_x, tip_y
+
+    # 複数本のときは、口をひとかたまりとして脇線に収める。
+    half_block = total_mouth / 2.0
+    block_center = min(max(block_center, y_top + MIN_CLEARANCE_CM + half_block),
+                       y_bottom - MIN_CLEARANCE_CM - half_block)
+    if bust_line_y is None or not bp_from_cf_cm:
+        # 比率で近似する場合だけ、BPを脇線の範囲内へ収める。round28の
+        # 「体の位置で決める」経路では、BPは**狙う方向を示す体の点**であって
+        # 脇線上の点ではない。バストラインは脇線の上端(袖ぐりの底)と同じ
+        # 高さなので、ここで収めると狙いが1cm下へずれる(実測: BPまでの
+        # 距離が2.50cmのはずが2.93cmになっていた)。
+        bp_y = min(max(bp_y, y_top + MIN_CLEARANCE_CM), y_bottom - MIN_CLEARANCE_CM)
+
+    points: list[tuple[float, float]] = []
+    cursor = block_center - half_block
+    for mouth, intake_one in zip(mouths, intakes):
+        # round71: 脚を揃えると口がわずかに狭くなるので、狭くなる分だけ
+        # 先に広げておく。
+        #
+        # 【なぜ要るか】`_equalise_legs`は口を「先端から同じ距離」へ寄せる。
+        # 長い方は縮み短い方は伸びるが、寄せる先が2本の平均なので、
+        # 出来上がりの口(＝摘み量)は元より少し狭くなる。実測(B88):
+        # 狙い5.50cm に対し 5.15cm ——0.35cm(6%)足りなかった。
+        # 摘み量は新文化式の角度式から決めた値なので、減らしてはいけない。
+        #
+        # 口の広さと出来上がりの関係は単純な比ではないので、**作って測って
+        # 直す**を3回繰り返す。3回で0.001cm以下まで寄る(実測)。
+        span = mouth
+        for _ in range(3):
+            realised = _realised_mouth_cm(span, cursor + mouth / 2.0, seam_x,
+                                          _tip_for, y_top, y_bottom)
+            if realised is None or realised <= 1e-6:
+                span = mouth
+                break
+            span *= mouth / realised
+        mouth_center = cursor + mouth / 2.0
+        y_mouth_a = mouth_center - span / 2.0
+        y_mouth_b = mouth_center + span / 2.0
+        y_apex = (y_mouth_a + y_mouth_b) / 2.0
+        # ダーツの先端は、脇線の口の中心(x0, y_apex)からBPへ向かう直線上に置く。
+        # round28からは、BPの手前 BUST_APEX_SETBACK_CM で止める(実務の定石)。
+        # 「摘み量が大きいほど深く刺す」という従来の比率は、BPの位置そのものが
+        # 近似だった時代の当てずっぽうなので、体の位置が分かる場合は使わない。
+        tip_x, tip_y = _tip_for(y_apex)
+        mouth_a = (seam_x(y_mouth_a), y_mouth_a)
+        mouth_b = (seam_x(y_mouth_b), y_mouth_b)
+        tip_point = (tip_x, tip_y)
+        # round71: 脚の長さを揃える(たたみ出し)。揃っていないと、ダーツは
+        # 平らにたたまれない——実測で脚が1.75〜2.22cm余っていた。
+        # 上下の脇線の点は、脇線の上で口のすぐ外側に取る(ダーツが複数本
+        # 並ぶ場合も、間の脇線の上で見ることになる)。
+        above = (seam_x(y_mouth_a - MIN_CLEARANCE_CM), y_mouth_a - MIN_CLEARANCE_CM)
+        below = (seam_x(y_mouth_b + MIN_CLEARANCE_CM), y_mouth_b + MIN_CLEARANCE_CM)
+        trued = _equalise_legs(mouth_a, tip_point, mouth_b)
+        if trued is not None:
+            mouth_a, mouth_b = trued
+        points.append(mouth_a)
+        points.append(tip_point)
+        points.append(mouth_b)
+        cursor = y_mouth_b + BUST_DART_GAP_CM
 
     # 元の描画方向(start->end)を保つよう、y座標がstartに近い側から
-    # 順に3点を並べ、最後に必ず元の終点(end)へ戻す。
-    if start[1] <= end[1]:
-        ordered = [(x0, y_mouth_a), (tip_x, tip_y), (x0, y_mouth_b), end]
-    else:
-        ordered = [(x0, y_mouth_b), (tip_x, tip_y), (x0, y_mouth_a), end]
-    return [("L", [x, y]) for x, y in ordered]
+    # 順に並べ、最後に必ず元の終点(end)へ戻す。
+    if start[1] > end[1]:
+        points.reverse()
+    return [("L", [x, y]) for x, y in points] + [("L", [end[0], end[1]])]
 
 
-def _mouth_span(rep: list) -> tuple[float, float]:
-    """`_bust_dart_notch`が返した4点から、(口の下端y, 口の幅) を取り出す。
+def _mouth_span(rep: list, start: tuple[float, float] | None = None) -> tuple[float, float]:
+    """`_bust_dart_notch`が返した点列から、(口の下端y, 脇線が縮む量) を返す。
 
-    repは [口の一方, ダーツ先端, 口のもう一方, 元の終点] の順。先端のyは
-    口の範囲外に出ることがある(先端はBPへ向かって斜めに伸びるため)ので、
-    脇線上の2点(インデックス0と2)だけを見る。
+    repは [口の一方, ダーツ先端, 口のもう一方] × 本数 + [元の終点] の順。
+    先端のyは口の範囲外に出ることがある(先端はBPへ向かって斜めに伸びるため)
+    ので、脇線上の点(3つおき)だけを見る。
+
+    round29で複数本に対応した。
+
+    【round71で直したこと】縮む量を「口の幅の合計」で出していた。
+    口の2点が**脇線の上に並んでいる**ならそれで正しいが、たたみ出し
+    (`_equalise_legs`)をすると口が脇線から外れるので、もう正しくない。
+    そこで、縮む量を定義どおりに測る——
+
+        縮む量 ＝ ダーツが無いときの脇線 −(実際に縫う区間の長さの合計)
+
+    ダーツが無いときの脇線は start→末尾の点 の直線、実際に縫うのは
+    start→口A・口B→次の口A・…・最後の口B→末尾 の各区間である。
+    口が脇線の上に並んでいる場合、この式は「口の幅の合計」と**厳密に
+    一致する**(全ての点が同一直線上に乗るため)。つまり、たたみ出しを
+    しない形では round70 までとまったく同じ値になる。
+
+    `start`を渡さない古い呼び方では、従来どおり口の幅の合計を返す。
     """
-    y_a, y_b = rep[0][1][1], rep[2][1][1]
-    return max(y_a, y_b), abs(y_b - y_a)
+    seam_ys = [rep[i][1][1] for i in range(0, len(rep) - 1, 3)]
+    seam_ys += [rep[i + 2][1][1] for i in range(0, len(rep) - 1, 3)]
+    if start is None:
+        total = 0.0
+        for i in range(0, len(rep) - 1, 3):
+            total += abs(rep[i + 2][1][1] - rep[i][1][1])
+        return max(seam_ys), total
+
+    end = (rep[-1][1][0], rep[-1][1][1])
+    mouths = [((rep[i][1][0], rep[i][1][1]), (rep[i + 2][1][0], rep[i + 2][1][1]))
+              for i in range(0, len(rep) - 1, 3)]
+    sewn = 0.0
+    cursor = start
+    for mouth_a, mouth_b in mouths:
+        sewn += hypot(mouth_a[0] - cursor[0], mouth_a[1] - cursor[1])
+        cursor = mouth_b
+    sewn += hypot(end[0] - cursor[0], end[1] - cursor[1])
+    shrink = hypot(end[0] - start[0], end[1] - start[1]) - sewn
+    return max(seam_ys), max(0.0, shrink)
 
 
 def _shift_notch_end(rep: list, y_threshold: float, dy: float) -> list:
@@ -970,6 +1355,40 @@ def _shift_below(segments: list, y_threshold: float, dy: float) -> list:
     return out
 
 
+def _side_seam_top_index_by_side(segments: list) -> dict[str, int]:
+    """左右それぞれの脇線のうち、**いちばん上の**セグメント番号を返す。
+
+    round29で脇線をウエストの高さで絞るようにした
+    (`engine/bodice_fit.py`の`apply_waist_nip`)。絞るにはウエストの高さに
+    節点が要るので、それまで1本だった脇線がウエストで2本に割れる。
+    「脇線候補がちょうど2本」を前提にしていた箇所は、候補が4本になった
+    とたんに**黙ってダーツをあきらめる**(実測: 全ての体型で胸ぐせダーツが
+    消えた)。胸ぐせダーツはバストラインのすぐ下に開くので、左右それぞれ
+    いちばん上の区間を選べばよい。
+    """
+    candidates = _find_side_seam_segment_indices(segments)
+    if not candidates:
+        return {}
+    positions = _segment_start_positions(segments)
+    xs = [positions[i][0] for i in candidates] + \
+         [segments[i][1][0] for i in candidates]
+    center = (min(xs) + max(xs)) / 2.0
+    best: dict[str, int] = {}
+    for i in candidates:
+        start = positions[i]
+        end = (segments[i][1][0], segments[i][1][1])
+        side = "left" if (start[0] + end[0]) / 2.0 < center else "right"
+        y_top = min(start[1], end[1])
+        current = best.get(side)
+        if current is None:
+            best[side] = i
+            continue
+        cur_top = min(positions[current][1], segments[current][1][1])
+        if y_top < cur_top:
+            best[side] = i
+    return best
+
+
 def _bust_dart_zip_panel_side_index(segments: list) -> int | None:
     """front_bodice_zip_panelの輪郭から、外側の脇線(ダーツを追加すべき縁)の
     セグメントインデックスを探す。
@@ -983,9 +1402,10 @@ def _bust_dart_zip_panel_side_index(segments: list) -> int | None:
     脇線と判定する。想定外の形状(候補が2本でない、または交差検証に
     失敗する)の場合はNoneを返し、呼び出し側で安全側に倒す。
     """
-    candidates = _find_side_seam_segment_indices(segments)
-    if len(candidates) != 2:
+    by_side = _side_seam_top_index_by_side(segments)
+    if len(by_side) != 2:
         return None
+    candidates = sorted(by_side.values())
 
     positions = _segment_start_positions(segments)
 
@@ -1004,9 +1424,63 @@ def _bust_dart_zip_panel_side_index(segments: list) -> int | None:
     return larger
 
 
+def _bust_dart_cf_and_side_x(part_type: str, segments: list
+                              ) -> tuple[float, float] | None:
+    """胸ぐせダーツを置くパーツの (中心前のx, 脇線のx) を返す。
+
+    `apply_bust_dart`が実際にダーツを入れるときと**同じ探し方**をする。
+    摘み量を先に決める側(`bust_dart_split_for_part`)と、ダーツを入れる側で
+    別々に脇線を探すと、片方だけ直したときに静かに食い違うため。
+    """
+    by_side = _side_seam_top_index_by_side(segments)
+    if len(by_side) != 2:
+        return None
+    if part_type in BUST_DART_ZIP_PANEL_PART_TYPES:
+        side_idx = _bust_dart_zip_panel_side_index(segments)
+        if side_idx is None:
+            return None
+        others = [i for i in by_side.values() if i != side_idx]
+        if len(others) != 1:
+            return None
+        return segments[others[0]][1][0], segments[side_idx][1][0]
+
+    side_xs = [segments[i][1][0] for i in by_side.values()]
+    return sum(side_xs) / 2.0, side_xs[0]
+
+
+def bust_dart_split_for_part(part_type: str, segments: list,
+                              measurements: Measurements,
+                              bust_line_y: float,
+                              block: Block = ADULT_FEMALE
+                              ) -> tuple[list[float], float]:
+    """このパーツの胸ぐせダーツの (1本あたりの摘み量, 収まらない量) を返す。
+
+    新文化式の角度式で合計を求め、1本の上限で分散する(round29)。
+    パーツの形から脇線を見つけられない場合は ([], 0)。
+    """
+    if part_type not in BUST_DART_ELIGIBLE_PART_TYPES:
+        return [], 0.0
+    geometry = _bust_dart_cf_and_side_x(part_type, segments)
+    if geometry is None:
+        return [], 0.0
+    cf_x, side_x = geometry
+    bp_from_cf = bust_point_from_cf_cm(measurements.bust,
+                                       measurements.bust_point_spacing)
+    # 口の中心はバストラインから BUST_DART_MOUTH_DROP_CM 下、脇線の上。
+    horizontal = abs(cf_x - side_x) - bp_from_cf
+    if horizontal <= 0:
+        return [], 0.0
+    bp_to_mouth = hypot(horizontal, BUST_DART_MOUTH_DROP_CM)
+    return split_bust_dart_cm(
+        total_bust_dart_intake_cm(measurements.bust, bp_to_mouth, block))
+
+
 def apply_bust_dart(part_type: str, segments: list,
-                     measurements: Measurements) -> tuple[list, int]:
-    """前身頃の脇線に、バスト超過分に応じた脇ダーツ(V字ノッチ)を追加する。
+                     measurements: Measurements,
+                     bust_line_y: float | None = None,
+                     intakes_cm: list[float] | None = None,
+                     block: Block = ADULT_FEMALE) -> tuple[list, int]:
+    """前身頃の脇線に、胸ぐせダーツ(V字ノッチ)を追加する。
 
     front_bodice(左右対称、脇線2本)とfront_bodice_zip_panel(round6で対応、
     非対称、脇線1本のみ)の両方に対応する。ダーツが不要、または安全に
@@ -1020,51 +1494,101 @@ def apply_bust_dart(part_type: str, segments: list,
         (new_segments, dart_count): dart_countは追加したダーツの本数
         (front_bodiceなら左右の脇線それぞれ1本ずつで2、
         front_bodice_zip_panelなら1)。
+
+    bust_line_y:
+        round28。変形後の座標でのバストライン(=袖ぐり底の線。テンプレートの
+        `data-fit-y` の underarm)のy。渡されたときだけ、ダーツはBPという
+        **体の位置**へ向く。渡されないときは round27 までの「脇線に沿った
+        比率」へフォールバックする(ダーツの幾何だけを単体で確かめるテスト等)。
+
+    intakes_cm:
+        round29。1本あたりの摘み量を呼び出し側から指定する(本数=リストの
+        長さ)。省略した場合は`bust_line_y`の有無に応じて、新文化式の
+        角度式/round27までの旧係数のどちらかで自分で決める。
     """
     if part_type not in BUST_DART_ELIGIBLE_PART_TYPES:
         return segments, 0
 
-    intake = compute_bust_dart_intake_cm(measurements)
-    if intake <= 0:
+    bp_from_cf = bust_point_from_cf_cm(measurements.bust,
+                                       measurements.bust_point_spacing)
+    if intakes_cm is not None:
+        intakes = list(intakes_cm)
+    elif bust_line_y is not None:
+        intakes, _unfitted = bust_dart_split_for_part(
+            part_type, segments, measurements, bust_line_y, block)
+    else:
+        one = compute_bust_dart_intake_cm(measurements)
+        intakes = [one] if one > 0 else []
+    intakes = [i for i in intakes if i > 0]
+    if not intakes:
         return segments, 0
 
     positions = _segment_start_positions(segments)
 
     if part_type in BUST_DART_ZIP_PANEL_PART_TYPES:
-        candidates = _find_side_seam_segment_indices(segments)
+        geometry = _bust_dart_cf_and_side_x(part_type, segments)
         side_idx = _bust_dart_zip_panel_side_index(segments)
-        if side_idx is None:
+        if side_idx is None or geometry is None:
             return segments, 0  # 想定外の形状。安全側に倒してダーツを諦める。
-
-        other_idx = candidates[0] if candidates[1] == side_idx else candidates[1]
-        cf_x = segments[other_idx][1][0]
+        cf_x = geometry[0]
 
         start = positions[side_idx]
         end = (segments[side_idx][1][0], segments[side_idx][1][1])
-        rep = _bust_dart_notch(start, end, cf_x, intake)
+        rep = _bust_dart_notch(start, end, cf_x, 0.0,
+                               bust_line_y=bust_line_y,
+                               bp_from_cf_cm=bp_from_cf,
+                               intakes_cm=intakes)
         if rep is None:
             return segments, 0
 
         # ダーツの口より下を摘み量ぶん下げ、縫い合わせた後の脇線長が
         # 後ろ身頃と一致するようにする(_mouth_span/_shift_below参照)。
-        threshold, mouth = _mouth_span(rep)
+        threshold, mouth = _mouth_span(rep, start)
         shifted = _shift_below(segments, threshold, mouth)
         rep = _shift_notch_end(rep, threshold, mouth)
         new_segments = shifted[:side_idx] + rep + shifted[side_idx + 1:]
         return new_segments, 1
 
-    side_indices = _find_side_seam_segment_indices(segments)
-    if len(side_indices) != 2:
+    by_side = _side_seam_top_index_by_side(segments)
+    if len(by_side) != 2:
         return segments, 0  # 想定外の形状。安全側に倒してダーツを諦める。
+    side_indices = sorted(by_side.values())
 
-    side_xs = [segments[i][1][0] for i in side_indices]
-    center_x = sum(side_xs) / len(side_xs)
+    # round71: 左右の脇線の**同じ高さ**のxから中心を取る。
+    #
+    # 【round70まで何が起きていたか】`segments[i][1][0]`——つまり各脇線
+    # セグメントの**終点**のx——を平均していた。ところが輪郭は左の脇線を
+    # 下へ、右の脇線を上へ辿るので、終点は左が「ウエスト側」・右が
+    # 「脇の下側」である。脇線は裾へ向かって開く(`apply_hip_widening`)ので、
+    # この2点は鏡像ではない。ずれた中心を基準にBPを置くと、**左右の
+    # ダーツが違う方向を向く**。
+    #
+    # 実測(バスト84・ウエスト60・ヒップ150):
+    #     左のダーツ先端 x= 7.39 / 右 x=30.09
+    #     正しい鏡像なら 右は 38.61 ——8.5cmずれていた
+    # 標準体型(B88)でも0.67cmずれていた。同じ体の左右で違う型紙になる。
+    #
+    # 同じ高さで測れば、脇線がどれだけ傾いていても中心は正しく出る。
+    def _seam_x_at(idx: int, y: float) -> float:
+        (x0, y0) = positions[idx]
+        x1, y1 = segments[idx][1][0], segments[idx][1][1]
+        if abs(y1 - y0) < 1e-9:
+            return (x0 + x1) / 2.0
+        return x0 + (x1 - x0) * (y - y0) / (y1 - y0)
+
+    _levels = [positions[i][1] for i in side_indices] + \
+              [segments[i][1][1] for i in side_indices]
+    _level = bust_line_y if bust_line_y is not None else sum(_levels) / len(_levels)
+    center_x = sum(_seam_x_at(i, _level) for i in side_indices) / len(side_indices)
 
     replacements: dict[int, list] = {}
     for idx in side_indices:
         start = positions[idx]
         end = (segments[idx][1][0], segments[idx][1][1])
-        rep = _bust_dart_notch(start, end, center_x, intake)
+        rep = _bust_dart_notch(start, end, center_x, 0.0,
+                               bust_line_y=bust_line_y,
+                               bp_from_cf_cm=bp_from_cf,
+                               intakes_cm=intakes)
         if rep is None:
             return segments, 0  # 片側でも安全に置けなければ、両方諦める。
         replacements[idx] = rep
@@ -1072,7 +1596,8 @@ def apply_bust_dart(part_type: str, segments: list,
     # 左右のダーツは同じ高さ・同じ口の幅で作られるので、どちらか一方から
     # 口の下端と幅を取れば足りる。その下をまるごと摘み量ぶん下げて、
     # 縫い合わせた後の脇線長を後ろ身頃と一致させる(_shift_below参照)。
-    threshold, mouth = _mouth_span(replacements[side_indices[0]])
+    threshold, mouth = _mouth_span(replacements[side_indices[0]],
+                                   positions[side_indices[0]])
     new_segments = _shift_below(segments, threshold, mouth)
     # インデックスが後ろの方から差し替えることで、前方のインデックスが
     # ずれない(挿入によって後続セグメントの位置がシフトするのを避ける)。
@@ -1082,6 +1607,108 @@ def apply_bust_dart(part_type: str, segments: list,
 
     return new_segments, len(replacements)
 
+
+def _equalise_legs(mouth_a: tuple[float, float], tip: tuple[float, float],
+                    mouth_b: tuple[float, float]
+                    ) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    """ダーツの2本の脚を、**平均の長さ**に揃える(round71)。
+
+    【なぜ揃える必要があるか】ダーツは2本の脚を合わせて縫う。長さが
+    違えば長い方が余り、たたんでも平らにならない——脇線に段差が残る。
+    round70までの実測では、脚は 10.97〜22.36cm に対して差が 1.77〜3.04cm
+    (9.8〜14.1%)あった。
+
+    【なぜこの揃え方か】口を先端からの距離だけ動かす。向き(先端から口へ
+    の方向)は変えないので、**ダーツの角度も先端の位置も変わらない**——
+    動くのは「先端からどこで裁つか」だけである。両方の口を平均へ寄せる
+    ので、動く量は差の半分ずつと、揃え方の中でいちばん小さい。
+
+    洋裁の教科書どおりの「たたみ出し」(たたんだ状態で脇線をまっすぐ
+    引き直す)も実装して試したが、**採らなかった**。あれは片方の口を
+    脇線の外へ1.5cm以上出すので、脇の下の直下で身頃が広がる。実測で
+    出来上がりのバスト回りが目標より0.28cm大きくなった(この揃え方なら
+    0.22cm、バストラインちょうどでは0.00cm)。理由はREADMEに書いてある。
+    """
+    leg_a = hypot(mouth_a[0] - tip[0], mouth_a[1] - tip[1])
+    leg_b = hypot(mouth_b[0] - tip[0], mouth_b[1] - tip[1])
+    if leg_a < 1e-6 or leg_b < 1e-6:
+        return None
+    radius = (leg_a + leg_b) / 2.0
+    # 動く量は差の半分ずつ。口が脇線から外れてよい上限と同じ値で見る
+    # (見張る側`_is_dart_notch_at`が、その幅までしか見込んでいないため)。
+    if abs(leg_a - leg_b) / 2.0 > BUST_DART_TRUING_MAX_OFFSET_CM:
+        return None          # 想定外の差。触らない方が安全。
+    return ((tip[0] + (mouth_a[0] - tip[0]) / leg_a * radius,
+             tip[1] + (mouth_a[1] - tip[1]) / leg_a * radius),
+            (tip[0] + (mouth_b[0] - tip[0]) / leg_b * radius,
+             tip[1] + (mouth_b[1] - tip[1]) / leg_b * radius))
+
+
+def retrue_bust_darts(segments: list) -> list:
+    """輪郭の中の胸ぐせダーツを、もう一度たたみ出しして脚を揃える(round71)。
+
+    【なぜ最後にもう一度やるか】`apply_bust_dart`はダーツを作った時点で
+    脚をぴったり揃える(実測 13.66678 / 13.66678、差0.00000)。ところが
+    そのあとに脇線を**ウエストで絞る**(`apply_waist_nip`)・**裾で開かせる**
+    (`apply_hip_widening`)が掛かり、口の点だけが動く。実測すると、
+    出来上がった型紙では 13.57526 / 13.43760 ——0.138cmずれていた。
+
+    2cmが0.14cmになるだけでも縫えるようにはなるが、**揃うと言った以上は
+    揃っている**のが正しい。ここで測り直して揃え直す。
+
+    揃え方は作るときとまったく同じ`_equalise_legs`——2本の脚の平均を
+    取って、両方をそこへ寄せる。残っているずれは0.14cmしかないので、
+    動く量は0.07cmずつで、前後の脇線への影響は互いに打ち消し合う。
+
+    ダーツの見つけ方は`engine/compatibility.py`の`_is_dart_notch_at`と
+    同じ規則を使う(見張る側と探す側で規則が食い違わないように)。
+    """
+    from .compatibility import _closed_points, _is_dart_notch_at
+
+    points: list[tuple[float, float]] = []
+    index_of: dict[int, int] = {}
+    for si, (cmd, nums) in enumerate(segments):
+        if cmd in ("M", "L") and len(nums) >= 2:
+            index_of[len(points)] = si
+            points.append((nums[0], nums[1]))
+    if len(points) < 5:
+        return segments
+
+    closed = _closed_points(points)
+    out = list(segments)
+    changed = False
+    for i in range(len(closed) - 3):
+        if i + 2 >= len(points):
+            break
+        if not _is_dart_notch_at(closed, i, 0.5):
+            continue
+        above = points[i - 1] if i >= 1 else None
+        below = points[i + 3] if i + 3 < len(points) else None
+        if above is None or below is None:
+            continue
+        # 仕上げの揃え直しが直すのは、**あとから掛かった変形のぶれ**だけ
+        # (実測0.138cm)。それ以上動かしてはいけない——縮む量の見積もりは
+        # 既に済んでいて、ここで大きく動かすと釣り合いが崩れる。
+        # 実測(バスト130・ウエスト97・ヒップ143)で、作るときに揃えるのを
+        # 諦めたダーツをここで揃えてしまい、前身頃の脇線が後ろより
+        # **2.8cm長く**なって「そのままでは縫えません」と出た。
+        if (abs(hypot(points[i][0] - points[i + 1][0],
+                      points[i][1] - points[i + 1][1])
+                - hypot(points[i + 2][0] - points[i + 1][0],
+                        points[i + 2][1] - points[i + 1][1]))
+                > RETRUE_MAX_DRIFT_CM):
+            continue
+        trued = _equalise_legs(points[i], points[i + 1], points[i + 2])
+        if trued is None:
+            continue
+        for offset, point in ((0, trued[0]), (2, trued[1])):
+            si = index_of.get(i + offset)
+            if si is None:
+                continue
+            cmd, nums = out[si]
+            out[si] = (cmd, [point[0], point[1]] + list(nums[2:]))
+            changed = True
+    return out if changed else segments
 
 def apply_skirt_waist_dart(part_type: str, variation: str, segments: list,
                             measurements: Measurements) -> tuple[list, int]:
@@ -1263,3 +1890,291 @@ def apply_pants_waist_dart(part_type: str, variation: str, segments: list,
     new_segments = segments[:top_idx] + top_replacement + segments[top_idx + 1:]
     dart_count = len(left_darts) + len(right_darts)
     return new_segments, dart_count
+
+
+def waist_dart_hip_limited(part_type: str, segments: list,
+                            measurements: Measurements,
+                            hip_ease_cm: float) -> bool:
+    """ウエストダーツの摘み量を、ヒップを通すために減らしたかどうか(round26)。
+
+    `apply_waist_dart`と同じ手順で裾の半幅を求め、同じ`compute_dart_plan`に
+    問い合わせるだけの関数(判定のロジックを二重に持たない)。呼び出し側は
+    これを使って「ウエストは絞りきれていない」ことを利用者へ開示する。
+    """
+    if part_type not in DART_ELIGIBLE_PART_TYPES:
+        return False
+    hem_idx = _find_hem_segment_index(segments)
+    if hem_idx is None or hem_idx == 0:
+        return False
+    positions = _segment_start_positions(segments)
+    hem_start = positions[hem_idx]
+    hem_end = (segments[hem_idx][1][0], segments[hem_idx][1][1])
+    half_width = abs((hem_start[0] + hem_end[0]) / 2.0 - hem_start[0])
+    if half_width < 1e-6:
+        return False
+    return compute_dart_plan(part_type, half_width, measurements,
+                              hip_ease_cm).limited_by_hip
+
+
+# --- ウエストの位置で絞るダイヤモンドダーツ(round27で追加) -----------------
+#
+# 【なぜ必要になったか】身頃の裾は**ヒップの高さ**にある(丈58cmは首の
+# 付け根からヒップまで)。round26でそこを「ヒップが通る幅」に直した結果、
+# 裾のダーツはほとんど摘めなくなり、**ウエストがまったく絞られない**
+# 寸胴な型紙になった。round26のREADMEにも「ウエストの位置では絞れない」と
+# 限界として書いている。
+#
+# ウエストで絞るには、ウエストの線を中心に**両端が尖ったダーツ**を置く。
+# 上下とも尖っているので輪郭を切り欠かず、裾の幅もバストの幅も変えずに、
+# ウエストの周だけを縮められる。洋裁ではダイヤモンドダーツ/フィッシュ
+# アイダーツと呼ばれる、まさにこの用途の定石である。
+#
+# round27でパーツ内部の縫い線を出力できるようにした(engine/seam.pyの
+# `FinalizedPart.internal_lines`)ので、ようやく実装できるようになった。
+
+#: ダイヤモンドダーツが、ウエストの線から上下へ伸びる長さ(cm)。
+#: 上はバストの丸みへ、下はヒップの丸みへ向かって消える。実際の型紙でも
+#: この程度(上下それぞれ10〜14cm)に取る。
+DIAMOND_DART_HALF_LENGTH_CM = 12.0
+#: ダイヤモンドダーツ1本あたりの摘み量の上限(cm)。これを超える場合は
+#: 2本に分ける(1本で摘みすぎると、縫い縮めた布が波打つ)。
+#:
+#: 【round29で3.0→4.0へ】新文化式のウエストダーツ配分表では、いちばん
+#: 大きいダーツ(後ろのd)が総ダーツ量の35%を占める。総ダーツ量は
+#: (B/2+6)−(W/2+3) なので、例えば83/50の体型では片側19.5cm、そのうち
+#: dだけで6.8cmになる。round28までの3.0cmは、この配分表を見ずに置いた
+#: 数字で、実際に「絞りきれない」と開示され続ける主因だった。
+#: とはいえ1本で6.8cmは布が波打つので、本数を増やして分ける方を選ぶ。
+#: 4.0cmは、実物の型紙で見かける深いウエストダーツの上限にあたる。
+MAX_SINGLE_DIAMOND_INTAKE_CM = 4.0
+#: 片側に並べられるダイヤモンドダーツの本数の上限。
+#: 新文化式は片側(前中心〜後ろ中心)に6本のダーツを置くが、そのうち
+#: 前身頃に来るのは a・b の2本、後ろ身頃に来るのは d・e・f の3本
+#: (fは後ろ中心。ここでは後ろ中心が「わ」なので置けず、実質2本)。
+MAX_DIAMOND_DART_COUNT_PER_HALF = 3
+#: 片側あたりの摘み量の上限(cm)。ここを超える分は摘まずに残す
+#: (残った分は「絞りきれていない」として利用者へ開示する)。
+MAX_DIAMOND_INTAKE_PER_HALF_CM = (MAX_SINGLE_DIAMOND_INTAKE_CM
+                                  * MAX_DIAMOND_DART_COUNT_PER_HALF)
+#: これ未満の摘み量ならダーツを置かない(縫う意味が無い)。
+MIN_DIAMOND_INTAKE_CM = 0.6
+
+# --- ウエストダーツの前後配分(新文化式の配分表。round29) --------------------
+#
+# 新文化式は、総ダーツ量 (B/2+6) − (W/2+3) を、前中心から後ろ中心まで
+# 6本のダーツ a〜f へ次の割合で配る:
+#
+#     a 14%  BPの下(前身頃)
+#     b 15%  前の袖ぐり寄り(前身頃)
+#     c 11%  脇線
+#     d 35%  後ろのいちばん大きいダーツ(後ろ身頃)
+#     e 18%  後ろ(後ろ身頃)
+#     f  7%  後ろ中心(後ろ身頃)
+#
+# 【round28までの扱いと、それが間違っていた点】前身頃・後ろ身頃とも
+# 「(ウエスト+ゆとり)/4」を目標半幅にしていた。つまり前後で**同じだけ**
+# 絞る前提である。配分表はそうなっていない——後ろが前の倍近くを担う。
+# 背中側はウエストのくびれが深く、前は胸ぐせダーツが別に丸みを担うので、
+# 前を後ろと同じだけ絞ると背中が余り、前がつれる。
+#
+# 脇線(c)はこのエンジンでは絞っていない(脇線は袖の下から裾まで直線)。
+# その分を前後へ按分するのではなく、前後の比だけを使う——つまり
+# 前 = a+b、後ろ = d+e+f として正規化する。cを勝手に前後へ足すと、
+# 「脇では絞っていないのに絞ったことにする」ことになるため。
+WAIST_DART_SHARE_FRONT = 0.14 + 0.15
+WAIST_DART_SHARE_SIDE_SEAM = 0.11
+WAIST_DART_SHARE_BACK = 0.35 + 0.18 + 0.07
+
+
+def waist_dart_share(part_type: str) -> float:
+    """このパーツが担うウエストの絞り量の割合(前後の合計で1.0)。"""
+    total = WAIST_DART_SHARE_FRONT + WAIST_DART_SHARE_BACK
+    if part_type in BUST_DART_ELIGIBLE_PART_TYPES:
+        return WAIST_DART_SHARE_FRONT / total
+    return WAIST_DART_SHARE_BACK / total
+#: round28: ウエストダーツの上の先端を、BP(バストポイント)より何cm下で
+#: 止めるか。BPを越えると胸の頂点の真上で布が尖って浮く。実務では2〜3cm
+#: 手前で止めるのが定石で、脇ダーツの BUST_APEX_SETBACK_CM と同じ考え方。
+WAIST_DART_BELOW_BP_CM = 2.5
+
+
+def compute_diamond_dart_plan(half_width_at_waist_cm: float, waist_cm: float,
+                               waist_ease_cm: float,
+                               share: float = 0.5,
+                               dartless: bool = False) -> DartPlan:
+    """ウエストのダイヤモンドダーツの本数と摘み量を求める(round27)。
+
+    half_width_at_waist_cm: ウエストの高さでのパーツ半幅(cm)。
+
+    share: round29。このパーツが担う絞り量の割合(`waist_dart_share`)。
+        0.5なら前後で同じだけ絞る(round28までの挙動)。新文化式の配分表に
+        従うと前0.326・後0.674になる。
+
+    dartless: round30。伸びる生地はダーツを入れない(ニット原型の定石)。
+        Trueならダーツ無しを返す。絞りは脇線が担う
+        (`engine/scaling.py`の`_nip_waist`)。
+
+    余っている量(パーツ半幅 − 目標半幅)のうち、shareに応じた分だけを
+    このパーツで摘む。目標半幅は「(ウエスト + ゆとり)/4」——前後の
+    合計がウエスト+ゆとりになる位置——のまま変えない。
+    """
+    if half_width_at_waist_cm <= 0 or dartless:
+        return NO_DART
+    target = (waist_cm + waist_ease_cm) / 4.0
+    # 余り全体を前後で分け合う。前後の合計は変わらないので、出来上がりの
+    # ウエスト周は「前後で等分」だった頃と同じ値を狙える。
+    surplus = (half_width_at_waist_cm - target) * 2.0 * share
+    intake = min(surplus, MAX_DIAMOND_INTAKE_PER_HALF_CM)
+    if intake < MIN_DIAMOND_INTAKE_CM:
+        return NO_DART
+    count = min(MAX_DIAMOND_DART_COUNT_PER_HALF,
+                max(1, ceil(intake / MAX_SINGLE_DIAMOND_INTAKE_CM)))
+    return DartPlan(darts_per_half=count, intake_per_dart_cm=intake / count)
+
+
+def waist_diamond_dart_lines(segments: list, measurements: Measurements,
+                              waist_y: float, waist_ease_cm: float,
+                              apex_limit_y: float | None = None,
+                              share: float = 0.5,
+                              dartless: bool = False,
+                              half_panel: tuple[float, float] | None = None
+                              ) -> tuple[list[list[tuple[float, float]]], int]:
+    """ウエストの線に置くダイヤモンドダーツの輪郭を返す(round27)。
+
+    返り値は (閉じた点列のリスト, 本数)。輪郭(segments)は**変更しない**
+    ——ダーツはパーツの内側にあり、裁断線にも縫い合わせ長さにも影響しない。
+
+    安全に置けない場合(ウエストの高さが分からない、縦の余裕が足りない、
+    中心前や脇線に寄りすぎる)は空リストを返す。無理な位置に置くより
+    「ダーツ無し」を優先する方針は、裾のウエストダーツと同じ。
+
+    apex_limit_y:
+        round28。上の先端をこの高さより上へ伸ばさない。前身頃では
+        「BPより WAIST_DART_BELOW_BP_CM 下」を渡す。ウエストダーツの
+        先端がBPを越えると、胸の頂点の真上で布が尖って浮くため、実物の
+        型紙でもBPの手前で止める。round27は上下とも一律12cm伸ばして
+        いたので、バストが大きい体型ほど先端がBPを越えていた(実測:
+        バスト120でBPがy=26.58、先端がy=26.00)。
+
+    share:
+        round29。このパーツが担う絞り量の割合(`waist_dart_share`)。
+
+    half_panel:
+        round67。**左右非対称な「半身ぶん」のパーツ**用に、
+        (中心前のx, 脇線のx) を渡す。前開きファスナーのパネル
+        (`front_bodice_zip_panel`)がこれにあたる。
+
+        渡さない場合、この関数は「左右対称なパーツの真ん中が中心前」と
+        みなし、輪郭の全幅の半分を`half_width`として使い、中心の左右へ
+        ダーツを1組ずつ置く。前開きのパネルにその前提は無い——中心前は
+        輪郭の**縁**にあり、しかもその外側へ見返し(折り返し代)が
+        張り出している。
+
+        round66までは前開きのパネルにもそのまま使っており、
+        「半幅」として渡していたのは *パネルの全幅の半分*(実測14.45cm)
+        だった。狙いの半幅((ウエスト+ゆとり)/4 = 17.5cm)より小さいので
+        `compute_diamond_dart_plan`は毎回「摘む余りが無い」と判断し、
+        **前開きの型紙には1本もウエストダーツが入っていなかった**
+        (実測: 出来上がりのウエストが採寸+ゆとりより約11cm大きい)。
+
+        渡された場合は、摘める幅を「中心前から脇線まで」とし
+        (見返しは折り返すので入れない)、ダーツは1組だけ置く。
+    """
+    if waist_y is None:
+        return [], 0
+    points = _closed_points_from_segments(segments)
+    if len(points) < 4:
+        return [], 0
+
+    span = _x_span_at_y(points, waist_y)
+    if span is None:
+        return [], 0
+    left_x, right_x = span
+    if half_panel is None:
+        center_x = (left_x + right_x) / 2.0
+        half_width = (right_x - left_x) / 2.0
+        # 中心の左右へ1組ずつ。置ける範囲は輪郭そのもの。
+        signs = (-1, +1)
+        clear_lo, clear_hi = left_x, right_x
+    else:
+        # round67: 半身ぶんのパネル。中心前から脇線までが摘める幅で、
+        # 見返し(中心前より外側)には置かない。
+        #
+        # 脇線側は**ウエストの高さでの輪郭の縁**を使う(基準点`side`は
+        # 脇の下の高さでの値で、ウエストでは少し外へ開いている)。
+        # 左右対称の枝が輪郭の幅から半幅を出しているのと、同じ測り方に
+        # そろえるため。
+        cf_x, side_anchor_x = half_panel
+        toward_right = side_anchor_x > cf_x
+        outer_x = right_x if toward_right else left_x
+        half_width = abs(outer_x - cf_x)
+        center_x = cf_x
+        signs = (+1 if toward_right else -1,)
+        clear_lo, clear_hi = ((cf_x, outer_x) if toward_right
+                              else (outer_x, cf_x))
+
+    plan = compute_diamond_dart_plan(half_width, measurements.waist, waist_ease_cm,
+                                      share=share, dartless=dartless)
+    if plan.is_empty():
+        return [], 0
+
+    # 上下の余裕を確認する。上は脇の下より下、下は裾より上に収める。
+    ys = [p[1] for p in points]
+    top_limit = min(ys)
+    bottom_limit = max(ys)
+    reach_up = min(DIAMOND_DART_HALF_LENGTH_CM, (waist_y - top_limit) * 0.5)
+    reach_down = min(DIAMOND_DART_HALF_LENGTH_CM, (bottom_limit - waist_y) * 0.7)
+    if apex_limit_y is not None:
+        # round28: 上の先端をBPの手前で止める。下の先端は関係が無いので
+        # 縮めない(上下で長さの違うダイヤになるが、実物のウエストダーツも
+        # 上下で長さが違う)。
+        reach_up = min(reach_up, max(0.0, waist_y - apex_limit_y))
+    if min(reach_up, reach_down) < 3.0:
+        return [], 0
+
+    # 本数に応じて、片側の中に等間隔で並べる。
+    count = plan.darts_per_half
+    offsets = [(k - (count - 1) / 2.0) * DART_SPACING_CM for k in range(count)]
+
+    lines: list[list[tuple[float, float]]] = []
+    for sign in signs:
+        anchor = center_x + sign * half_width * DART_OFFSET_RATIO
+        for off in offsets:
+            cx = anchor + off
+            half_intake = plan.intake_per_dart_cm / 2.0
+            if (cx - half_intake < clear_lo + MIN_CLEARANCE_CM
+                    or cx + half_intake > clear_hi - MIN_CLEARANCE_CM):
+                return [], 0
+            lines.append([
+                (cx, waist_y - reach_up),
+                (cx + half_intake, waist_y),
+                (cx, waist_y + reach_down),
+                (cx - half_intake, waist_y),
+                (cx, waist_y - reach_up),
+            ])
+    return lines, len(lines)
+
+
+def _closed_points_from_segments(segments: list) -> list[tuple[float, float]]:
+    from .svgpath import segments_to_polyline
+
+    points = segments_to_polyline(segments, curve_steps=120)
+    if points and points[0] != points[-1]:
+        points = points + [points[0]]
+    return points
+
+
+def _x_span_at_y(points: list[tuple[float, float]], y: float
+                  ) -> tuple[float, float] | None:
+    """閉じた点列の、高さ y における x の最小・最大。"""
+    xs: list[float] = []
+    for (x1, y1), (x2, y2) in zip(points, points[1:]):
+        if y1 == y2:
+            continue
+        lo, hi = (y1, y2) if y1 < y2 else (y2, y1)
+        if not (lo <= y <= hi):
+            continue
+        xs.append(x1 + (y - y1) / (y2 - y1) * (x2 - x1))
+    if len(xs) < 2:
+        return None
+    return min(xs), max(xs)

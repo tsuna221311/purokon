@@ -3,6 +3,7 @@
   <path
     data-part="sleeve"
     data-variation="puff"
+    data-fit-y="cap:0.000 underarm:14.000 hem:31.000"
     fill="none" stroke="black" stroke-width="0.1"
     d="M 0 14 C 5.55 3.5, 12.95 0, 18.5 0 C 24.05 0, 31.45 3.5, 37 14 L 34 30 C 29 27, 24 33, 18.5 30 C 13 27, 8 33, 3 30 Z" />
 </svg>

@@ -6,6 +6,8 @@
 から共通で使う。
 """
 
+import pathlib
+
 import pytest
 
 import app as app_module
@@ -84,3 +86,80 @@ def client(tmp_path, monkeypatch):
 
         c.post = _post_with_csrf
         yield c
+
+
+def bodice_width_at_bust_cm(scaled_or_finalized) -> float:
+    """身頃の**バストの高さ**での幅(cm)を返す(round26で追加)。
+
+    round25まで身頃は上から下まで同じ幅だったので、外接矩形の幅がそのまま
+    「出来上がりの胴回り」だった。round26で裾をヒップに合わせて開かせた
+    ため、外接矩形の幅は**裾(ヒップ)の幅**になる。着用ゆとり(バストの
+    ゆとり)を測りたいテストは、バストの高さで測る必要がある。
+
+    バストの高さは「脇線がいちばん上で始まる高さ(脇の下)」そのもの。
+
+    round70までは、そこから0.5cm下で測っていた——脇の下ちょうどだと
+    袖ぐりカーブの端点と重なって不安定だから、という理由である。
+    round71でダーツの脚を揃える(`engine/darts.py`の`_equalise_legs`)ように
+    したところ、**脇の下のすぐ下で脇線が縦でなくなった**(口が脇線から
+    少し外れるため)。0.5cm下で測ると、その傾きのぶんを胴回りとして
+    数えてしまう。実測:
+
+        バスト   バストラインちょうど   0.5cm下     差
+          60          68.000cm         68.152    +0.152
+          83          91.000cm         91.219    +0.219
+          88          96.000cm         96.237    +0.237
+
+    バストラインちょうどの値は**きっかりバスト＋ゆとり**になる。
+    0.5cmずらす理由(不安定さ)は実測では起きておらず、ずらす方が
+    誤差を生んでいた。
+    """
+    from engine.compatibility import _closed_points, side_seam_edges, _x_range_at_y
+    from engine.svgpath import segments_to_polyline
+
+    line = getattr(scaled_or_finalized, "stitch_line", None)
+    if line is None:
+        line = segments_to_polyline(scaled_or_finalized.segments, curve_steps=200)
+    points = _closed_points(line)
+    # round29: 辺の集め方はエンジンと同じ`side_seam_edges`を使う。ここだけ
+    # 独自に集めていると、胸ぐせダーツの口の上に残る短い断片を取りこぼし、
+    # 「脇線の上端」がダーツの口の下まで下がる。すると裾へ向かって開いた
+    # 分だけ幅を多く測ってしまう(実測: バスト60で68.00→68.23cm)。
+    tops = [min(a[1], b[1]) for _i, _side, a, b in side_seam_edges(points)]
+    if not tops:
+        return 0.0
+    span = _x_range_at_y(points, min(tops))
+    return (span[1] - span[0]) if span else 0.0
+
+
+@pytest.fixture(autouse=True)
+def _keep_the_source_tree_clean():
+    """テストがリポジトリの中へ生成物を書いていないか、1件ずつ見張る。
+
+    【round48で見つけたこと】`PatternForgePipeline()` の出力先の既定は
+    `"generated"`——**カレントディレクトリからの相対パス**である。
+    `client` fixtureはOUTPUT_DIRを一時ディレクトリへ差し替えるが、
+    パイプラインを直に作るテストはその外にいる。実際に
+    `tests/test_nesting.py` が `skip_export` を付けずに6回生成しており、
+    走らせるたびに **6.4MB**(56ファイル)が作業ツリーの `generated/` に
+    残っていた。`.gitignore` に入っているのでgit statusにも出ず、
+    気づかないまま溜まり続けていた(配布用のzipが3.2MB→5.2MBに増えて発覚)。
+
+    **セッション単位ではなくテスト単位**にしてある。セッション単位だと
+    後片付けが最後に1回走るだけなので、pytestは失敗を「最後に動いていた
+    テスト」に付けてしまい、**書いた本人とは別のテストの名前が出る**
+    (round48で実際にそうなり、無関係なテストを疑った)。
+
+    ここでは消さない——消すと「書いている」ことが隠れてしまう。
+    増えていたら、そのテストの名前で失敗させる。
+    """
+    generated = pathlib.Path(app_module.BASE_DIR) / "generated"
+    before = set(generated.iterdir()) if generated.is_dir() else set()
+    yield
+    after = set(generated.iterdir()) if generated.is_dir() else set()
+    leaked = sorted(p.name for p in after - before)
+    assert leaked == [], (
+        "このテストがリポジトリの中(generated/)へ生成物を書きました: "
+        f"{leaked[:8]}{'…' if len(leaked) > 8 else ''}\n"
+        "パイプラインを直に作るテストは output_dir=str(tmp_path) を渡すか、"
+        "出力が要らないなら skip_export=True を付けてください。")

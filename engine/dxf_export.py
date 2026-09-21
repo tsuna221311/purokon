@@ -10,7 +10,10 @@ SVG(画面プレビュー)・PDF(家庭用プリンタでのA4分割印刷)に�
   STITCH_LINE: 縫い線(stitch_line)。裁断線の内側にある、縫う位置の参考線。
   NOTCH      : 合印。
   GRAINLINE  : 布目線(矢印は簡略化した2本の短い線分で表現。SVG/PDF同様)。
-  LABEL      : パーツ名(display_name)のテキスト。
+  LABEL      : パーツ名(display_name)のテキスト。日本語。
+  LABEL_ID   : 同じパーツのASCIIだけの識別子(round32で追加)。日本語グリフを
+               持たないCAD環境でも判別できるようにするための保険で、不要なら
+               レイヤーごと非表示にできる。
   WARNING    : 配置できなかったパーツがある場合の警告テキスト。
 
 依存ライブラリとして`ezdxf`を使う。DXF自体はASCIIベースのテキスト形式
@@ -31,6 +34,9 @@ Y軸下向き」だが、DXF/CADの慣習は「Y軸上向き」のため、単�
   - 縫い線(STITCH_LINE)には破線(DASHED)の線種を指定しているが、実際に
     破線として表示されるかはDXFを開くソフト側の線種スケール設定に依存する
     (CADソフトによっては初期状態で実線に見えることがある)。
+  - (round32) パーツ名を英語識別子から日本語へ変えたため、下記の文字化けの
+    リスクが実際に効くようになった。対策として、同じパーツのASCIIだけの
+    識別子をLABEL_IDレイヤーに併記している。
   - パーツ名ラベル(日本語を含む)はDXFのTEXTエンティティとして埋め込んで
     いる。ezdxf自体はUTF-8のまま正しく書き出す(実際に読み戻して文字列が
     一致することを確認済み)が、読み込み側のCADソフトが使うフォント
@@ -59,7 +65,15 @@ _LAYER_COLORS: dict[str, int] = {
     "NOTCH": 1,        # 赤
     "GRAINLINE": 5,    # 青
     "LABEL": 8,        # グレー
+    # round32: パーツ名を日本語にしたことに伴い、**ASCIIだけの識別子**を
+    # 別レイヤーにも書く。日本語グリフを持たないSHXフォントのCAD環境では
+    # LABELが文字化けしうる(このモジュールの「正直な制約」に元から記載)。
+    # 別レイヤーにしてあるので、日本語が出る環境では丸ごと非表示にできる。
+    "LABEL_ID": 8,     # グレー
     "WARNING": 1,      # 赤
+    # round30: 基準線(バスト線・ウエスト線・ヒップ線・中心線・BP)。
+    # 縫う線でも切る線でもないので、CADで丸ごと非表示にできるよう独立させる。
+    "REFERENCE_LINE": 6,  # マゼンタ
 }
 
 # ezdxf.new()の既定状態にはDASHED線種が登録されていない(CONTINUOUSのみ)。
@@ -101,6 +115,24 @@ def render_dxf(result: NestingResult, output_path: str) -> str:
         msp.add_lwpolyline(stitch, format="xy", close=True,
                             dxfattribs={"layer": "STITCH_LINE", "linetype": "DASHED"})
 
+        # round27: パーツ内部の縫い線(ウエストのダイヤモンドダーツ等)。
+        # 裁断線ではないので STITCH_LINE と同じレイヤ・破線で出す。
+        for line in placed.placed_internal_lines():
+            if len(line) < 3:
+                continue
+            msp.add_lwpolyline(_drop_closing_duplicate(_flip(line)), format="xy",
+                                close=True,
+                                dxfattribs={"layer": "STITCH_LINE", "linetype": "DASHED"})
+
+        # round30: 基準線(バスト線・ウエスト線・ヒップ線・中心線・BP)。
+        # 縫う線ではないので専用レイヤに分け、CADで非表示にできるようにする。
+        for label, line in placed.placed_reference_lines():
+            if len(line) < 2:
+                continue
+            msp.add_lwpolyline(_flip(line), format="xy", close=False,
+                                dxfattribs={"layer": "REFERENCE_LINE",
+                                            "linetype": "DASHED"})
+
         for a, b in placed.placed_notches():
             (ax, ay), (bx, by) = _flip([a, b])
             msp.add_line((ax, ay), (bx, by), dxfattribs={"layer": "NOTCH"})
@@ -120,6 +152,11 @@ def render_dxf(result: NestingResult, output_path: str) -> str:
             label += "(90度回転・布目確認)"
         text = msp.add_text(label, dxfattribs={"layer": "LABEL", "height": 0.9})
         text.set_placement((cx, cy), align=TextEntityAlignment.MIDDLE_CENTER)
+        # round32: ASCIIだけの識別子(round31までのパーツ名と同じ文字列)。
+        # 日本語が文字化けする環境でも、どのパーツか必ず分かるようにする。
+        id_text = msp.add_text(placed.part.identifier,
+                                dxfattribs={"layer": "LABEL_ID", "height": 0.55})
+        id_text.set_placement((cx, cy - 1.2), align=TextEntityAlignment.MIDDLE_CENTER)
 
     if result.unplaced:
         names = "・".join(p.display_name for p in result.unplaced)

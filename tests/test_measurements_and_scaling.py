@@ -1,5 +1,7 @@
 import pytest
 
+from engine.bodice_fit import BODICE_EASE_CM, bodice_bust_cm_for_scale
+
 from engine.measurements import Measurements, STANDARD_M, _VALID_RANGES
 from engine.part_specs import (
     BAND_PART_TYPES, MAX_SCALE, MAX_SCALE_BAND, MIN_SCALE, MIN_SCALE_BAND, clamp_scale_for_part,
@@ -108,7 +110,11 @@ def test_measurement_clamp_warnings_flags_values_beyond_the_effective_scale_rang
     warnings = measurement_clamp_warnings(m)
     assert len(warnings) == 1
     assert "バスト" in warnings[0]
-    assert "132.8" in warnings[0] or "132.9" in warnings[0]  # 83 * 1.6 = 132.8
+    # round23: 身頃の幅は「バスト + 一定のゆとり」で決まるので、クランプに
+    # 当たるバストも 83×1.6=132.8cm から (83+8)×1.6-8=137.6cm へ動いた。
+    # 注記は倍率の決め方と同じ式から作らないと、実際には正しく生成できて
+    # いる値に対して嘘の数値を出すことになる(round23で実際に起きた)。
+    assert f"{bodice_bust_cm_for_scale(MAX_SCALE):.1f}" in warnings[0], warnings[0]
 
 
 def test_measurement_clamp_warnings_flags_values_below_the_effective_scale_range():
@@ -132,7 +138,10 @@ def test_scale_template_reports_new_dimensions():
     m = Measurements(bust=83 * 1.3, waist=66, hip=91, height=158 * 1.2,
                       sleeve_length=52, shoulder_width=37)
     scaled = scale_template("front_bodice", "round_neck", segments, m)
-    assert scaled.width_cm == pytest.approx(13.0)  # bust比1.3倍
+    # round23: 身頃の幅は「バスト + 一定のゆとり(8cm)」で決める。
+    # バスト比そのままの1.3倍ではなく (83×1.3 + 8) / (83 + 8) = 1.2736倍。
+    expected_x = (83 * 1.3 + BODICE_EASE_CM) / (83 + BODICE_EASE_CM)
+    assert scaled.width_cm == pytest.approx(10.0 * expected_x)
     assert scaled.height_cm == pytest.approx(24.0)  # height比1.2倍
 
 

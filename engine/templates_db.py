@@ -11,7 +11,7 @@ templates/ フォルダの .svg を読み、part_type + variation をキーに�
 from __future__ import annotations
 import os
 import re
-from .bodice_fit import parse_fit_anchors
+from .bodice_fit import FIT_Y_ROLES, parse_fit_anchors
 from .svgpath import parse_path
 
 # プロジェクトルート/pattern_templates を既定の格納先にする。
@@ -78,6 +78,7 @@ REQUIRED_PARTS: list[tuple[str, str]] = [
     ("collar", "bow_collar"),
     ("collar", "ruffle_collar"),
     ("collar", "convertible_collar"),
+    ("hood", ""),
     ("cuffs", ""),
     ("cuffs", "wide"),
     ("cuffs", "ruffle"),
@@ -97,6 +98,9 @@ class TemplateDB:
         # 詳細は engine/bodice_fit.py と scripts/generate_templates.py の
         # `_bodice_anchors` を参照。
         self._fit_anchors: dict[tuple[str, str], list[tuple[str, float]]] = {}
+        # round23で追加: 体型合わせの基準"線"(data-fit-y属性)。袖ぐりの
+        # 深さをバストに応じて変えるのに使う(engine/bodice_fit.pyのbuild_y_map)。
+        self._fit_anchors_y: dict[tuple[str, str], list[tuple[str, float]]] = {}
         # round15で追加: 帯状パーツ(衿・カフス・ウエストバンド)の
         # 「相手に縫い付けられる辺」("top"/"bottom")。
         # engine/compatibility.pyのseam_edge_length参照。
@@ -120,6 +124,8 @@ class TemplateDB:
                 key = (part, variation or "")
                 self._cache[key] = parse_path(d)
                 self._fit_anchors[key] = parse_fit_anchors(self._attr(svg, "data-fit-x"))
+                self._fit_anchors_y[key] = parse_fit_anchors(
+                    self._attr(svg, "data-fit-y"), roles=FIT_Y_ROLES)
                 self._seam_edges[key] = self._attr(svg, "data-seam-edge") or ""
 
     @staticmethod
@@ -161,6 +167,14 @@ class TemplateDB:
         「区間ごとに違う倍率」で変形する(=入力された肩幅を実際に使う)。
         """
         return self._fit_anchors.get((part_type, variation), [])
+
+    def get_fit_anchors_y(self, part_type: str, variation: str = "") -> list[tuple[str, float]]:
+        """体型合わせの基準"線"(Y座標)を返す(round23)。持たなければ空リスト。
+
+        身頃だけが持っている。これがある場合、`engine/scaling.py`はY方向も
+        区間ごとに違う倍率で変形し、袖ぐりの深さをバストに応じて深くする。
+        """
+        return self._fit_anchors_y.get((part_type, variation), [])
 
     def get_seam_edge(self, part_type: str, variation: str = "") -> str:
         """帯状パーツの「縫い付けられる辺」を返す(round15)。宣言が無ければ""。

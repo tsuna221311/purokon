@@ -34,6 +34,8 @@ from engine.scaling import (
 from engine.svgpath import bounding_box, parse_path, segments_to_polyline
 from engine.templates_db import TemplateDB
 
+from .conftest import bodice_width_at_bust_cm
+
 DB = TemplateDB()
 
 #: 現実的な体型の代表例(バスト, ウエスト, ヒップ, 身長, 袖丈, 肩幅)。
@@ -273,7 +275,12 @@ def test_body_girth_still_follows_bust():
         back = _fitted("back_bodice", "round_neck", m)
         rx, _ry = compute_scale_factors(m, "front_bodice")
         expected = (STANDARD_M.bust + 8.0) * rx
-        girth = front.width_cm + back.width_cm
+        # round71: 外接矩形の幅ではなく、**バストの高さでの幅**で測る。
+        # 外接矩形は裾(ヒップ)の幅であり、さらに脚を揃えたダーツの口が
+        # 脇線から外れる分まで含んでしまう(実測: バスト120で0.74cm多く
+        # 出た)。胴回りを見たいテストなので、胴回りの高さで測る。
+        girth = (bodice_width_at_bust_cm(front)
+                 + bodice_width_at_bust_cm(back))
         assert girth == pytest.approx(expected, abs=0.6), (name, girth, expected)
 
 
@@ -419,7 +426,7 @@ def test_pipeline_fits_the_sleeve_cap_to_the_measured_armhole(tmp_path):
     (engine/scaling.pyのscale_sleeve_to_cap_length)。
     """
     from engine.compatibility import (
-        SLEEVE_CAP_DESIGN_GATHER_CM, SLEEVE_CAP_EASE_CM, armhole_length, sleeve_cap_length,
+        SLEEVE_CAP_DESIGN_GATHER_CM, armhole_length, sleeve_cap_ease_cm, sleeve_cap_length,
     )
     pipeline = PatternForgePipeline(output_dir=str(tmp_path))
     for name, m in BODIES:
@@ -431,7 +438,8 @@ def test_pipeline_fits_the_sleeve_cap_to_the_measured_armhole(tmp_path):
             sleeves = [p for p in result.finalized_parts if p.part_type == "sleeve"]
             per_arm = (sum(armhole_length(p) for p in fronts)
                        + sum(armhole_length(p) for p in backs)) / 2.0
-            target = (per_arm + SLEEVE_CAP_EASE_CM
+            # round31: いせ込みは袖ぐりに対する割合(AH×0.05)で決まる。
+            target = (per_arm + sleeve_cap_ease_cm(per_arm)
                       + SLEEVE_CAP_DESIGN_GATHER_CM.get(style, 0.0))
             for sleeve in sleeves:
                 assert sleeve_cap_length(sleeve) == pytest.approx(target, abs=0.1), (name, style)

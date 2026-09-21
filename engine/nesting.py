@@ -336,6 +336,18 @@ class NestedPart:
         return [(self._place([a], shift)[0], self._place([b], shift)[0])
                 for a, b in self.part.notches]
 
+    def placed_internal_lines(self) -> list[list[Point]]:
+        """パーツ内部の縫い線(ダイヤモンドダーツ等)を、配置後の座標で返す。"""
+        shift = self._shift()
+        return [self._place(line, shift)
+                for line in getattr(self.part, "internal_lines", [])]
+
+    def placed_reference_lines(self) -> list[tuple[str, list[Point]]]:
+        """基準線(バスト線・ウエスト線・ヒップ線・中心線・BP)を配置後の座標で返す。"""
+        shift = self._shift()
+        return [(label, self._place(points, shift))
+                for label, points in getattr(self.part, "reference_lines", [])]
+
     def placed_grainline(self) -> dict:
         shift = self._shift()
         line = self.part.grainline["line"]
@@ -357,6 +369,14 @@ class NestingResult:
     used_length_cm: float
     waste_ratio: float
     total_part_area_cm2: float = field(default=0.0)
+    #: round56: この結果を選ぶときに**実際に試した生地幅**(cm)。
+    #:
+    #: 配置できなかったパーツがあるときの警告に使う。それまでは
+    #: 「どの生地幅(最大110cm)にも収まらず」と、**選ばれた幅**を
+    #: 最大値として書いていた。実際には150cmまで試して全部だめだった
+    #: のに、読んだ人は「150cm幅を買えば入る」と受け取ってしまう。
+    #: 1つの幅だけで並べた場合は、その1つが入る。
+    tried_widths_cm: tuple[float, ...] = field(default=())
 
 
 def _pack_once(parts: list[FinalizedPart], fabric_width_cm: float, seam_gap_cm: float,
@@ -467,7 +487,7 @@ def _slide_min_x(part: FinalizedPart, y: float, flip: bool, x_hi: float,
 
 
 def _compact_once(result: NestingResult, seam_gap_cm: float,
-                   order: list[int] | None = None) -> NestingResult:
+                   order: list[int] | None = None, allow_flip: bool = True) -> NestingResult:
     """rectpackのbbox配置結果を、実ポリゴン(縫い代込みの裁断線)ベースで
     詰め直す軽量な圧縮パスを、指定した処理順で1回だけ行う。
 
@@ -521,8 +541,11 @@ def _compact_once(result: NestingResult, seam_gap_cm: float,
         y_candidates = [y for y in y_candidates if y <= original.y][:_COMPACTION_MAX_CANDIDATES_PER_AXIS]
 
         best = None  # (y, x, flipped, poly)
+        # round38: 一方方向の生地(起毛・別珍・コーデュロイ・片方向プリント)では
+        # 180度反転を使えない。allow_flip=Falseなら反転無しだけを試す。
+        flip_candidates = (False, True) if allow_flip else (False,)
         for cand_y in y_candidates:
-            for flip in (False, True):
+            for flip in flip_candidates:
                 slid = _slide_min_x(original.part, cand_y, flip, original.x, accepted_polys, seam_gap_cm)
                 if slid is None:
                     continue
@@ -609,7 +632,8 @@ def _largest_area_first_order(placed: list[NestedPart]) -> list[int]:
                   key=lambda i: -(placed[i].part.width_cm * placed[i].part.height_cm))
 
 
-def _compact_repeatedly(result: NestingResult, seam_gap_cm: float, order_fn) -> NestingResult:
+def _compact_repeatedly(result: NestingResult, seam_gap_cm: float, order_fn,
+                         allow_flip: bool = True) -> NestingResult:
     """`_compact_once`を、これ以上改善しなくなるか上限回数に達するまで
     繰り返し適用する。
 
@@ -625,7 +649,7 @@ def _compact_repeatedly(result: NestingResult, seam_gap_cm: float, order_fn) -> 
     current = result
     for _ in range(_COMPACTION_MAX_PASSES):
         order = order_fn(current.placed)
-        nxt = _compact_once(current, seam_gap_cm, order=order)
+        nxt = _compact_once(current, seam_gap_cm, order=order, allow_flip=allow_flip)
         no_change = (abs(nxt.used_length_cm - current.used_length_cm) < 1e-6
                      and abs(nxt.waste_ratio - current.waste_ratio) < 1e-6)
         current = nxt
@@ -634,7 +658,8 @@ def _compact_repeatedly(result: NestingResult, seam_gap_cm: float, order_fn) -> 
     return current
 
 
-def _compact_placement(result: NestingResult, seam_gap_cm: float) -> NestingResult:
+def _compact_placement(result: NestingResult, seam_gap_cm: float,
+                        allow_flip: bool = True) -> NestingResult:
     """圧縮パスの入口。複数の処理順それぞれについて`_compact_repeatedly`
     (収束するまでの反復)を行い、その中で最も布ロス率が低い結果を返す。
 
@@ -672,15 +697,16 @@ def _compact_placement(result: NestingResult, seam_gap_cm: float) -> NestingResu
         return result
 
     candidates = [
-        _compact_repeatedly(result, seam_gap_cm, _position_order),
-        _compact_repeatedly(result, seam_gap_cm, _largest_area_first_order),
+        _compact_repeatedly(result, seam_gap_cm, _position_order, allow_flip),
+        _compact_repeatedly(result, seam_gap_cm, _largest_area_first_order, allow_flip),
     ]
     return min(candidates, key=lambda r: r.waste_ratio)
 
 
 def nest_parts(parts: list[FinalizedPart], fabric_width_cm: float = 150.0,
                seam_gap_cm: float = DEFAULT_SEAM_GAP_CM,
-               allow_rotation: bool = False) -> NestingResult:
+               allow_rotation: bool = False,
+               one_way_fabric: bool = False) -> NestingResult:
     """パーツ群を1本の生地上に自動配置する。
 
     複数の詰め込みアルゴリズム/並べ替え順を試し、配置できたパーツが最も多く、
@@ -693,6 +719,26 @@ def nest_parts(parts: list[FinalizedPart], fabric_width_cm: float = 150.0,
         allow_rotation: 90度回転配置を許可するか。既定はFalse(布目安全)。
             Trueにすると布ロスは減らせるが、回転したパーツの布目が生地の縦地
             からズレる可能性がある（ニット等の非方向性生地でのみ推奨）。
+        one_way_fabric: 一方方向の生地(起毛・別珍・コーデュロイ・
+            片方向プリント)かどうか。Trueにすると180度反転も使わない。
+
+    【round38で直した実バグ】round37まで、圧縮パス(`_compact_placement`)は
+    「180度回転は常に布目安全」という理由で、`allow_rotation=False`
+    (布目安全モード)でも180度反転を使っていた。布目という意味ではその通り
+    だが、**一方方向の生地では正しくない**——起毛やコーデュロイは毛の向きで
+    色と艶が変わり、片方向プリントは絵柄が逆さまになる。
+    実測(標準M・ラウンドネック+ストレート袖+フレアスカート)では、
+    布目安全モードでも前身頃と右袖の2枚が180度反転して配置されていた。
+    つまり、その生地で作ると**前身頃と右袖だけ色の違う服**ができた。
+
+    画面の説明も「先染めチェック・ストライプ・起毛など方向性のある生地では
+    使わないでください」と、**回転をオフにすれば安全**と読める書き方だった。
+    オフにしても反転は起きていたので、その案内は誤りだった。
+
+    round38で、反転は`allow_rotation`(非方向性の生地)のときだけ使うように
+    した。切ったときの損は実測で平均+0.032cm(最大+0.60cm/171通り)しか
+    無いので、既定を安全側に倒す方が筋が通る(下の`nest_parts`本体の
+    コメント参照)。
     """
     if not parts:
         return NestingResult(placed=[], unplaced=[], fabric_width_cm=fabric_width_cm,
@@ -707,7 +753,29 @@ def nest_parts(parts: list[FinalizedPart], fabric_width_cm: float = 150.0,
     # 同点の候補もまとめて圧縮する改良を入れたが、round12でテンプレートの
     # 寸法を正した結果その効果がほぼ消えたため撤回した(モジュール
     # docstringの【round11での追加調査・改良】と【round12での撤回】参照)。
-    return _compact_placement(best, seam_gap_cm)
+    # round38: 180度反転は「非方向性の生地」を選んだときだけ使う。
+    #
+    # 【なぜ既定を変えたか】圧縮パスは「180度回転は常に布目安全」という理由で、
+    # 布目安全モード(allow_rotation=False)でも反転を使っていた。布目という
+    # 意味ではその通りだが、起毛・別珍・コーデュロイは毛の向きで色と艶が
+    # 変わり、片方向プリントは絵柄が逆さまになる。
+    # **画面はこの既定を「布目安全モード」と呼び、「起毛など方向性のある生地
+    # では(回転を)使わないでください」と案内していた**——つまり利用者は、
+    # 既定なら起毛でも安全だと読む。実際には安全ではなかった。
+    #
+    # では反転を切ると、どれだけ損をするのか。実測した(171通り:
+    # 体型3 x ネックライン3 x 袖4 x スカート5):
+    #   * 通常モードで反転が使われたのは 134通り(78%)
+    #   * 反転を切って生地が増えたのは 18通り だけ
+    #   * 最大の増分 +0.60cm、平均 +0.032cm
+    # 78%の型紙で使っておきながら、節約になっているのは0.03cm——
+    # 3ミリの1/10である。それと引き換えに、起毛の生地では
+    # 「一部のパーツだけ色の違う服」ができていた。
+    #
+    # 画面の文言を実態に合わせるより、実態を文言に合わせる方が正しい。
+    # 反転は「非方向性の生地」を選んだときだけに限る。
+    allow_flip = allow_rotation and not one_way_fabric
+    return _compact_placement(best, seam_gap_cm, allow_flip=allow_flip)
 
 
 def _best_of(results: list[NestingResult], key) -> NestingResult:
@@ -736,4 +804,7 @@ def best_fabric_width(parts: list[FinalizedPart],
     総当たりする2段目の探索になる（既定では3×2×2=12通りのrectpack実行）。
     """
     results = [nest_parts(parts, fabric_width_cm=w, **kwargs) for w in candidates]
-    return _best_of(results, key=lambda r: r.waste_ratio)
+    best = _best_of(results, key=lambda r: r.waste_ratio)
+    # 「どの幅でもだめだった」と言うために、試した幅を覚えておく。
+    best.tried_widths_cm = tuple(candidates)
+    return best

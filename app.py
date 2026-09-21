@@ -107,6 +107,7 @@
 
 from __future__ import annotations
 import hmac
+import dataclasses
 import json
 import logging
 import math
@@ -115,8 +116,45 @@ import re
 import secrets
 import time
 import uuid
-from functools import wraps
+from functools import lru_cache, wraps
 from threading import Lock, Thread
+
+
+def _load_project_dotenv() -> None:
+    """プロジェクト直下の`.env`を読み込む最小実装。
+
+    `.env.example` は以前から配布していたが、実際にはアプリが読んでいなかった。
+    外部依存を増やさず、`KEY=value`、空行、`#`コメント、単純な引用符だけを
+    扱う。既にPowerShellやOSから設定された値は絶対に上書きしない。
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    try:
+        with open(path, encoding="utf-8") as dotenv_file:
+            lines = dotenv_file.readlines()
+    except FileNotFoundError:
+        return
+    except OSError:
+        # 秘密情報を含み得るファイルなので、内容や絶対パスをログへ出さない。
+        logging.getLogger(__name__).warning("Project environment file could not be read.")
+        return
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key, value = key.strip(), value.strip()
+        if key.startswith("export "):
+            key = key[7:].strip()
+        if not key or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+
+
+# engine の初期化より先に読む必要がある。秘密鍵の値はログへ出さない。
+_load_project_dotenv()
 
 from flask import (
     Flask, Response, flash, g, jsonify, redirect, render_template, request, send_from_directory,
@@ -136,11 +174,32 @@ from engine.custom_panel import (
     MAX_CUSTOM_PANELS_PER_REQUEST,
     calibrate_points_to_cm,
     resolve_reference_cm,
+    validate_boolean,
     validate_label,
     validate_quantity,
 )
-from engine.measurements import Measurements, STANDARD_SIZE_GRADE_CM, validate_custom_grade_cm
+from engine.measurements import (Measurements, STANDARD_SIZE_GRADE_CM,
+                                  _VALID_RANGES as MEASUREMENT_RANGES,
+                                  validate_custom_grade_cm)
+from engine.fabric_groups import (
+    ASSIGNABLE_AREAS, DEFAULT_FABRIC_NAME, FabricGroupError,
+    MAX_FABRIC_GROUPS, normalize_assignments,
+)
+from engine.measure_guide import guides_as_dict
+from engine.plausibility import measurement_hints
+from engine.costume_projects import costume_project_choices, get_costume_project
+from engine.part_specs import (
+    DEFAULT_FIT, FIT_PRESETS, STRETCH_PERCENT_RANGE, FitEase, custom_fit_ease,
+    stretch_fit_ease,
+)
+from engine.blocks import (BLOCKS, DEFAULT_BLOCK_KEY, MENS_BLOCK_ABSENT_NOTE,
+                            get_block)
+from engine.alteration import (ALTERATION_KINDS, MAX_ALTERATION_CM,
+                                validate as validate_alterations)
+from engine.stash import MIN_STASH_LENGTH_CM as STASH_MIN_LENGTH_CM
+from engine.illustration_fit import SKIRT_LENGTH_RANGE_CM
 from engine.pipeline import (
+    PartRequest,
     COLLAR_STYLES,
     CUFFS_STYLES,
     NECKLINES,
@@ -216,6 +275,42 @@ OUTPUT_DIR = os.environ.get("PATTERNFORGE_OUTPUT_DIR", os.path.join(BASE_DIR, "g
 DB_PATH = os.environ.get("PATTERNFORGE_DB_PATH", os.path.join(BASE_DIR, "patternforge.db"))
 _JOB_ID_RE = re.compile(r"^[0-9a-f]{6,32}$")
 
+#: `/download/<job_id>/<fmt>` が配れる形式 -> 実ファイル名のひな形。
+#:
+#: round39までは分岐(`fmt == "projector"`)を`download()`の中に直接書いて
+#: いたが、round41で裏地(表地とは別の生地なので別ファイル)を足して形式が
+#: 8つになったため、**許可リストとファイル名の対応を1か所**にまとめた。
+#: 片方だけ更新して「許可はされているのにファイル名が合わず404」になる、
+#: という食い違いが起きないようにするため。
+_DOWNLOAD_FORMATS = {
+    "svg": "{job_id}.svg",
+    "pdf": "{job_id}.pdf",
+    "dxf": "{job_id}.dxf",
+    "zip": "{job_id}.zip",
+    # round39: プロジェクター投影用の実寸1枚もの。
+    "projector": "{job_id}_projector.pdf",
+    # round41: 裏地の型紙。
+    "lining_svg": "{job_id}_lining.svg",
+    "lining_pdf": "{job_id}_lining.pdf",
+    "lining_dxf": "{job_id}_lining.dxf",
+    "lining_projector": "{job_id}_lining_projector.pdf",
+    # round57: 生地ごとの章を1本にまとめたPDF(生地を分けたときだけ)。
+    "all_fabrics_pdf": "{job_id}_all_fabrics.pdf",
+    # round54: 2種類目以降の生地の型紙(engine/fabric_groups.py)。
+    # 1種類目は上の "svg"/"pdf"/"dxf"/"projector" がそのまま担当する。
+    # 形式名は `fabric2_pdf` のように「何番目の生地か」を含む。
+    **{
+        f"fabric{index}_{fmt}": pattern.format(job_id="{job_id}", index=index)
+        for index in range(2, 7)   # engine.fabric_groups.MAX_FABRIC_GROUPS と対応
+        for fmt, pattern in (
+            ("svg", "{job_id}_fabric{index}.svg"),
+            ("pdf", "{job_id}_fabric{index}.pdf"),
+            ("dxf", "{job_id}_fabric{index}.dxf"),
+            ("projector", "{job_id}_fabric{index}_projector.pdf"),
+        )
+    },
+}
+
 # 生成物の保存期間。ディスクを無制限に肥大化させないため、
 # 既定では1時間で掃除する（ダウンロードし忘れてもしばらくは残る想定）。
 OUTPUT_TTL_SECONDS = int(os.environ.get("PATTERNFORGE_OUTPUT_TTL_SECONDS", 3600))
@@ -271,7 +366,70 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 # HTTPS配下で運用する場合はPATTERNFORGE_FORCE_HTTPS=1を設定してSecure属性を
 # 付与すること。既定でオフなのは、ローカル開発(HTTP)でログインできなくなる
 # のを避けるため。
-app.config["SESSION_COOKIE_SECURE"] = os.environ.get("PATTERNFORGE_FORCE_HTTPS") == "1"
+FORCE_HTTPS = os.environ.get("PATTERNFORGE_FORCE_HTTPS") == "1"
+app.config["SESSION_COOKIE_SECURE"] = FORCE_HTTPS
+
+#: HSTSの有効期間(秒)。1年。 (round48で追加)
+#:
+#: 【round47まで何が起きていたか】`PATTERNFORGE_FORCE_HTTPS=1` という
+#: 「HTTPSで運用する」ための切り替えがあり、それでCookieにSecureは付けて
+#: いたのに、**Strict-Transport-Security は一度も送っていなかった**。
+#: 実際にヘッダーを読み出して見つけた(round48)。HSTSが無いと、利用者が
+#: `http://` で来た最初の1回はブラウザが平文で繋ぎに行く——そこに
+#: セッションCookieは乗らない(Secure付きなので)が、採寸値を打ち込む
+#: ページ自体が平文で配られうる。
+#:
+#: 平文(HTTP)では**送らない**。HSTSはHTTPS応答でのみ意味を持つ仕様であり、
+#: ローカル開発をHTTPSに縛ってしまわないためでもある。
+#: `preload` は付けない——一度登録すると取り消しが難しく、
+#: 運用する人が意図して選ぶべきものだから。
+HSTS_MAX_AGE_SECONDS = 365 * 24 * 60 * 60
+
+# --- 静的ファイルのキャッシュ (round48) -------------------------------------
+#
+# 【round47まで何が起きていたか】静的ファイルの寿命を指定していなかったため、
+# Flaskの既定で `Cache-Control: no-cache` が付き、**ブラウザは毎回サーバへ
+# 確認しに行っていた**。実測(Playwrightで2回続けて開く):
+#
+#     1回目: 全21リクエスト / うち /static/ が20 / 0.94秒
+#     2回目: 全21リクエスト / うち /static/ が20（**全部304**）/ 0.67秒
+#
+# 20の内訳はネックライン・袖・スカートの見本SVGが18枚、CSSとJSが1つずつ。
+# 中身は配信し直すまで1バイトも変わらないのに、開くたびに20往復している。
+# 手元では0.67秒でも、往復に100ms掛かる回線では体感がまるで違う。
+#
+# 【どう直すか】URLに中身から決まる版(v=...)を付け、そのURLは1年キャッシュ
+# させる。配信し直してファイルが変われば版が変わるので、古いものが
+# 残り続けることはない。テンプレートは `url_for('static', ...)` のままでよい
+# ——`url_defaults` で全部のURLに自動で付く。
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 365 * 24 * 60 * 60
+
+
+@lru_cache(maxsize=1024)
+def _static_asset_version(filename: str) -> str:
+    """静的ファイルの版。更新時刻と大きさから決める(中身が変われば変わる)。
+
+    毎リクエストstatするのを避けるためキャッシュする。ファイルを差し替えて
+    すぐ反映したい開発中は、サーバを立ち上げ直せばよい(配信は入れ替えの
+    たびにプロセスが起動するので、そこで新しくなる)。
+    """
+    if not app.static_folder:
+        return ""
+    path = os.path.join(app.static_folder, filename)
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return ""          # 無いファイルには付けない(404はそのまま404)
+    return f"{int(stat.st_mtime):x}{stat.st_size:x}"[-12:]
+
+
+@app.url_defaults
+def _add_static_asset_version(endpoint: str, values: dict) -> None:
+    if endpoint != "static" or not values or "filename" not in values:
+        return
+    version = _static_asset_version(values["filename"])
+    if version:
+        values.setdefault("v", version)
 
 # 実際にnginx等のリバースプロキシ配下を想定し、`X-Forwarded-Proto: https`・
 # `X-Forwarded-Host`付きのリクエストを実際に(開発用サーバへ)送って見つかった
@@ -334,6 +492,25 @@ def _set_security_headers(response):
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
     )
+    # round48: 実際にヘッダーを読み出して、付いていなかった3つを足す。
+    # どれもこのアプリが**一度も使っていない**機能を閉じるもので、
+    # 動きは変わらない(閉じることで、将来なにかが紛れ込んだときの被害を狭める)。
+    response.headers.setdefault(
+        # カメラ・マイク・位置情報・支払いは一切使っていない。
+        "Permissions-Policy",
+        "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+    )
+    # 別オリジンの窓から window.opener でこのページを触れないようにする。
+    # このアプリは他所の窓と連携しないので、切って困るところが無い。
+    response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    # 生成物(型紙)や画像を、他所のサイトから読み込ませない。
+    # 採寸値から作られた個人性のあるファイルなので、埋め込みを許す理由が無い。
+    response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+    # HTTPSで運用すると宣言しているときだけHSTSを送る(上記定数のコメント参照)。
+    if FORCE_HTTPS:
+        response.headers.setdefault(
+            "Strict-Transport-Security",
+            f"max-age={HSTS_MAX_AGE_SECONDS}; includeSubDomains")
     return response
 
 
@@ -763,6 +940,20 @@ def _pad_to_min_response_time(start_time: float) -> None:
         time.sleep(remaining)
 
 
+#: 初期表示で選ばれているパーツ構成(round32)。
+#:
+#: 【なぜ必要か】選択肢は`sorted(NECKLINES)`のように**内部識別子の
+#: アルファベット順**で並べていて、`selected`をどれにも付けていなかった。
+#: その結果、初めて開いた人が何も触らずに生成すると
+#: 「ボートネック + ベル袖 + サーキュラースカート」という、かなり凝った
+#: 組み合わせの型紙が出ていた(実際にブラウザで開いて発見)。既定は
+#: 「どれを選べばいいか分からない人が押しても素直な物が出る」形——
+#: 原型に最も近い基本形にする。
+DEFAULT_NECKLINE = "round_neck"
+DEFAULT_SLEEVE_STYLE = "straight"
+DEFAULT_SKIRT_STYLE = "flare"
+
+
 @app.get("/")
 def index():
     plan_name = _current_plan_name()
@@ -775,11 +966,68 @@ def index():
         necklines=sorted(NECKLINES),
         sleeve_styles=sorted(SLEEVE_STYLES),
         skirt_styles=sorted(SKIRT_STYLES),
+        # round34: 採寸図の説明文(engine/measure_guide.py が唯一の出どころ)。
+        # CSPで inline script が使えないので、data-*属性でJSへ渡す。
+        measure_guides_json=json.dumps(guides_as_dict(), ensure_ascii=False),
+        default_neckline=DEFAULT_NECKLINE,
+        default_sleeve_style=DEFAULT_SLEEVE_STYLE,
+        default_skirt_style=DEFAULT_SKIRT_STYLE,
         collar_styles=sorted(s for s in COLLAR_STYLES if s),
         cuffs_styles=sorted(s for s in CUFFS_STYLES if s),
         pants_styles=sorted(s for s in PANTS_STYLES if s),
         waistband_styles=sorted(s for s in WAISTBAND_STYLES if s),
+        # round24: ゆとり(着方)の選択肢。engine側の定義をそのまま渡すので、
+        # プリセットを足したときに画面側の書き換えが要らない。
+        # round42: 原型ごとに標準ゆとりが違うので、絶対値(8.0cm)だけでは
+        # 画面の表示が嘘になる(子ども原型の標準はバスト/4)。標準からの
+        # 増減も一緒に渡し、原型を切り替えたら表示を書き換える。
+        fit_presets=[(key, preset.label, preset.bodice_cm,
+                       preset.bodice_cm - FIT_PRESETS[DEFAULT_FIT].bodice_cm)
+                     for key, preset in FIT_PRESETS.items()],
+        default_fit=DEFAULT_FIT,
         standard_sizes=list(STANDARD_SIZE_ORDER),
+        # round42: 原型(大人(女性)/子ども)の選択肢。engine側の定義を
+        # そのまま渡すので、原型を足したときに画面側の書き換えが要らない。
+        blocks=[{"key": b.key, "label": b.label,
+                  "height_lo": b.height_range_cm[0], "height_hi": b.height_range_cm[1],
+                  "source_name": b.source_name, "source_url": b.source_url,
+                  "ease_text": b.standard_ease.text()}
+                 for b in BLOCKS.values()],
+        default_block=DEFAULT_BLOCK_KEY,
+        # round44: 採寸欄に min/max を入れて、単位・桁の間違いを**送信する前**に
+        # ブラウザが捕まえられるようにする。数値はエンジンの`_VALID_RANGES`から
+        # そのまま渡す(画面に書き写すと、範囲を動かしたときに食い違う)。
+        # round52: 丈の指定欄の範囲。画面とエンジンで別々の数字を持たない。
+        # `20.0`ではなく`20`と出す。同じ範囲をエラー文でも`:g`で
+        # 書いている(_parse_design_lengths)ので、画面と食い違わせない。
+        design_length_range=[f"{value:g}" for value in SKIRT_LENGTH_RANGE_CM],
+        # round54: 生地の割り当て欄。区分の一覧と既定の生地名は
+        # engine/fabric_groups.py が持つ(画面に書き写すと食い違う)。
+        fabric_areas=[{"key": area.key, "label": area.label}
+                      for area in ASSIGNABLE_AREAS],
+        default_fabric_name=DEFAULT_FABRIC_NAME,
+        max_fabric_groups=MAX_FABRIC_GROUPS,
+        costume_project_choices=costume_project_choices(),
+        # round52: 縫い代の範囲も同じ理由で渡す(画面に0.3/3.0と書き写して
+        # あったので、0を通せるようにしたときに片方だけ古くなりかけた)。
+        seam_allowance_range=[f"{SEAM_ALLOWANCE_NONE_CM:g}",
+                              f"{MIN_SEAM_ALLOWANCE_CM:g}",
+                              f"{MAX_SEAM_ALLOWANCE_CM:g}"],
+        hem_seam_allowance_range=[f"{MIN_HEM_SEAM_ALLOWANCE_CM:g}",
+                                  f"{MAX_HEM_SEAM_ALLOWANCE_CM:g}"],
+        measurement_ranges={name: list(MEASUREMENT_RANGES[name])
+                             for name in ("bust", "waist", "hip", "height",
+                                           "sleeve_length", "shoulder_width",
+                                           "upper_arm", "bust_point_spacing",
+                                           "bust_point_drop",
+                                           "head_circumference")},
+        mens_block_absent_note=MENS_BLOCK_ABSENT_NOTE,
+        # round40: 補正の項目(測り方・正負の意味・出典)をそのまま画面へ。
+        alteration_kinds=[k.as_dict() for k in ALTERATION_KINDS],
+        max_alteration_cm=MAX_ALTERATION_CM,
+        # round21: 前後あわせた上限をヒント文に出すため(前後で別の入力欄に
+        # なったので、片方だけの上限だと利用者が誤解する)。
+        max_illustration_images=MAX_ILLUSTRATION_IMAGES,
         usage={"plan": plan_name, "used_today": used, "daily_limit": limit},
         profiles=profiles,
         # round9で追加: AIパーツ判定ログ表(app.js)がラベル辞書を参照できる
@@ -872,7 +1120,91 @@ def _parse_measurements(form) -> Measurements:
         raise ValueError(f"採寸項目が不足しています: {exc}") from exc
     except (TypeError, ValueError) as exc:
         raise ValueError(f"採寸値は数値で入力してください: {exc}") from exc
+    # round25: 二の腕まわりは任意項目。空欄なら未指定のまま
+    # (指定すると袖幅がこの実測から決まる)。
+    raw_arm = (form.get("upper_arm") or "").strip()
+    if raw_arm:
+        try:
+            values["upper_arm"] = float(raw_arm)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"二の腕まわりは数値で入力してください: {exc}") from exc
+    # round29: 乳間(左右の乳頭の間隔)と乳下がり(前中央で首の付け根から
+    # BPまで)も任意項目。指定するとBPの位置がその実測で決まり、胸ぐせ
+    # ダーツと前身頃のウエストダーツがそこへ向く。空欄なら新文化式の
+    # 推定式へ戻る(engine/bodice_fit.py参照)。
+    # round75: 頭囲も任意項目。指定するとフードの大きさがその実測で決まる
+    # (engine/hood.py)。空欄なら成人女性の平均57cmで引き、**その旨を
+    # 利用者へ開示する**。
+    for name, label in (("bust_point_spacing", "乳間"),
+                        ("bust_point_drop", "乳下がり"),
+                        ("head_circumference", "頭囲")):
+        raw = (form.get(name) or "").strip()
+        if not raw:
+            continue
+        try:
+            values[name] = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{label}は数値で入力してください: {exc}") from exc
     return Measurements(**values)
+
+
+def _parse_fit(form, measurements=None):
+    """フォームからゆとりの指定を読む(round25)。
+
+    プリセット名をそのまま返すのが基本で、"custom" が選ばれた場合だけ
+    数値入力から`FitEase`を組み立てる。未知の値・範囲外の値は
+    engine側(`fit_ease`/`custom_fit_ease`)が明確なエラーにする。
+
+    round30で "stretch"(伸びる生地)を追加した。こちらは縮小率が**割合**
+    なので、部位ごとのcmを出すのに採寸値が要る(`measurements`)。
+    """
+    fit = (form.get("fit") or DEFAULT_FIT).strip()
+    if fit == "stretch":
+        if measurements is None:
+            raise ValueError("伸びる生地のゆとりを求めるには採寸値が必要です。")
+        raw = (form.get("stretch_percent") or "").strip()
+        if not raw:
+            raise ValueError(
+                "伸びる生地を選んだ場合は、生地の伸縮率(%)を入力してください。"
+                "10cm四方に切った生地を無理なく伸びるところまで引っぱり、"
+                "15cmになれば50%です。")
+        raw_cling = (form.get("stretch_cling") or "").strip()
+        try:
+            percent = float(raw)
+            cling = float(raw_cling) if raw_cling else 1.0
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"伸縮率・密着度は数値で入力してください: {exc}") from exc
+        return stretch_fit_ease(measurements.bust, measurements.waist,
+                                 measurements.hip, percent, cling,
+                                 measurements.upper_arm)
+    if fit != "custom":
+        return fit
+    values = {}
+    for field, name in (("ease_bodice", "bodice_cm"), ("ease_waist", "waist_cm"),
+                         ("ease_hip", "hip_cm"), ("ease_sleeve", "sleeve_cm")):
+        raw = (form.get(field) or "").strip()
+        if not raw:
+            continue
+        try:
+            values[name] = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"ゆとりは数値で入力してください: {exc}") from exc
+    return custom_fit_ease(**values)
+
+
+def _download_links(result) -> dict[str, str]:
+    """生成結果に**実際に存在する**出力だけのダウンロードリンクを返す(round41)。
+
+    round40まではリンクの一覧を呼び出し側4か所にそのまま書き並べていた。
+    形式が増えるたびに4か所を直す必要があり、実際に1か所では
+    `"projector"`が二重に書かれていた(dictの重複キーなので例外にならず、
+    値が同じだったため気付かれずに残っていた)。
+
+    `result.output_files`の鍵をそのまま使うので、裏地を付けない生成では
+    裏地のリンクが出ない——「押したら404」というリンクを出さないため。
+    """
+    return {fmt: f"/download/{result.job_id}/{fmt}"
+            for fmt in result.output_files if fmt in _DOWNLOAD_FORMATS}
 
 
 def _bool_field(form, name: str) -> bool:
@@ -897,10 +1229,472 @@ def _bool_field_default(form, name: str, default: bool) -> bool:
 # 下限は「縫い代が細すぎてミシンで扱えない」実用上の目安、上限は
 # 「入力ミスで桁を間違えた極端な値を弾く」ための緩い上限であり、
 # 縫製上の"正しい"縫い代幅を規定するものではない。
+#
+# 【round52で訂正】この下限は**縫う前提の根拠**である。ところがこの製品は
+# 「マント・翼・EVAフォーム装甲プレート」を名指しで勧めていて、フォームや
+# 樹脂板は**縫わずに線の上で切る**。エンジンは`seam_allowance_cm=0.0`を
+# 正しく扱う(実測: 30×40cmの板が裁断線30.0×40.0cmで出る)のに、
+# 画面とAPIだけが0を弾いていた——しかもカスタムパーツの注意書きが
+# 「縫い代の設定を0にしてください」と案内していた。**0だけは特例で通す**。
+# 0と下限の間(0.1cmなど)は従来どおり弾く: それは「縫うつもりで細すぎる値を
+# 入れた」入力ミスであって、「縫わない」という意思表示ではない。
+SEAM_ALLOWANCE_NONE_CM = 0.0
 MIN_SEAM_ALLOWANCE_CM = 0.3
 MAX_SEAM_ALLOWANCE_CM = 3.0
 MIN_HEM_SEAM_ALLOWANCE_CM = 0.3
 MAX_HEM_SEAM_ALLOWANCE_CM = 8.0
+
+
+#: 柄の縦のリピート幅として受け付ける範囲(cm)。
+#: 下限は「柄合わせをする意味がある最小の柄」、上限は生地幅を超えない範囲。
+MIN_PATTERN_REPEAT_CM = 0.5
+MAX_PATTERN_REPEAT_CM = 150.0
+
+#: 生地の収縮率(%)として受け付ける範囲。
+#: うさこの洋裁工房が挙げる実例(1mが4.5cm=4.5%縮んだ)より広く取り、
+#: それでも「半分に縮む生地」のような非現実的な値は弾く。
+#: https://yousai.net/how_to/kiso/jinaosi
+MIN_SHRINK_PERCENT = 0.0
+MAX_SHRINK_PERCENT = 20.0
+
+
+#: 手持ちの生地として受け付ける範囲(cm)。
+#: 幅の下限は帯状パーツが載る最小限、上限は流通している最大幅(ダブル幅)。
+MIN_STASH_WIDTH_CM = 30.0
+MAX_STASH_WIDTH_CM = 300.0
+MAX_STASH_LENGTH_CM = 3000.0
+
+
+def _parse_alteration_fields(form) -> dict[str, float]:
+    """round40: 着てみて合わなかったときの補正量を読む。
+
+    フォームの名前は `alter_<key>`。空欄は「補正しない」。数値でなければ
+    エラーにする——黙って0にすると、入力したのに効かない状態になる。
+    """
+    values: dict[str, float] = {}
+    for kind in ALTERATION_KINDS:
+        raw = (form.get(f"alter_{kind.key}") or "").strip()
+        if not raw:
+            continue
+        try:
+            values[kind.key] = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"「{kind.label}」の補正は数値で入力してください: {raw!r}") from exc
+    # 範囲の検算はengine側(validate)が持つ。二重に持つと食い違う。
+    return validate_alterations(values)
+
+
+def _parse_stash_per_fabric(form) -> dict[str, tuple[float, float]]:
+    """生地ごとの手持ち寸法を読む(round57で追加)。
+
+    round55で手持ち生地の判定を生地ごとに答えるようにしたが、**寸法は
+    1枚ぶんしか受け取れなかった**——「白を2m、紺を1m持っている」という
+    ふつうの状態を、同じ1枚の寸法を全部の生地に当てて答えていた。
+
+    画面は⑨で入力した生地の名前ごとに1行を出す(app.jsが作る)。
+    ここでは名前・幅・長さの3つの並びを突き合わせて読む。
+    行が空(幅も長さも未入力)なら、その生地は既定の1枚の寸法で判定する。
+    """
+    names = form.getlist("stash_fabric_name")
+    widths = form.getlist("stash_fabric_width_cm")
+    lengths = form.getlist("stash_fabric_length_cm")
+    out: dict[str, tuple[float, float]] = {}
+    for index, name in enumerate(names):
+        name = " ".join(str(name).split())
+        raw_width = (widths[index] if index < len(widths) else "").strip()
+        raw_length = (lengths[index] if index < len(lengths) else "").strip()
+        if not name or (not raw_width and not raw_length):
+            continue
+        if not raw_width or not raw_length:
+            raise ValueError(
+                f"「{name}」の手持ちを調べるには、幅と長さの両方を入力してください。")
+        try:
+            width, length = float(raw_width), float(raw_length)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"「{name}」の手持ちの寸法は数値で入力してください: {exc}") from exc
+        if not (MIN_STASH_WIDTH_CM <= width <= MAX_STASH_WIDTH_CM):
+            raise ValueError(
+                f"「{name}」の幅は{MIN_STASH_WIDTH_CM:g}〜{MAX_STASH_WIDTH_CM:g}cmの"
+                f"範囲で指定してください: {width:g}cm")
+        if not (STASH_MIN_LENGTH_CM <= length <= MAX_STASH_LENGTH_CM):
+            raise ValueError(
+                f"「{name}」の長さは{STASH_MIN_LENGTH_CM:g}〜{MAX_STASH_LENGTH_CM:g}cmの"
+                f"範囲で指定してください: {length:g}cm")
+        out[name] = (width, length)
+    return out
+
+
+def _parse_stash_fields(form) -> tuple[float, float] | None:
+    """round39: 手持ちの生地の寸法を読む。両方入っているときだけ判定する。
+
+    片方だけでは判定できない(幅だけ分かっても、足りるかは言えない)ので、
+    片方だけ入っていたらエラーにする——黙って無視すると、利用者は
+    「入力したのに何も出ない」ことになる。
+    """
+    raw_width = (form.get("stash_width_cm") or "").strip()
+    raw_length = (form.get("stash_length_cm") or "").strip()
+    if not raw_width and not raw_length:
+        return None
+    if not raw_width or not raw_length:
+        raise ValueError(
+            "手持ちの生地で足りるか調べるには、幅と長さの両方を入力してください。")
+    try:
+        width = float(raw_width)
+        length = float(raw_length)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"手持ちの生地の寸法は数値で入力してください: {exc}") from exc
+    if not (MIN_STASH_WIDTH_CM <= width <= MAX_STASH_WIDTH_CM):
+        raise ValueError(
+            f"手持ちの生地の幅は{MIN_STASH_WIDTH_CM:g}〜{MAX_STASH_WIDTH_CM:g}cmの"
+            f"範囲で指定してください: {width:g}cm")
+    if not (STASH_MIN_LENGTH_CM <= length <= MAX_STASH_LENGTH_CM):
+        raise ValueError(
+            f"手持ちの生地の長さは{STASH_MIN_LENGTH_CM:g}〜{MAX_STASH_LENGTH_CM:g}cmの"
+            f"範囲で指定してください: {length:g}cm")
+    return width, length
+
+
+#: 「中に着る服の出来上がりバスト」として受け付ける範囲(cm)。
+#: 下限は素体のバストの下限、上限は重ね着を何枚重ねても届かない値。
+MIN_WORN_OVER_BUST_CM = 50.0
+MAX_WORN_OVER_BUST_CM = 200.0
+
+
+def _parse_worn_over_bust_cm(form) -> float | None:
+    """round74: 「この服は、出来上がりバスト◯cmの服の上に羽織る」を読む。
+
+    未入力ならNone(=従来どおり素体を基準にゆとりを取る)。
+    数値でない・範囲外はエラーにする——黙って無視すると、重ね着の指定が
+    効かないまま「中の服と同じ太さのコート」が出てくる。
+    """
+    raw = (form.get("worn_over_bust_cm") or "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"中に着る服の出来上がりバストは数値で入力してください: {raw!r}") from exc
+    if not (MIN_WORN_OVER_BUST_CM <= value <= MAX_WORN_OVER_BUST_CM):
+        raise ValueError(
+            f"中に着る服の出来上がりバストは{MIN_WORN_OVER_BUST_CM:g}〜"
+            f"{MAX_WORN_OVER_BUST_CM:g}cmの範囲で指定してください: {value:g}")
+    return value
+
+
+#: 肩先を出せる量(cm)として受け付ける範囲。上限は`engine/drop_shoulder.py`の
+#: `too_large_drop_reason`が採寸ごとに更に絞る(肩幅の半分まで)。
+MIN_SHOULDER_DROP_CM = 0.5
+MAX_SHOULDER_DROP_CM = 20.0
+
+
+def _parse_shoulder_drop_cm(form) -> float | None:
+    """round76: 「肩先を◯cm外へ出す」(ドロップショルダー)を読む。
+
+    未入力ならNone(=従来どおり肩先は肩幅の半分の位置)。数値でない・
+    範囲外はエラーにする——黙って無視すると、ドロップを指定したのに
+    セットインスリーブの型紙が出てくる。
+    """
+    raw = (form.get("shoulder_drop_cm") or "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"肩先を出す量は数値で入力してください: {raw!r}") from exc
+    if not (MIN_SHOULDER_DROP_CM <= value <= MAX_SHOULDER_DROP_CM):
+        raise ValueError(
+            f"肩先を出す量は{MIN_SHOULDER_DROP_CM:g}〜{MAX_SHOULDER_DROP_CM:g}cmの"
+            f"範囲で指定してください: {value:g}")
+    return value
+
+
+def _parse_fabric_shopping_fields(form) -> tuple[bool, float | None, float | None]:
+    """round38: 買い物メモのための任意入力を読む。
+
+    `one_way_fabric`(一方方向の生地か)、`shrink_percent`(生地の収縮率)、
+    `pattern_repeat_cm`(柄の縦のリピート幅)。どれも任意で、
+    未入力なら None(=既定の見積もり)を返す。
+    """
+    one_way = _bool_field(form, "one_way_fabric")
+
+    def _optional_number(field_name: str, label: str,
+                          lo: float, hi: float) -> float | None:
+        raw = (form.get(field_name) or "").strip()
+        if not raw:
+            return None
+        try:
+            value = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{label}は数値で入力してください: {raw!r}") from exc
+        if not (lo <= value <= hi):
+            raise ValueError(
+                f"{label}は{lo:g}〜{hi:g}の範囲で指定してください: {value:g}")
+        return value
+
+    shrink = _optional_number("shrink_percent", "生地の収縮率(%)",
+                               MIN_SHRINK_PERCENT, MAX_SHRINK_PERCENT)
+    repeat = _optional_number("pattern_repeat_cm", "柄のリピート幅(cm)",
+                               MIN_PATTERN_REPEAT_CM, MAX_PATTERN_REPEAT_CM)
+    return one_way, shrink, repeat
+
+
+#: 丈を直接指定できるパーツと、画面に出す名前 (round52で追加)。
+#: `engine.pipeline` の `design_lengths` は part_type をキーにしており、
+#: round39から`engine/stash.py`が「手持ちの生地に収まるまでスカートを詰める」
+#: ために使っている——**仕組みは動いているのに、利用者からは触れなかった**。
+DESIGN_LENGTH_FIELDS = (
+    ("skirt", "スカート丈"),
+    ("front_pants", "パンツ丈"),
+    # round57: 袖丈・着丈。round52では「袖ぐりと連動するので同じやり方では
+    # 縫い合わせ長さが崩れる」として見送っていたが、テンプレートが
+    # `data-fit-y`("neck/underarm/hem"、袖は"cap/underarm/hem")を
+    # 持っているので、**袖ぐりより下だけ**を伸縮させれば壊さずに当てられる
+    # (engine/bodice_fit.py の apply_design_length_to_y_map)。
+    ("sleeve", "袖丈"),
+    ("front_bodice", "着丈"),
+)
+
+#: part_type から画面に出す名前を引く(round58)。
+#: `DESIGN_LENGTH_FIELDS` と同じものを逆に引くだけで、新しい名前は
+#: 増やさない——2か所に名前を書くと、片方だけ直す事故が起きる。
+DESIGN_LENGTH_LABELS = dict(DESIGN_LENGTH_FIELDS)
+
+#: 前後で対になっていて、片方の指定をもう片方にも及ぼすもの(round57)。
+#: 片方だけ短いと脇線が合わず縫えない。
+DESIGN_LENGTH_PAIRS = {
+    "front_pants": "back_pants",
+    "front_bodice": "back_bodice",
+}
+
+
+#: round55: 生成履歴に`fit`を保存するときの目印。
+#:
+#: `fit`はプリセット名(文字列)のこともあれば、「ゆとりを自分で入れる」
+#: 「伸びる生地」で組み立てた`FitEase`(データクラス)のこともある。
+#: 後者はそのままJSONにできないので、辞書に直して目印を付けて保存し、
+#: 再生成で組み立て直す。
+#: **これを忘れると`TypeError: Object of type FitEase is not JSON
+#: serializable`で生成そのものが500になる**(round55に実際に踏み、
+#: 既存のテストが捕まえた)。
+_FIT_EASE_JSON_KEY = "__fit_ease__"
+
+
+def _fit_to_json(fit):
+    """`fit`をJSONにできる形にする(プリセット名はそのまま)。"""
+    if isinstance(fit, FitEase):
+        return {_FIT_EASE_JSON_KEY: dataclasses.asdict(fit)}
+    return fit
+
+
+def _fit_from_json(value):
+    """`_fit_to_json`で保存したものを、元の形に戻す。"""
+    if isinstance(value, dict) and _FIT_EASE_JSON_KEY in value:
+        return FitEase(**value[_FIT_EASE_JSON_KEY])
+    return value
+
+
+def _restore_generation_kwargs(stored: dict) -> dict:
+    """生成履歴から読んだ設定を、`generate_from_selection`へ渡せる形に戻す。"""
+    restored = dict(stored)
+    if "fit" in restored:
+        restored["fit"] = _fit_from_json(restored["fit"])
+    return restored
+
+
+def _describe_restored_settings(kwargs: dict) -> str:
+    """再生成で**何が復元されたか**を、日本語1行にする(round57)。
+
+    round55で中身は合うようになったが、画面に出るのは「再生成しました」と
+    リンクだけだった。利用者が確かめる手段は、出てきた型紙を見ることしか
+    なかった——**設定が落ちていた頃と、画面の見え方が同じ**である。
+    何を引き継いだのかを書けば、落ちていればその場で分かる。
+    """
+    parts: list[str] = []
+    if kwargs.get("lining"):
+        parts.append("裏地あり")
+    fabrics = kwargs.get("fabric_group_assignments") or {}
+    if fabrics:
+        names = sorted(set(fabrics.values()))
+        parts.append(f"生地{len(names) + 1}種類（{('・'.join(names))}を分けて裁つ）")
+    lengths = kwargs.get("design_length_overrides") or {}
+    for part_type, value in sorted(lengths.items()):
+        if part_type.startswith("back_"):
+            continue
+        parts.append(f"{labels.PART_TYPE_LABELS_JA.get(part_type, part_type)}の丈{value:g}cm")
+    alterations = kwargs.get("alterations") or {}
+    if alterations:
+        parts.append(f"補正{len(alterations)}項目")
+    fit = kwargs.get("fit")
+    if isinstance(fit, dict) or (fit and fit != DEFAULT_FIT):
+        parts.append("ゆとりの指定")
+    if kwargs.get("one_way_fabric"):
+        parts.append("一方方向の生地")
+    # round58: 原型・収縮率・柄のリピートも、利用者が入れた設定である。
+    # round57はここに書き忘れていたので、「引き継いだ設定」を読んでも
+    # 子ども原型で引いたかどうかが分からなかった。下の
+    # `test_every_setting_shows_up_in_the_restored_summary`で、
+    # 設定が増えたときに書き忘れると落ちるようにしてある。
+    block_key = kwargs.get("block_key")
+    if block_key:
+        parts.append(f"原型「{get_block(block_key).label}」")
+    shrink = kwargs.get("shrink_percent")
+    if shrink:
+        parts.append(f"収縮率{shrink:g}%")
+    repeat = kwargs.get("pattern_repeat_cm")
+    if repeat:
+        parts.append(f"柄のリピート{repeat:g}cm")
+    if kwargs.get("include_empty_tiles"):
+        parts.append("白紙の面も印刷")
+    if (kwargs.get("paper") or "A4").upper() != "A4":
+        parts.append(f"用紙{str(kwargs['paper']).upper()}")
+    seam = kwargs.get("seam_allowance_cm")
+    if seam is not None and seam != DEFAULT_SEAM_ALLOWANCE_CM:
+        parts.append(f"縫い代{seam:g}cm")
+    # round74: 重ね着の前提(中に着る服の出来上がりバスト)。これが落ちると
+    # コートが中の服と同じ太さで再生成されるので、必ず書く。
+    worn_over = kwargs.get("worn_over_bust_cm")
+    if worn_over:
+        parts.append(f"バスト{worn_over:g}cmの服の上に羽織る前提"
+                     + ("" if kwargs.get("worn_over_has_sleeves", True)
+                        else "（中は袖なし）"))
+    # round76: ドロップショルダー。落ちると肩の形が変わった型紙が
+    # 黙ってセットインスリーブに戻るので、必ず書く。
+    drop = kwargs.get("shoulder_drop_cm")
+    if drop:
+        parts.append(f"肩先を{drop:g}cm出すドロップショルダー")
+    if not parts:
+        return "引き継いだ設定: 既定のまま（任意の設定は使われていません）"
+    return "引き継いだ設定: " + " / ".join(parts)
+
+
+def _evaluate_stash(pipeline_obj, result, spec, measurements, stash, *,
+                     fabric_group_assignments=None, per_fabric_stash=None, **kwargs):
+    """手持ちの生地で足りるかを判定する。生地を分けていれば**生地ごと**に。
+
+    round55で直した実害: 手持ちの端切れは1種類の生地なのに、全パーツを
+    1枚に詰めた長さで判定していた。「白い身頃＋紺のスカート」の紺だけを
+    110×130cm持っている人に「117cm足りません」と答えていた——紺のぶんは
+    124cmで、**実際には収まっていた**。持っている生地を使わずに買い足させる、
+    いちばん困る間違え方である。
+
+    Returns:
+        (代表の判定, 生地ごとの判定のリスト)。生地を分けていないときは
+        リストの方が空になり、round54までとまったく同じ形で返る。
+    """
+    if not result.fabric_groups:
+        return pipeline_obj.evaluate_stash_for(
+            result, spec, measurements,
+            have_width_cm=stash[0], have_length_cm=stash[1], **kwargs), []
+
+    by_fabric = []
+    for group in result.fabric_groups:
+        # round57: その生地ぶんの手持ちが入っていれば、それで判定する。
+        # 入っていなければ、これまでどおり共通の1枚の寸法を当てる。
+        have = (per_fabric_stash or {}).get(group.name, stash)
+        verdict = pipeline_obj.evaluate_stash_for(
+            result, spec, measurements,
+            fabric_group_assignments=fabric_group_assignments,
+            fabric_group_name=group.name,
+            have_width_cm=have[0], have_length_cm=have[1], **kwargs)
+        by_fabric.append((group.name, verdict))
+    # 代表は「いちばん足りていないもの」にする。1つの数字しか見ない
+    # 利用者に対して、**足りている方**を見せるのは危ない。
+    worst = max(by_fabric, key=lambda item: (not item[1].fits,
+                                              item[1].needed_length_cm))
+    return worst[1], by_fabric
+
+
+def _parse_fabric_groups(form) -> dict[str, str]:
+    """「生地の割り当て」欄を読む(round54で追加)。
+
+    フィールド名は`fabric_<区分key>`(例: `fabric_skirt`)。空欄の区分は
+    既定の生地(表地)に入るので、ここには入れない。
+
+    キャラクターの衣装は1着が1種類の生地でできていない——本体の色・
+    差し色・別布・裏地と3〜5種類使う。round53まではその割り当てを
+    受け取る場所が無く、全パーツを1枚の生地に詰めた配置しか出せなかった。
+    """
+    raw = {area.key: form.get(f"fabric_{area.key}") for area in ASSIGNABLE_AREAS}
+    try:
+        return normalize_assignments(raw)
+    except FabricGroupError as exc:
+        raise ValueError(str(exc)) from exc
+
+
+def _parse_design_lengths(form) -> dict[str, float]:
+    """「丈を指定する」欄を読む(round52で追加)。
+
+    キャラクターの衣装は丈でシルエットが決まるので、身長からの比例だけでは
+    合わせられない(膝丈・くるぶし丈・床に着く丈…)。空欄なら従来どおり
+    身長に比例した丈になる。
+
+    範囲は読み取り側と同じ `SKIRT_LENGTH_RANGE_CM` を使う——画面と
+    エンジンで別々の数字を持つと、片方を直したときに食い違う。
+    """
+    lo, hi = SKIRT_LENGTH_RANGE_CM
+    lengths: dict[str, float] = {}
+    for part_type, label in DESIGN_LENGTH_FIELDS:
+        raw = (form.get(f"length_{part_type}") or "").strip()
+        if not raw:
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{label}は数値で入力してください: {raw!r}") from exc
+        if not (lo <= value <= hi):
+            raise ValueError(
+                f"{label}は{lo:g}〜{hi:g}cmの範囲で指定してください: {value:g}")
+        lengths[part_type] = value
+        # パンツ・身頃は前後で1枚ずつなので、後ろにも同じ丈を渡す。
+        pair = DESIGN_LENGTH_PAIRS.get(part_type)
+        if pair:
+            lengths[pair] = value
+    return lengths
+
+
+def _too_large_message() -> str:
+    """送信データが上限を超えたときに返す文(round37)。
+
+    この上限に当たる経路は2つある——イラスト入力の画像と、カスタムパーツの
+    輪郭(頂点の列をフォームの値として送る)。以前は前者だと決め打ちして
+    「アップロードされた画像が大きすぎます」と返しており、画像を1枚も
+    添付していない利用者にそう言っていた。何を減らせばよいのか分からない。
+
+    ここでは実際の送信サイズも添える。`request.content_length`はヘッダから
+    読むだけなので、本文の読み込みで例外になったあとでも安全に参照できる
+    (`request.form`や`request.files`に触るとその場でもう一度例外になる)。
+    """
+    max_bytes = app.config["MAX_CONTENT_LENGTH"]
+    sent = request.content_length or 0
+
+    # 【どちらの上限に当たったのかを見分ける】上限は2つある。
+    #   * MAX_CONTENT_LENGTH (12MB) — リクエスト全体。主に画像。
+    #   * Werkzeugの max_form_memory_size (既定500KB) — **ファイル以外の
+    #     フォームの値**の合計。カスタムパーツの輪郭(custom_panels_json)は
+    #     ここに入る。
+    # round37の実測では、輪郭を大きくして送ったとき、全体は1.9MBで12MBに
+    # 届いていないのに413になっていた——効いていたのは後者である。
+    # それなのに「上限12MB」と表示していたので、
+    # 「12MBより小さいのに大きすぎると言われる」という、直しようのない
+    # 案内になっていた。当たった方の上限を名指しする。
+    form_limit = getattr(request, "max_form_memory_size", None)
+    hit_content_length = bool(max_bytes) and sent > max_bytes
+    if hit_content_length or not form_limit:
+        return (
+            f"送信されたデータが大きすぎます（上限{max_bytes / (1024 * 1024):.0f}MB"
+            + (f"、今回は約{sent / (1024 * 1024):.1f}MB" if sent else "")
+            + "）。添付する画像を小さくするか、枚数を減らしてください。"
+        )
+    return (
+        f"入力内容が大きすぎます（画像以外の入力の上限は約{form_limit / 1000:.0f}KB"
+        + (f"、今回の送信全体は約{sent / (1024 * 1024):.1f}MB" if sent else "")
+        + "）。カスタムパーツを使っている場合は、輪郭の頂点を減らすか、"
+        "パーツの数を減らしてください。"
+    )
 
 
 def _parse_seam_allowance_fields(form) -> tuple[float, float | None]:
@@ -920,9 +1714,12 @@ def _parse_seam_allowance_fields(form) -> tuple[float, float | None]:
             seam_cm = float(raw_seam)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"縫い代は数値で入力してください: {raw_seam!r}") from exc
-        if not (MIN_SEAM_ALLOWANCE_CM <= seam_cm <= MAX_SEAM_ALLOWANCE_CM):
+        # 0は「縫わない(線の上で切る)」の意思表示として通す(round52)。
+        if seam_cm != SEAM_ALLOWANCE_NONE_CM and not (
+                MIN_SEAM_ALLOWANCE_CM <= seam_cm <= MAX_SEAM_ALLOWANCE_CM):
             raise ValueError(
-                f"縫い代は{MIN_SEAM_ALLOWANCE_CM}〜{MAX_SEAM_ALLOWANCE_CM}cmの範囲で指定してください: {seam_cm}cm"
+                f"縫い代は{MIN_SEAM_ALLOWANCE_CM}〜{MAX_SEAM_ALLOWANCE_CM}cmの範囲で指定してください"
+                f"（EVAフォームなど縫わない素材は0を指定できます）: {seam_cm}cm"
             )
     else:
         seam_cm = DEFAULT_SEAM_ALLOWANCE_CM
@@ -969,6 +1766,13 @@ def _parse_custom_grade_cm(form) -> dict[str, float] | None:
     return validate_custom_grade_cm(raw)
 
 
+#: イラストモードで一度に受け付ける画像の枚数の上限(round18)。
+#: 1枚ごとに分割と判定(APIキーがあればClaude API呼び出し)が走るため、
+#: 処理時間と費用が枚数に比例する。同じ衣装を別角度から数枚、という
+#: 想定の枚数に留める。
+MAX_ILLUSTRATION_IMAGES = 6
+
+
 def _load_uploaded_image(uploaded) -> Image.Image:
     """アップロードされたイラストを検証しつつ読み込む。
 
@@ -1003,6 +1807,26 @@ def _load_uploaded_image(uploaded) -> Image.Image:
     except Exception as exc:
         raise ValueError("画像を読み込めませんでした。ファイルが破損している可能性があります。") from exc
     return image
+
+
+def _has_custom_panels(raw_json: str) -> bool:
+    """`custom_panels_json`に、実際にカスタムパーツが1つ以上入っているか。
+
+    この欄の既定値は空文字ではなく **文字列 "[]"** なので、文字列としての
+    真偽値で判定してはいけない(round32で直した実バグ。詳細は呼び出し側の
+    コメント参照)。JSONとして壊れている場合はTrueを返し、`_parse_custom_panels`
+    側の具体的なエラーメッセージに任せる(ここで黙って無視すると、送った
+    はずのカスタムパーツが理由も無く消える)。
+    """
+    if not raw_json:
+        return False
+    try:
+        parsed = json.loads(raw_json)
+    except (TypeError, ValueError):
+        return True
+    if isinstance(parsed, list):
+        return len(parsed) > 0
+    return True
 
 
 def _parse_custom_panels(raw_json: str, measurements: Measurements) -> list[CustomPanelSpec]:
@@ -1048,10 +1872,15 @@ def _parse_custom_panels(raw_json: str, measurements: Measurements) -> list[Cust
             points_cm = calibrate_points_to_cm(
                 raw.get("points"), raw.get("ref_point_a"), raw.get("ref_point_b"), resolved_cm,
             )
-            mirror = bool(raw.get("mirror", False))
+            mirror = validate_boolean(raw.get("mirror"), "mirror")
+            # round57: 生地幅に収まらないときに分けてよいか(既定は分けない)。
+            # マントは中心で縫い合わせるのがふつうだが、EVAフォームの装甲に
+            # 縫い目を入れるのは別の話なので、**作る人が決める**。
+            allow_split = validate_boolean(raw.get("allow_split"), "allow_split")
         except CustomPanelError as exc:
             raise ValueError(f"カスタムパーツ「{panel_label_for_error}」: {exc}") from exc
-        specs.append(CustomPanelSpec(label=label, points_cm=points_cm, quantity=quantity, mirror=mirror))
+        specs.append(CustomPanelSpec(label=label, points_cm=points_cm, quantity=quantity,
+                                      mirror=mirror, allow_split=allow_split))
     return specs
 
 
@@ -1063,11 +1892,35 @@ def _custom_panel_specs_to_requests(specs: list[CustomPanelSpec]) -> list:
     for spec in specs:
         requests.extend(build_custom_panel_requests(
             spec.label, spec.points_cm, quantity=spec.quantity, mirror=spec.mirror,
+            allow_split=getattr(spec, "allow_split", False),
         ))
     return requests
 
 
 _custom_panel_trace_rate_limiter = _RateLimiter("custom_panel_trace", max_requests=20, window_seconds=60.0)
+
+
+@app.post("/api/measurements/check")
+def api_measurements_check():
+    """採寸値の「たぶん測り間違い」を、生成する前に返す(round33で追加)。
+
+    【なぜ生成前に要るか】採寸ミスはこのサービスがうまくいかない最大の
+    原因なのに、round32までは指摘が**生成したあと**にしか出ていなかった
+    (クランプ警告・胸幅の警告)。1日の生成回数を1回使い、PDFを開いて
+    初めて「肩幅の採寸を確かめてください」と言われる。入れた直後に
+    分かれば、その回を使わずに済む。
+
+    判定は`engine/plausibility.py`にあり、型紙を作らないので生成回数は
+    消費しない。値が有効範囲(`Measurements`の検証)の外なら、その旨だけを
+    返す(ここで例外にすると、入力途中の欄でエラーが出続けてしまう)。
+    """
+    try:
+        measurements = _parse_measurements(request.form)
+    except ValueError as exc:
+        return jsonify({"ok": True, "hints": [
+            {"field": "", "severity": "warning", "message": str(exc)}]})
+    hints = measurement_hints(measurements)
+    return jsonify({"ok": True, "hints": [h.as_dict() for h in hints]})
 
 
 @app.post("/api/custom-panel/trace")
@@ -1116,8 +1969,9 @@ def api_custom_panel_trace():
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     except RequestEntityTooLarge:
-        max_mb = app.config["MAX_CONTENT_LENGTH"] / (1024 * 1024)
-        return jsonify({"ok": False, "error": f"アップロードされた画像が大きすぎます（上限{max_mb:.0f}MB）。"}), 413
+        # round37: 文言の理由は下の`_too_large_message`と、
+        # /api/generate 側の同じ except 節のコメントを参照。
+        return jsonify({"ok": False, "error": _too_large_message()}), 413
     except Exception:
         error_id = uuid.uuid4().hex[:8]
         app.logger.exception("custom panel auto trace failed [error_id=%s]", error_id)
@@ -1125,6 +1979,434 @@ def api_custom_panel_trace():
             "ok": False,
             "error": f"内部エラーが発生しました（エラーID: {error_id}）。しばらく待って再試行してください。",
         }), 500
+
+
+
+
+# ---------------------------------------------------------------------------
+# `/api/generate` が受け取った値を、1つに束ねたもの(round63で追加)
+#
+# 【なぜ束ねるか】3つのモード(手動・イラスト・サイズ展開)の生成は、
+# どれも同じ28個の値を使う。引数で並べると1つの関数に押し込めるしか
+# なくなり、実際そうなっていた——`api_generate`は498行あった。
+# 束ねれば、モードごとに分けて読めるようになる。
+#
+# それぞれのモードの関数は、冒頭で**使う値だけを取り出して**いる。
+# その数行を読めば、そのモードが何に依存しているかが分かる。
+# ---------------------------------------------------------------------------
+@dataclasses.dataclass
+class GenerationInputs:
+    """画面から届いた値と、利用回数の確認結果。"""
+    allow_rotation: object = None
+    alterations: object = None
+    block_key: object = None
+    custom_grade_cm: object = None
+    custom_panel_specs: object = None
+    costume_project: object = None
+    daily_limit: object = None
+    design_lengths: object = None
+    fabric_groups: object = None
+    fit: object = None
+    garment_spec_kwargs: object = None
+    hem_seam_allowance_cm: object = None
+    illustration_views: object = None
+    image: object = None
+    include_body_garment: object = None
+    lining: object = None
+    measurements: object = None
+    mode: object = None
+    one_way_fabric: object = None
+    owner_key: object = None
+    pattern_repeat_cm: object = None
+    per_fabric_stash: object = None
+    plan_name: object = None
+    seam_allowance_cm: object = None
+    shrink_percent: object = None
+    sizes: object = None
+    spec: object = None
+    stash: object = None
+    used_today: object = None
+
+
+def _respond_illustration(inputs: GenerationInputs):
+    """イラストから読み取って生成する。
+
+    `api_generate`から呼ばれる。このモードが使う値は、下の数行で
+    まとめて取り出している(20個)。
+    """
+    allow_rotation = inputs.allow_rotation
+    alterations = inputs.alterations
+    block_key = inputs.block_key
+    daily_limit = inputs.daily_limit
+    design_lengths = inputs.design_lengths
+    fabric_groups = inputs.fabric_groups
+    fit = inputs.fit
+    hem_seam_allowance_cm = inputs.hem_seam_allowance_cm
+    illustration_views = inputs.illustration_views
+    image = inputs.image
+    lining = inputs.lining
+    measurements = inputs.measurements
+    mode = inputs.mode
+    one_way_fabric = inputs.one_way_fabric
+    owner_key = inputs.owner_key
+    pattern_repeat_cm = inputs.pattern_repeat_cm
+    plan_name = inputs.plan_name
+    seam_allowance_cm = inputs.seam_allowance_cm
+    shrink_percent = inputs.shrink_percent
+    used_today = inputs.used_today
+
+    result = pipeline.generate_from_illustration(
+        image, measurements, allow_rotation=allow_rotation,
+        seam_allowance_cm=seam_allowance_cm, hem_seam_allowance_cm=hem_seam_allowance_cm,
+        views=illustration_views, fit=fit,
+        # round52: 丈の指定は、イラストからの読み取りより優先する
+        # (engine側が `"skirt" not in design_length_overrides` を
+        #  見て、読み取り値で上書きしないようになっている)。
+        design_length_overrides=design_lengths or None,
+        fabric_group_assignments=fabric_groups or None,
+        # round57: 画面にある設定は、イラストモードでも効かせる。
+        one_way_fabric=one_way_fabric, shrink_percent=shrink_percent,
+        pattern_repeat_cm=pattern_repeat_cm,
+        alterations=alterations, lining=lining, block_key=block_key,
+        include_empty_tiles=_bool_field(request.form, "include_empty_tiles"),
+        paper=(request.form.get("paper") or "").strip() or None,
+    )
+
+    payload = result.summary()
+    # round57: イラストから作ったものも、生成履歴から作り直せるようにする。
+    #
+    # round51以来「画像を保存していないため作り直せません」と案内して
+    # きたが、作り直すのに要るのは**画像ではなく、画像から決まった
+    # 結果**である。イラストが決めるのはパーツ構成(襟ぐり・袖・
+    # スカートの種類)と丈だけで、どちらも生成結果に残っている。
+    # それを保存すれば、**画像を持ち続けずに**同じ型紙を作り直せる。
+    # 画像そのものは今までどおり保存しない。
+    illustration_spec = {
+        "mode": "illustration_replay",
+        "measurements": measurements.as_dict(),
+        "parts": [
+            {"part_type": part.part_type, "variation": part.variation,
+             "quantity": part.quantity}
+            for part in result.garment_spec.parts
+            if part.custom_segments is None
+        ],
+        "generation_kwargs": {
+            "allow_rotation": allow_rotation,
+            "seam_allowance_cm": seam_allowance_cm,
+            "hem_seam_allowance_cm": hem_seam_allowance_cm,
+            "fit": _fit_to_json(fit),
+            "one_way_fabric": one_way_fabric,
+            "shrink_percent": shrink_percent,
+            "pattern_repeat_cm": pattern_repeat_cm,
+            "alterations": alterations or None,
+            "lining": lining,
+            "block_key": block_key,
+            "fabric_group_assignments": fabric_groups or None,
+            "include_empty_tiles": _bool_field(request.form, "include_empty_tiles"),
+            "paper": (request.form.get("paper") or "").strip() or None,
+            # 絵から読み取った丈も含めて、実際に使われた値を残す。
+            "design_length_overrides": (result.resolved_design_lengths or None),
+        },
+    }
+    db.record_job(result.job_id, owner_key, part_count=payload["part_count"],
+                  waste_ratio=payload["waste_ratio"],
+                  spec_json=json.dumps(illustration_spec))
+    payload["download"] = _download_links(result)
+    payload["classification_log"] = [
+        {"part_type": c.part_type, "variation": c.variation, "confidence": round(c.confidence, 2),
+         "mode": (c.raw or {}).get("mode", "claude")}
+        for c in result.classification_log
+    ]
+    # ラフ画像は「生成に成功」しても、線が少ないため細部を読み落としやすい。
+    # とくに簡易判定(モック)では入力画像を意味的に解析していないので、成功した
+    # PDFを高い再現度の結果と誤解させない。結果画面に、何を読んだか／次に何を
+    # 足すべきかを構造化して返す。
+    modes = {entry["mode"] for entry in payload["classification_log"]}
+    used_mock = "mock" in modes
+    has_back_reference = bool(request.files.getlist("illustration_back"))
+    detected = [
+        f"{entry['part_type']}：{entry['variation']}（信頼度 {entry['confidence']:.0%}）"
+        for entry in payload["classification_log"]
+    ]
+    missing = ["着る人の実採寸（入力済みの値を確認）"]
+    if not has_back_reference:
+        missing.insert(0, "背面資料（後ろ襟・背中の切替・ファスナー位置を確認）")
+    missing.append("色分け、飾り、金具、プリントは生成後に別工程で確認")
+    if used_mock:
+        payload.setdefault("measurement_warnings", []).append(
+            "この画像入力は簡易判定（モック）で生成しました。ラフの細部は読めないため、"
+            "生成した型紙をそのまま裁断せず、正面・背面資料を追加して仮縫いで確認してください。"
+        )
+        summary = "簡易判定でシルエットの土台を生成しました。画像固有の袖・首元・スリット・装飾は確定していません。"
+    else:
+        summary = "画像判定でシルエットの土台を生成しました。下の読み取り内容と資料不足を確認してから裁断してください。"
+    payload["reference_review"] = {
+        "summary": summary,
+        "detected": detected,
+        "missing": missing,
+        "has_back_reference": has_back_reference,
+        "used_mock": used_mock,
+    }
+    payload["usage"] = {"plan": plan_name, "used_today": used_today, "daily_limit": daily_limit}
+    return jsonify({"ok": True, "mode": mode, **payload})
+
+
+def _respond_multi_size(inputs: GenerationInputs):
+    """同じ服を複数サイズぶん生成する。
+
+    `api_generate`から呼ばれる。このモードが使う値は、下の数行で
+    まとめて取り出している(24個)。
+    """
+    allow_rotation = inputs.allow_rotation
+    alterations = inputs.alterations
+    block_key = inputs.block_key
+    custom_grade_cm = inputs.custom_grade_cm
+    daily_limit = inputs.daily_limit
+    design_lengths = inputs.design_lengths
+    fabric_groups = inputs.fabric_groups
+    fit = inputs.fit
+    garment_spec_kwargs = inputs.garment_spec_kwargs
+    hem_seam_allowance_cm = inputs.hem_seam_allowance_cm
+    lining = inputs.lining
+    measurements = inputs.measurements
+    mode = inputs.mode
+    one_way_fabric = inputs.one_way_fabric
+    owner_key = inputs.owner_key
+    pattern_repeat_cm = inputs.pattern_repeat_cm
+    per_fabric_stash = inputs.per_fabric_stash
+    plan_name = inputs.plan_name
+    seam_allowance_cm = inputs.seam_allowance_cm
+    shrink_percent = inputs.shrink_percent
+    sizes = inputs.sizes
+    spec = inputs.spec
+    stash = inputs.stash
+    used_today = inputs.used_today
+
+    multi_size_kwargs = {
+        "allow_rotation": allow_rotation,
+        "seam_allowance_cm": seam_allowance_cm,
+        "hem_seam_allowance_cm": hem_seam_allowance_cm,
+        "custom_grade_cm": custom_grade_cm,
+        "fit": fit,
+        "fabric_group_assignments": fabric_groups or None,
+        "one_way_fabric": one_way_fabric,
+        "shrink_percent": shrink_percent,
+        "pattern_repeat_cm": pattern_repeat_cm,
+        "design_length_overrides": design_lengths or None,
+        "alterations": alterations or None,
+        "lining": lining,
+        "block_key": block_key,
+        "include_empty_tiles": _bool_field(request.form, "include_empty_tiles"),
+        "paper": (request.form.get("paper") or "").strip() or None,
+    }
+    multi = pipeline.generate_multi_size(
+        spec, measurements, sizes, **multi_size_kwargs)
+    total_parts = sum(r.summary()["part_count"] for r in multi.results.values())
+    regen_spec = {
+        "mode": "multi_size",
+        "measurements": measurements.as_dict(),
+        "garment_spec": garment_spec_kwargs,
+        "sizes": sizes,
+        "custom_grade_cm": custom_grade_cm,
+        "allow_rotation": allow_rotation,
+        "seam_allowance_cm": seam_allowance_cm,
+        "hem_seam_allowance_cm": hem_seam_allowance_cm,
+        # round55: 手動生成と同じく、渡した設定をそのまま保存する
+        # (それまで fit と生地の割り当てが再生成で消えていた)。
+        # round58: 「そのまま保存する」と書きながら、実際には6件を
+        # **手で並べ直して**いたので、生成に渡す側が増えても
+        # 保存側は増えなかった。渡した辞書そのものを保存する。
+        "multi_size_kwargs": {**multi_size_kwargs,
+                               "fit": _fit_to_json(multi_size_kwargs["fit"])},
+    }
+    db.record_job(multi.bundle_job_id, owner_key, part_count=total_parts, waste_ratio=None,
+                  spec_json=json.dumps(regen_spec))
+
+    results_payload = {}
+    for size, result in multi.results.items():
+        # round58: 手持ちの生地で足りるかを、**サイズごとに**判定する。
+        #
+        # 【round57まで何が起きていたか】手持ちの欄は「⑤生地の配置
+        # 設定」の中にあり、どのモードでも出ている。それなのに判定を
+        # していたのは手動モードだけで、サイズ展開では
+        # `stash_verdict` が null のまま返っていた(実測)。
+        # 画面にも何も出ないので、**入れたことすら忘れる**。
+        # S/M/Lを1枚の端切れから取れるかは、まさにここで知りたい。
+        if stash is not None:
+            result.stash_verdict, result.stash_verdicts_by_fabric = _evaluate_stash(
+                pipeline, result, spec, result.measurements, stash,
+                fabric_group_assignments=fabric_groups or None,
+                per_fabric_stash=per_fabric_stash,
+                allow_rotation=allow_rotation,
+                one_way_fabric=one_way_fabric,
+                seam_allowance_cm=seam_allowance_cm,
+                hem_seam_allowance_cm=hem_seam_allowance_cm)
+        size_payload = result.summary()
+        db.record_job(result.job_id, owner_key, part_count=size_payload["part_count"],
+                      waste_ratio=size_payload["waste_ratio"])
+        # round41: ここには`"projector"`が**2回**書かれていた
+        # (2つ目はインデントも崩れていた)。dictリテラルの重複キーは
+        # 例外にならず後勝ちで潰れるので、値が同じだったこの箇所では
+        # 実害が出ないまま残っていた。リンクの組み立ては1か所にする。
+        size_payload["download"] = _download_links(result)
+        results_payload[size] = size_payload
+
+    # round49はここで「サイズ展開では裏地を引いていません」と
+    # 断っていた。`generate_multi_size`がliningを受け取らなかった
+    # からで、画面でも節ごと隠していた。round58でサイズ展開にも
+    # 渡るようにしたので、断り書きは要らなくなった(画面の
+    # 節も出す。web/static/app.js参照)。
+    multi_notes = []
+    # round58: 丈の指定は、サイズが変わっても指定どおりのままに
+    # している。身幅はS/M/Lで変わるのに丈だけ変わらないのは、
+    # 黙っていると「グレーディングが効いていない」と見える。
+    if design_lengths:
+        multi_notes.append(
+            "丈の指定(" + "・".join(
+                f"{DESIGN_LENGTH_LABELS.get(k, k)}{v:g}cm"
+                for k, v in sorted(design_lengths.items())
+                if k not in DESIGN_LENGTH_PAIRS.values())
+            + ")は、どのサイズでも指定どおりの長さにしています。"
+            "身幅・肩幅はサイズごとに変わりますが、丈は変えていません"
+            "(サイズごとに丈も変えたい場合は、そのサイズだけ"
+            "「手動でパーツを選ぶ」モードで作り直してください)。")
+
+    return jsonify({
+        "ok": True,
+        "mode": mode,
+        "sizes": multi.sizes,
+        "bundle_job_id": multi.bundle_job_id,
+        "base_measurements": multi.base_measurements.as_dict(),
+        "results": results_payload,
+        "design_notes": multi_notes,
+        "size_consistency_warnings": multi.size_consistency_warnings(),
+        "grading_precision_notes": multi.grading_precision_notes(),
+        "grade_cm_used": multi.effective_grade_cm(),
+        "custom_grade_cm_applied": bool(multi.custom_grade_cm),
+        # round69: 全サイズを合わせた「何枚刷るか・何を買うか」。
+        # 同じ衣装を何人ぶんか作る人が、印刷代と買う量を見積もれるように。
+        "totals": multi.totals(),
+        "download": {"zip": f"/download/{multi.bundle_job_id}/zip"},
+        "usage": {"plan": plan_name, "used_today": used_today, "daily_limit": daily_limit},
+    })
+
+
+def _respond_manual(inputs: GenerationInputs):
+    """選んだパーツ構成で生成する。
+
+    `api_generate`から呼ばれる。このモードが使う値は、下の数行で
+    まとめて取り出している(24個)。
+    """
+    allow_rotation = inputs.allow_rotation
+    alterations = inputs.alterations
+    block_key = inputs.block_key
+    custom_panel_specs = inputs.custom_panel_specs
+    costume_project = inputs.costume_project
+    daily_limit = inputs.daily_limit
+    design_lengths = inputs.design_lengths
+    fabric_groups = inputs.fabric_groups
+    fit = inputs.fit
+    garment_spec_kwargs = inputs.garment_spec_kwargs
+    hem_seam_allowance_cm = inputs.hem_seam_allowance_cm
+    include_body_garment = inputs.include_body_garment
+    lining = inputs.lining
+    measurements = inputs.measurements
+    mode = inputs.mode
+    one_way_fabric = inputs.one_way_fabric
+    owner_key = inputs.owner_key
+    pattern_repeat_cm = inputs.pattern_repeat_cm
+    per_fabric_stash = inputs.per_fabric_stash
+    plan_name = inputs.plan_name
+    seam_allowance_cm = inputs.seam_allowance_cm
+    shrink_percent = inputs.shrink_percent
+    spec = inputs.spec
+    stash = inputs.stash
+    used_today = inputs.used_today
+
+    generation_kwargs = {
+        "allow_rotation": allow_rotation,
+        "seam_allowance_cm": seam_allowance_cm,
+        "hem_seam_allowance_cm": hem_seam_allowance_cm,
+        "fit": fit,          # 保存時に _fit_to_json で変換する
+        "one_way_fabric": one_way_fabric,
+        "shrink_percent": shrink_percent,
+        "pattern_repeat_cm": pattern_repeat_cm,
+        "alterations": alterations or None,
+        "lining": costume_project.lining if costume_project else lining,
+        "block_key": block_key,
+        "design_length_overrides": design_lengths or None,
+        "fabric_group_assignments": fabric_groups or None,
+        # round57: 白紙の面も印刷するか(既定は省く)。
+        "include_empty_tiles": _bool_field(request.form, "include_empty_tiles"),
+        # round57: 用紙(A4/A3)。コンビニのA3はA4と同じ単価で面積2倍。
+        "paper": (request.form.get("paper") or "").strip() or None,
+        # round74: 「この服は、出来上がりバスト◯cmの服の上に羽織る」。
+        # 入れると、ゆとりの基準が素体から中に着る服へ移る
+        # (engine/layering.py)。空欄なら従来どおり素体基準。
+        "worn_over_bust_cm": (costume_project.worn_over_bust_cm if costume_project
+                               else _parse_worn_over_bust_cm(request.form)),
+        "worn_over_has_sleeves": _bool_field_default(
+            request.form, "worn_over_has_sleeves", True),
+        # round76: 「肩先を◯cm外へ出す」(ドロップショルダー)。
+        # 入れると肩先が肩線の延長上へ出て、袖山が低くなる
+        # (engine/drop_shoulder.py)。空欄なら従来どおり。
+        "shoulder_drop_cm": (costume_project.shoulder_drop_cm if costume_project
+                              else _parse_shoulder_drop_cm(request.form)),
+    }
+    result = pipeline.generate_from_selection(
+        spec, measurements, **generation_kwargs)
+
+    # round39: 手持ちの生地の判定。寸法を入れた人にだけ走らせる
+    # (丈を変えた型紙を何通りも作り直すので、常に走らせるには重い)。
+    if stash is not None:
+        result.stash_verdict, result.stash_verdicts_by_fabric = _evaluate_stash(
+            pipeline, result, spec, measurements, stash,
+            allow_rotation=allow_rotation, one_way_fabric=one_way_fabric,
+            fit=fit, seam_allowance_cm=seam_allowance_cm,
+            hem_seam_allowance_cm=hem_seam_allowance_cm,
+            fabric_group_assignments=fabric_groups or None,
+            per_fabric_stash=per_fabric_stash)
+
+    payload = result.summary()
+    if costume_project:
+        payload["costume_project"] = costume_project.as_dict()
+    regen_spec = {
+        "mode": "manual",
+        "measurements": measurements.as_dict(),
+        "garment_spec": garment_spec_kwargs,
+        # round10で追加。既存(round10より前)の生成履歴にはこの2キーが
+        # 無いが、regenerate_job側は.get()で既定値(True/[])を補うため、
+        # 過去の生成履歴の再生成には影響しない。
+        "include_body_garment": include_body_garment,
+        "custom_panels": [
+            {
+                "label": s.label,
+                "points_cm": [list(p) for p in s.points_cm],
+                "quantity": s.quantity,
+                "mirror": s.mirror,
+                "allow_split": getattr(s, "allow_split", False),
+            }
+            for s in custom_panel_specs
+        ],
+        "allow_rotation": allow_rotation,
+        "seam_allowance_cm": seam_allowance_cm,
+        "hem_seam_allowance_cm": hem_seam_allowance_cm,
+        # round55: 再生成で渡し直す設定一式(上のdocstring参照)。
+        # 古い履歴にはこのキーが無いので、再生成側は
+        # 従来の3つだけを読む形に落ちる(挙動は変わらない)。
+        "generation_kwargs": {**generation_kwargs,
+                               "fit": _fit_to_json(generation_kwargs["fit"])},
+    }
+    db.record_job(result.job_id, owner_key, part_count=payload["part_count"],
+                  waste_ratio=payload["waste_ratio"], spec_json=json.dumps(regen_spec))
+    payload["download"] = _download_links(result)
+    payload["classification_log"] = [
+        {"part_type": c.part_type, "variation": c.variation, "confidence": round(c.confidence, 2),
+         "mode": (c.raw or {}).get("mode", "claude")}
+        for c in result.classification_log
+    ]
+    payload["usage"] = {"plan": plan_name, "used_today": used_today, "daily_limit": daily_limit}
+    return jsonify({"ok": True, "mode": mode, **payload})
 
 
 @app.post("/api/generate")
@@ -1145,10 +2427,30 @@ def api_generate():
         measurements = _parse_measurements(request.form)
         mode = request.form.get("mode", "manual")
         allow_rotation = _bool_field(request.form, "allow_rotation")
+        one_way_fabric, shrink_percent, pattern_repeat_cm = \
+            _parse_fabric_shopping_fields(request.form)
+        stash = _parse_stash_fields(request.form)
+        per_fabric_stash = _parse_stash_per_fabric(request.form)
+        alterations = _parse_alteration_fields(request.form)
+        # round52: 丈の直接指定(キャラクターの衣装は丈でシルエットが決まる)。
+        design_lengths = _parse_design_lengths(request.form)
+        fabric_groups = _parse_fabric_groups(request.form)
+        # round41: 裏地の型紙も一緒に出すか(engine/lining.py)。
+        lining = _bool_field(request.form, "lining")
+        # round42: どの原型で引くか(engine/blocks.py)。知らないキーは
+        # get_block()が明確なエラーにする(黙って大人に落とさない)。
+        block_key = (request.form.get("block") or "").strip() or None
+        get_block(block_key)
         seam_allowance_cm, hem_seam_allowance_cm = _parse_seam_allowance_fields(request.form)
 
         image = None
         spec = None
+        # round63: モードによっては決まらない値。ここで既定を置いておく
+        # ——下で`GenerationInputs`に束ねるとき、どのモードでも参照するため
+        # (イラストモードでは`garment_spec_kwargs`が、手動モードでは
+        #  `illustration_views`が、それぞれ決まらない)。
+        illustration_views: list[str] | None = None
+        garment_spec_kwargs: dict | None = None
         sizes: list[str] | None = None
         custom_grade_cm: dict[str, float] | None = None
         # round10で追加: 「定型に当てはまらない自由形状パーツ」(custom_panel、
@@ -1156,15 +2458,70 @@ def api_generate():
         # 分岐では使わない(未対応、下記参照)ため既定値のまま。
         include_body_garment = True
         custom_panel_specs: list[CustomPanelSpec] = []
+        costume_project = get_costume_project(
+            (request.form.get("costume_project") or "").strip(), measurements)
+        if costume_project and mode != "manual":
+            raise ValueError("衣装プリセットは「手動でパーツを選ぶ」モードで使用してください。")
+        # round24: ゆとり(着方)の選択。未指定は既定("standard")で、
+        # round23までとまったく同じ寸法になる。未知の値は
+        # engine/part_specs.pyのfit_easeが明確なエラーにする(黙って標準に
+        # 落とすと、指定したつもりのゆとりが効いていないことに気付けない)。
+        fit = _parse_fit(request.form, measurements)
         if mode == "illustration":
-            uploaded = request.files.get("illustration")
-            if not (uploaded and uploaded.filename):
+            # round18: 複数枚に対応。同じ衣装の別カットを渡すと、パーツ構成は
+            # 全枚の和を取り、丈・広がりは枚ごとに読んで中央値を使う
+            # (engine/pipeline.pyのgenerate_from_illustration参照)。
+            # round21: 「後ろから見た絵」を別の入力欄で受け取る。前後で
+            # 襟ぐりが違うデザインを、後身頃側にも反映するため
+            # (engine/pipeline.pyのgenerate_from_illustrationのdocstring参照)。
+            # 従来の"illustration"欄だけを使えばround20までとまったく同じ動き。
+            front_uploads = [f for f in request.files.getlist("illustration") if f and f.filename]
+            back_uploads = [f for f in request.files.getlist("illustration_back") if f and f.filename]
+            uploads = front_uploads + back_uploads
+            illustration_views = (["front"] * len(front_uploads)
+                                   + ["back"] * len(back_uploads)) if back_uploads else None
+            if not uploads:
                 # イラストモードを選んだのにファイルが無い場合、手動モードの
                 # デフォルト選択で黙って生成してしまうと「イラストを見て
                 # くれなかった」ことに利用者が気づけない。明確なエラーにする。
                 raise ValueError("イラストモードが選択されていますが、画像がアップロードされていません。")
-            image = _load_uploaded_image(uploaded)
-            if (request.form.get("custom_panels_json") or "").strip():
+            if not front_uploads:
+                # round51: 後ろ姿の絵だけでも、上の `not uploads` は通って
+                # しまっていた。後ろの絵は**補助**(「指定すると、後身頃の
+                # 襟ぐりを後ろ姿の絵から読み取ります」)であって、前身頃・袖・
+                # スカートは前の絵から読む。後ろだけ渡すと、**前身頃が
+                # 既定のまま黙って生成される**——上のコメントが防ごうとした
+                # 「イラストを見てくれなかったことに気づけない」が、
+                # そのまま起きていた。実測で 200・パーツ6枚が返っていた。
+                raise ValueError(
+                    "後ろから見た絵だけが選ばれています。"
+                    "前から見た絵は必ず指定してください"
+                    "(後ろの絵は、後身頃の襟ぐりを読むための補助です)。")
+            if len(uploads) > MAX_ILLUSTRATION_IMAGES:
+                raise ValueError(
+                    f"イラストは一度に{MAX_ILLUSTRATION_IMAGES}枚までです"
+                    f"（{len(uploads)}枚が選択されています）。"
+                )
+            image = [_load_uploaded_image(f) for f in uploads]
+            # round50: ここは `_has_custom_panels()` を通す。
+            #
+            # 【round49まで何が起きていたか】以前は
+            # `(request.form.get("custom_panels_json") or "").strip()` という
+            # **文字列の真偽値**で判定していた。この欄の既定値は空文字ではなく
+            # **文字列 "[]"** なので、カスタムパーツを1つも追加していなくても
+            # 常に真になる。つまり画面からのイラストモードは、
+            # **1度も成功できない状態だった**。実測:
+            #
+            #   画面そのまま(custom_panels_json="[]") → 400
+            #     「カスタムパーツ(自由形状)は現在、イラストモードでは併用できません。」
+            #   その欄だけ取り除いて送る              → 200・パーツ6枚
+            #
+            # エンジン側は正常で、この1行だけがモード全体を塞いでいた。
+            # しかも同じ間違いはround32に**manual側で見つかって直され**、
+            # そのとき `_has_custom_panels()` の説明文に
+            # 「文字列としての真偽値で判定してはいけない」とまで書かれていた。
+            # 直したのは見つけた場所だけで、こちらは残っていた。
+            if _has_custom_panels(request.form.get("custom_panels_json") or ""):
                 # 正直な既知の制約(README参照): custom_panelはround10で
                 # 追加したばかりで、AIパーツ判定(イラストモード)側との
                 # 組み合わせはまだ検証していない。曖昧に無視するのではなく、
@@ -1189,10 +2546,28 @@ def api_generate():
                 "cuffs_style": request.form.get("cuffs_style", ""),
                 "include_waistband": _bool_field(request.form, "include_waistband"),
                 "waistband_style": request.form.get("waistband_style", ""),
+                # round30: 身頃を切り替え線(プリンセスライン)で分割するか。
+                "princess_line": _bool_field(request.form, "princess_line"),
             }
+            if costume_project:
+                # プリセットは市販衣装のような一式を対象に、検証済みの構成を
+                # 強制する。フォームの古い選択が混ざり、別の衣装になったまま
+                # 「管理人」と表示されることを避ける。
+                garment_spec_kwargs.update(costume_project.garment_spec_kwargs)
+                lining = costume_project.lining
             raw_custom_panels_json = (request.form.get("custom_panels_json") or "").strip()
+            # round32で直した実バグ: この欄の**既定値は文字列 "[]"** で、
+            # カスタムパーツを1つも作っていなくても空文字にはならない
+            # (web/static/app.jsの`validateCustomPanelsBeforeSubmit`が、
+            #  手動モード以外では明示的に "[]" を書き戻す)。ところが判定が
+            # 文字列の真偽値だったため、**サイズ展開モードを選んで生成する
+            # だけで**「カスタムパーツ(自由形状)は現在、サイズ展開モードでは
+            # 併用できません」という、まったく身に覚えのないエラーが出た
+            # (実際にブラウザで操作して発見。サイズ展開モードが事実上
+            #  まったく使えない状態だった)。中身が空の配列かどうかで見る。
+            has_custom_panels = _has_custom_panels(raw_custom_panels_json)
             if mode == "multi_size":
-                if raw_custom_panels_json:
+                if has_custom_panels:
                     # サイズ展開(グレーディング)はbust/height等の採寸比率で
                     # 各パーツを再スケーリングする仕組みだが、custom_panelは
                     # 校正済みの実寸cmを一切スケーリングしない設計
@@ -1217,10 +2592,15 @@ def api_generate():
                 # にFalseを指定する(round10のAskUserQuestion「両方お願い」
                 # ＝標準の本体パーツとの併用も、カスタムパーツ単独も両方
                 # 対応する、という回答に基づく)。
-                include_body_garment = _bool_field_default(request.form, "include_body_garment", True)
+                include_body_garment = (True if costume_project else
+                                        _bool_field_default(request.form, "include_body_garment", True))
                 spec = build_garment_spec(**garment_spec_kwargs) if include_body_garment else GarmentSpec(parts=[])
-                if raw_custom_panels_json:
-                    custom_panel_specs = _parse_custom_panels(raw_custom_panels_json, measurements)
+                if costume_project:
+                    custom_panel_specs.extend(costume_project.custom_panel_specs)
+                if has_custom_panels:
+                    custom_panel_specs.extend(
+                        _parse_custom_panels(raw_custom_panels_json, measurements))
+                if custom_panel_specs:
                     spec.parts.extend(_custom_panel_specs_to_requests(custom_panel_specs))
                 if not spec.parts:
                     raise ValueError(
@@ -1246,122 +2626,43 @@ def api_generate():
         # except側でrefund_usage()を呼んで取り消す必要があるため記録しておく。
         _usage_owner_key, _usage_day = owner_key, _today_str()
 
+        # ここまでで読み取った値を1つに束ね、モードごとの関数へ渡す。
+        inputs = GenerationInputs(
+            allow_rotation=allow_rotation,
+            alterations=alterations,
+            block_key=block_key,
+            custom_grade_cm=custom_grade_cm,
+            custom_panel_specs=custom_panel_specs,
+            costume_project=costume_project,
+            daily_limit=daily_limit,
+            design_lengths=design_lengths,
+            fabric_groups=fabric_groups,
+            fit=fit,
+            garment_spec_kwargs=garment_spec_kwargs,
+            hem_seam_allowance_cm=hem_seam_allowance_cm,
+            illustration_views=illustration_views,
+            image=image,
+            include_body_garment=include_body_garment,
+            lining=lining,
+            measurements=measurements,
+            mode=mode,
+            one_way_fabric=one_way_fabric,
+            owner_key=owner_key,
+            pattern_repeat_cm=pattern_repeat_cm,
+            per_fabric_stash=per_fabric_stash,
+            plan_name=plan_name,
+            seam_allowance_cm=seam_allowance_cm,
+            shrink_percent=shrink_percent,
+            sizes=sizes,
+            spec=spec,
+            stash=stash,
+            used_today=used_today,
+        )
         if mode == "illustration":
-            result = pipeline.generate_from_illustration(
-                image, measurements, allow_rotation=allow_rotation,
-                seam_allowance_cm=seam_allowance_cm, hem_seam_allowance_cm=hem_seam_allowance_cm,
-            )
-
-            payload = result.summary()
-            db.record_job(result.job_id, owner_key, part_count=payload["part_count"],
-                          waste_ratio=payload["waste_ratio"])
-            payload["download"] = {
-                "svg": f"/download/{result.job_id}/svg",
-                "pdf": f"/download/{result.job_id}/pdf",
-                "dxf": f"/download/{result.job_id}/dxf",
-            }
-            payload["classification_log"] = [
-                {"part_type": c.part_type, "variation": c.variation, "confidence": round(c.confidence, 2),
-                 "mode": (c.raw or {}).get("mode", "claude")}
-                for c in result.classification_log
-            ]
-            payload["usage"] = {"plan": plan_name, "used_today": used_today, "daily_limit": daily_limit}
-            return jsonify({"ok": True, "mode": mode, **payload})
-        elif mode == "multi_size":
-            # round5で追加。サイズごとの内訳(採寸の範囲チェック・パーツ構成の
-            # 妥当性)は既にbuild_garment_spec/graded_measurements/
-            # Measurements側で検証済みのため、ここでは複数回分の生成を
-            # まとめて行うだけ。利用回数(check_and_increment_usage)は
-            # サイズ数に関わらずこのリクエスト1回分としてのみ課金する
-            # (3サイズ生成したら3回分課金する、という設計にはしていない。
-            # 正直な仕様として明記しておく)。
-            multi = pipeline.generate_multi_size(
-                spec, measurements, sizes, allow_rotation=allow_rotation,
-                seam_allowance_cm=seam_allowance_cm, hem_seam_allowance_cm=hem_seam_allowance_cm,
-                custom_grade_cm=custom_grade_cm,
-            )
-            total_parts = sum(r.summary()["part_count"] for r in multi.results.values())
-            regen_spec = {
-                "mode": "multi_size",
-                "measurements": measurements.as_dict(),
-                "garment_spec": garment_spec_kwargs,
-                "sizes": sizes,
-                "custom_grade_cm": custom_grade_cm,
-                "allow_rotation": allow_rotation,
-                "seam_allowance_cm": seam_allowance_cm,
-                "hem_seam_allowance_cm": hem_seam_allowance_cm,
-            }
-            db.record_job(multi.bundle_job_id, owner_key, part_count=total_parts, waste_ratio=None,
-                          spec_json=json.dumps(regen_spec))
-
-            results_payload = {}
-            for size, result in multi.results.items():
-                size_payload = result.summary()
-                db.record_job(result.job_id, owner_key, part_count=size_payload["part_count"],
-                              waste_ratio=size_payload["waste_ratio"])
-                size_payload["download"] = {
-                    "svg": f"/download/{result.job_id}/svg",
-                    "pdf": f"/download/{result.job_id}/pdf",
-                    "dxf": f"/download/{result.job_id}/dxf",
-                }
-                results_payload[size] = size_payload
-
-            return jsonify({
-                "ok": True,
-                "mode": mode,
-                "sizes": multi.sizes,
-                "bundle_job_id": multi.bundle_job_id,
-                "base_measurements": multi.base_measurements.as_dict(),
-                "results": results_payload,
-                "size_consistency_warnings": multi.size_consistency_warnings(),
-                "grading_precision_notes": multi.grading_precision_notes(),
-                "grade_cm_used": multi.effective_grade_cm(),
-                "custom_grade_cm_applied": bool(multi.custom_grade_cm),
-                "download": {"zip": f"/download/{multi.bundle_job_id}/zip"},
-                "usage": {"plan": plan_name, "used_today": used_today, "daily_limit": daily_limit},
-            })
-        else:
-            result = pipeline.generate_from_selection(
-                spec, measurements, allow_rotation=allow_rotation,
-                seam_allowance_cm=seam_allowance_cm, hem_seam_allowance_cm=hem_seam_allowance_cm,
-            )
-
-            payload = result.summary()
-            regen_spec = {
-                "mode": "manual",
-                "measurements": measurements.as_dict(),
-                "garment_spec": garment_spec_kwargs,
-                # round10で追加。既存(round10より前)の生成履歴にはこの2キーが
-                # 無いが、regenerate_job側は.get()で既定値(True/[])を補うため、
-                # 過去の生成履歴の再生成には影響しない。
-                "include_body_garment": include_body_garment,
-                "custom_panels": [
-                    {
-                        "label": s.label,
-                        "points_cm": [list(p) for p in s.points_cm],
-                        "quantity": s.quantity,
-                        "mirror": s.mirror,
-                    }
-                    for s in custom_panel_specs
-                ],
-                "allow_rotation": allow_rotation,
-                "seam_allowance_cm": seam_allowance_cm,
-                "hem_seam_allowance_cm": hem_seam_allowance_cm,
-            }
-            db.record_job(result.job_id, owner_key, part_count=payload["part_count"],
-                          waste_ratio=payload["waste_ratio"], spec_json=json.dumps(regen_spec))
-            payload["download"] = {
-                "svg": f"/download/{result.job_id}/svg",
-                "pdf": f"/download/{result.job_id}/pdf",
-                "dxf": f"/download/{result.job_id}/dxf",
-            }
-            payload["classification_log"] = [
-                {"part_type": c.part_type, "variation": c.variation, "confidence": round(c.confidence, 2),
-                 "mode": (c.raw or {}).get("mode", "claude")}
-                for c in result.classification_log
-            ]
-            payload["usage"] = {"plan": plan_name, "used_today": used_today, "daily_limit": daily_limit}
-            return jsonify({"ok": True, "mode": mode, **payload})
+            return _respond_illustration(inputs)
+        if mode == "multi_size":
+            return _respond_multi_size(inputs)
+        return _respond_manual(inputs)
     except ValueError as exc:
         # 実際に見つかった不具合の修正(store.Store.refund_usageのdocstring
         # 参照): イラストからパーツ領域/パーツ種を判定できなかった場合等、
@@ -1371,12 +2672,20 @@ def api_generate():
             db.refund_usage(_usage_owner_key, _usage_day)
         return jsonify({"ok": False, "error": str(exc)}), 400
     except RequestEntityTooLarge:
-        # アップロード画像が大きすぎるのはクライアント側の入力ミスであり、
+        # 送信データが大きすぎるのはクライアント側の入力ミスであり、
         # 「内部エラー」として500を返すのは誤解を招く。413で明確に伝える。
         # (この例外は_load_uploaded_imageより前、Flask自体のリクエスト
         # サイズ制限で発生するため、この時点では利用回数はまだ加算されていない。)
-        max_mb = app.config["MAX_CONTENT_LENGTH"] / (1024 * 1024)
-        return jsonify({"ok": False, "error": f"アップロードされた画像が大きすぎます（上限{max_mb:.0f}MB）。"}), 413
+        #
+        # 【round37で直した文言】以前は「アップロードされた**画像**が
+        # 大きすぎます」と決め打ちしていた。だがこの上限に当たるのは画像
+        # だけではない——round9で入れたカスタムパーツの輪郭は、頂点の列を
+        # フォームの値(custom_panels_json)として送るので、細かい輪郭や
+        # パーツを増やせばここに当たる。実測(round37)では、画像を1枚も
+        # 添付していないのに「画像が大きすぎます」と返っていた。
+        # 言われた側は直しようがないので、実際の大きさと、考えられる原因の
+        # 両方を挙げる。
+        return jsonify({"ok": False, "error": _too_large_message()}), 413
     except Exception as exc:  # 想定外の例外もJSONで返し、フロント側で表示できるようにする
         if _usage_owner_key is not None:
             db.refund_usage(_usage_owner_key, _usage_day)
@@ -1398,7 +2707,16 @@ def api_generate():
 def download(job_id: str, fmt: str):
     if not _download_rate_limiter.allow(_client_key()):
         return jsonify({"ok": False, "error": "リクエストが多すぎます。しばらく待って再試行してください。"}), 429
-    if not _JOB_ID_RE.match(job_id) or fmt not in ("svg", "pdf", "dxf", "zip"):
+    # round39: projector = プロジェクター投影用の実寸1枚ものPDF。
+    # ファイル名だけ `<job_id>_projector.pdf` と別なので、下で読み替える。
+    if not _JOB_ID_RE.match(job_id) or fmt not in _DOWNLOAD_FORMATS:
+        # round51: ブラウザには画面を返す。リンクが途中で切れたブックマークや
+        # 打ち間違いでもここへ来るので、生のJSONを見せない
+        # (下の `_download_not_found` のdocstring参照)。
+        if not (request.path.startswith("/api/")
+                or request.accept_mimetypes["application/json"]
+                > request.accept_mimetypes["text/html"]):
+            return render_template("404.html"), 400
         return jsonify({"ok": False, "error": "invalid request"}), 400
 
     # 以前はjob_id(12桁16進数)を知っているだけで誰でもダウンロードできた。
@@ -1409,17 +2727,20 @@ def download(job_id: str, fmt: str):
     # 探索できないようにしている。
     job_owner = db.get_job_owner(job_id)
     if job_owner is None or job_owner != _current_owner_key():
-        return jsonify({"ok": False, "error": "not found"}), 404
+        return _download_not_found()
 
-    filename = f"{job_id}.{fmt}"
+    filename = _DOWNLOAD_FORMATS[fmt].format(job_id=job_id)
     if not os.path.isfile(os.path.join(OUTPUT_DIR, filename)):
-        return jsonify({"ok": False, "error": "not found"}), 404
+        # 持ち主は合っているのにファイルが無い＝保存期間を過ぎて消えた。
+        return _download_not_found(expired=True)
 
-    response = send_from_directory(OUTPUT_DIR, filename, as_attachment=(fmt in ("pdf", "dxf", "zip")))
+    response = send_from_directory(
+        OUTPUT_DIR, filename,
+        as_attachment=not filename.endswith(".svg"))
     # 顧客の身体測定値に由来するファイルなので、共有プロキシ/CDN等に
     # キャッシュされて別の利用者に渡ってしまうことを防ぐ。
     response.headers["Cache-Control"] = "private, no-store"
-    if fmt == "svg":
+    if filename.endswith(".svg"):
         # SVGはブラウザで直接開くと埋め込みscriptを実行できてしまう。今は
         # SVG内に利用者が持ち込んだ自由文字列は含まれないため実害は無いが、
         # 将来自由入力欄が増えたときのために、このレスポンスに対する
@@ -1840,7 +3161,28 @@ def api_v1_generate():
     try:
         measurements = _parse_measurements(request.form)
         allow_rotation = _bool_field(request.form, "allow_rotation")
+        one_way_fabric, shrink_percent, pattern_repeat_cm = \
+            _parse_fabric_shopping_fields(request.form)
+        stash = _parse_stash_fields(request.form)
+        per_fabric_stash = _parse_stash_per_fabric(request.form)
+        alterations = _parse_alteration_fields(request.form)
+        # round52: 丈の直接指定(キャラクターの衣装は丈でシルエットが決まる)。
+        design_lengths = _parse_design_lengths(request.form)
+        fabric_groups = _parse_fabric_groups(request.form)
+        lining = _bool_field(request.form, "lining")
+        block_key = (request.form.get("block") or "").strip() or None
+        get_block(block_key)
         seam_allowance_cm, hem_seam_allowance_cm = _parse_seam_allowance_fields(request.form)
+        # round58: このAPIのdocstringは「リクエストボディは`/api/generate`と
+        # 同じフォームフィールドを受け付ける」と約束している。round41に
+        # 1度直したのに、その後に増えた欄がまた取りこぼされていた——
+        # ゆとり(round24)・切り替え線(round30)・用紙(round57)・
+        # 白紙の面(round57)の4つが、送っても効かなかった。
+        # 下の`test_the_b2b_api_reads_the_same_fields_as_the_browser_form`で、
+        # 読んでいるフォーム欄を数え上げて突き合わせる。
+        fit = _parse_fit(request.form, measurements)
+        paper = (request.form.get("paper") or "").strip() or None
+        include_empty_tiles = _bool_field(request.form, "include_empty_tiles")
         garment_spec_kwargs = {
             "neckline": request.form.get("neckline", "round_neck"),
             "sleeve_style": (request.form.get("sleeve_style") or None),
@@ -1854,6 +3196,7 @@ def api_v1_generate():
             "cuffs_style": request.form.get("cuffs_style", ""),
             "include_waistband": _bool_field(request.form, "include_waistband"),
             "waistband_style": request.form.get("waistband_style", ""),
+            "princess_line": _bool_field(request.form, "princess_line"),
         }
         spec = build_garment_spec(**garment_spec_kwargs)
 
@@ -1865,10 +3208,31 @@ def api_v1_generate():
             }), 429
         _usage_owner_key = owner_key
 
+        # 【round41で直した実バグ】この関数のdocstringは「リクエストボディは
+        # `/api/generate`と同じフォームフィールドを受け付ける」と約束している
+        # のに、上で読み取った one_way_fabric / shrink_percent /
+        # pattern_repeat_cm / alterations / stash を**1つも渡していなかった**。
+        # 読み取り側(`_parse_*`)は書いてあり、値の検証まで通るので、
+        # API利用者から見ると「指定は受理されたのに効かない」——不正な値なら
+        # 400が返るぶん、効いていると誤解しやすい。読み取ったものは渡す。
         result = pipeline.generate_from_selection(
             spec, measurements, allow_rotation=allow_rotation,
             seam_allowance_cm=seam_allowance_cm, hem_seam_allowance_cm=hem_seam_allowance_cm,
+            one_way_fabric=one_way_fabric, shrink_percent=shrink_percent,
+            pattern_repeat_cm=pattern_repeat_cm,
+            alterations=alterations, lining=lining, block_key=block_key,
+            design_length_overrides=design_lengths or None,
+            fabric_group_assignments=fabric_groups or None,
+            fit=fit, paper=paper, include_empty_tiles=include_empty_tiles,
         )
+        if stash is not None:
+            result.stash_verdict, result.stash_verdicts_by_fabric = _evaluate_stash(
+                pipeline, result, spec, measurements, stash,
+                fabric_group_assignments=fabric_groups or None,
+                per_fabric_stash=per_fabric_stash,
+                allow_rotation=allow_rotation, one_way_fabric=one_way_fabric,
+                seam_allowance_cm=seam_allowance_cm,
+                hem_seam_allowance_cm=hem_seam_allowance_cm)
         payload = result.summary()
         regen_spec = {
             "mode": "manual",
@@ -1880,11 +3244,7 @@ def api_v1_generate():
         }
         db.record_job(result.job_id, owner_key, part_count=payload["part_count"],
                       waste_ratio=payload["waste_ratio"], spec_json=json.dumps(regen_spec))
-        payload["download"] = {
-            "svg": f"/download/{result.job_id}/svg",
-            "pdf": f"/download/{result.job_id}/pdf",
-            "dxf": f"/download/{result.job_id}/dxf",
-        }
+        payload["download"] = _download_links(result)
         payload["usage"] = {"used_today": used_today, "daily_limit": daily_limit}
         return jsonify({"ok": True, **payload})
     except ValueError as exc:
@@ -2145,7 +3505,10 @@ def regenerate_job(job_id: str):
 
     try:
         measurements = Measurements(**regen_spec["measurements"])
-        garment_spec_kwargs = regen_spec["garment_spec"]
+        # round57: イラストから作ったものは、パーツ構成を`garment_spec`
+        # (選択肢の組み合わせ)ではなく、読み取った結果のパーツ一覧として
+        # 保存してある。下の共通処理はその形を知らないので先に分ける。
+        garment_spec_kwargs = regen_spec.get("garment_spec") or {}
         # round10で追加: include_body_garment/custom_panelsは古い(round10より
         # 前の)生成履歴のspec_jsonには存在しないため、.get()で既定値
         # (True/空リスト=従来通り本体パーツのみ)を補う。これにより、
@@ -2158,19 +3521,52 @@ def regenerate_job(job_id: str):
                 [tuple(p) for p in panel["points_cm"]],
                 quantity=panel.get("quantity", 1),
                 mirror=panel.get("mirror", False),
+                allow_split=panel.get("allow_split", False),
             ))
         allow_rotation = regen_spec.get("allow_rotation", False)
         seam_allowance_cm = regen_spec.get("seam_allowance_cm", DEFAULT_SEAM_ALLOWANCE_CM)
         hem_seam_allowance_cm = regen_spec.get("hem_seam_allowance_cm")
 
-        if regen_spec["mode"] == "multi_size":
+        if regen_spec["mode"] == "illustration_replay":
+            # round57: イラストから作ったものの作り直し。
+            # 画像は保存していない(これまでどおり)。保存してあるのは
+            # **画像から決まった結果**——パーツ構成と丈——なので、
+            # 読み取りをやり直さずに同じ型紙が出る。
+            spec = GarmentSpec(parts=[
+                PartRequest(part_type=part["part_type"],
+                            variation=part.get("variation", ""),
+                            quantity=int(part.get("quantity", 1)))
+                for part in regen_spec.get("parts", [])
+            ])
+            generation_kwargs = _restore_generation_kwargs(
+                regen_spec.get("generation_kwargs") or {})
+            result = pipeline.generate_from_selection(
+                spec, measurements, **generation_kwargs)
+            payload = result.summary()
+            db.record_job(result.job_id, owner_key, part_count=payload["part_count"],
+                          waste_ratio=payload["waste_ratio"],
+                          spec_json=json.dumps(regen_spec))
+            flash(
+                f"再生成しました（イラストから読み取った構成のまま）。"
+                f"{_describe_restored_settings(generation_kwargs)}。"
+                f" ダウンロード: /download/{result.job_id}/svg （SVG） "
+                f"/download/{result.job_id}/pdf （PDF）",
+                "success",
+            )
+        elif regen_spec["mode"] == "multi_size":
             sizes = regen_spec["sizes"]
             custom_grade_cm = regen_spec.get("custom_grade_cm")
+            # round55: 生成したときの設定一式を渡し直す。
+            # 古い履歴(このキーが無い)は従来どおり4つだけで再生成する。
+            multi_size_kwargs = _restore_generation_kwargs(
+                regen_spec.get("multi_size_kwargs") or {}) or {
+                "allow_rotation": allow_rotation,
+                "seam_allowance_cm": seam_allowance_cm,
+                "hem_seam_allowance_cm": hem_seam_allowance_cm,
+                "custom_grade_cm": custom_grade_cm,
+            }
             multi = pipeline.generate_multi_size(
-                spec, measurements, sizes, allow_rotation=allow_rotation,
-                seam_allowance_cm=seam_allowance_cm, hem_seam_allowance_cm=hem_seam_allowance_cm,
-                custom_grade_cm=custom_grade_cm,
-            )
+                spec, measurements, sizes, **multi_size_kwargs)
             total_parts = sum(r.summary()["part_count"] for r in multi.results.values())
             db.record_job(multi.bundle_job_id, owner_key, part_count=total_parts, waste_ratio=None,
                           spec_json=json.dumps(regen_spec))
@@ -2178,17 +3574,25 @@ def regenerate_job(job_id: str):
                 size_payload = result.summary()
                 db.record_job(result.job_id, owner_key, part_count=size_payload["part_count"],
                               waste_ratio=size_payload["waste_ratio"])
-            flash(f"再生成しました。ダウンロード: /download/{multi.bundle_job_id}/zip （ZIP一括）", "success")
+            flash(f"再生成しました。{_describe_restored_settings(multi_size_kwargs)}。"
+                   f" ダウンロード: /download/{multi.bundle_job_id}/zip （ZIP一括）", "success")
         else:
+            # round55: 生成したときの設定一式を、そのまま渡し直す。
+            # 古い履歴(このキーが無い)は、従来どおり3つだけで再生成する。
+            generation_kwargs = _restore_generation_kwargs(
+                regen_spec.get("generation_kwargs") or {}) or {
+                "allow_rotation": allow_rotation,
+                "seam_allowance_cm": seam_allowance_cm,
+                "hem_seam_allowance_cm": hem_seam_allowance_cm,
+            }
             result = pipeline.generate_from_selection(
-                spec, measurements, allow_rotation=allow_rotation,
-                seam_allowance_cm=seam_allowance_cm, hem_seam_allowance_cm=hem_seam_allowance_cm,
-            )
+                spec, measurements, **generation_kwargs)
             payload = result.summary()
             db.record_job(result.job_id, owner_key, part_count=payload["part_count"],
                           waste_ratio=payload["waste_ratio"], spec_json=json.dumps(regen_spec))
             flash(
-                f"再生成しました。ダウンロード: /download/{result.job_id}/svg （SVG） "
+                f"再生成しました。{_describe_restored_settings(generation_kwargs)}。"
+                f" ダウンロード: /download/{result.job_id}/svg （SVG） "
                 f"/download/{result.job_id}/pdf （PDF）",
                 "success",
             )
@@ -2473,9 +3877,42 @@ def _handle_request_entity_too_large(exc):
     一貫したレスポンスになるようにする。
     """
     if request.path.startswith("/api/") or request.accept_mimetypes["application/json"] > request.accept_mimetypes["text/html"]:
-        max_mb = app.config["MAX_CONTENT_LENGTH"] / (1024 * 1024)
-        return jsonify({"ok": False, "error": f"アップロードされた画像が大きすぎます（上限{max_mb:.0f}MB）。"}), 413
+        # round37: 文言は`_too_large_message`に集約した。
+        # **実際に利用者へ届くのはここ**である——CSRF検証がbefore_requestで
+        # 本文を読むため、view関数のtry/exceptより先にこのハンドラに来る。
+        # round37の実測では、view側の文言だけ直してもここが古いままで、
+        # 画面には古い文言が出続けていた(直したつもりで直っていなかった)。
+        return jsonify({"ok": False, "error": _too_large_message()}), 413
     return render_template("500.html", error_id="413"), 413
+
+
+def _download_not_found(expired: bool = False):
+    """ダウンロードが見つからないときの応答 (round51)。
+
+    【round50まで何が起きていたか】`/download/...` は Accept を見ずに
+    `jsonify({"ok": False, "error": "not found"})` を返していた。
+    ブラウザでリンクを開くと、画面に
+
+        {"error":"not found","ok":false}
+
+    と**生のJSONだけ**が出ていた。生成物の保存期間は既定1時間なので、
+    「リンクをブックマークして翌日開く」「タブを開いたまま一晩置く」は
+    ふつうに起こる。そのとき利用者に見えるのがこれだった。
+
+    `expired=True` は「持ち主は合っているが、ファイルがもう無い」場合。
+    持ち主の確認は済んでいるので、保存期間の説明まで踏み込んで書ける
+    (他人のjob_idの存在を探れてしまう心配が無い)。
+    それ以外は、存在しない場合と持ち主違いを区別しない従来どおりの404。
+    """
+    wants_json = (request.path.startswith("/api/")
+                  or request.accept_mimetypes["application/json"]
+                  > request.accept_mimetypes["text/html"])
+    if wants_json:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    if expired:
+        hours = max(1, round(OUTPUT_TTL_SECONDS / 3600))
+        return render_template("download_expired.html", hours=hours), 404
+    return render_template("404.html"), 404
 
 
 @app.errorhandler(404)
@@ -2483,6 +3920,24 @@ def _handle_not_found(exc):
     if request.path.startswith("/api/") or request.accept_mimetypes["application/json"] > request.accept_mimetypes["text/html"]:
         return jsonify({"ok": False, "error": "not found"}), 404
     return render_template("404.html"), 404
+
+
+@app.errorhandler(405)
+def _handle_method_not_allowed(exc):
+    """許可されていないメソッド(405)を、この製品の言葉で返す。
+
+    【round47まで何が起きていたか】404・413・500には手当てがあったのに
+    405だけ無く、`GET /api/generate` はFlask既定の
+
+        <title>405 Method Not Allowed</title>
+
+    という**英語の枠組みそのままの画面**を返していた。日本語の製品の中で
+    ここだけ素の英語が出るうえ、使っている枠組みを外へ知らせることにもなる。
+    """
+    if request.path.startswith("/api/") or request.accept_mimetypes["application/json"] > request.accept_mimetypes["text/html"]:
+        return jsonify({"ok": False,
+                        "error": "このURLでは、その送り方(メソッド)は使えません。"}), 405
+    return render_template("404.html"), 405
 
 
 @app.errorhandler(500)
