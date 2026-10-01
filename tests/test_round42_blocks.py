@@ -391,14 +391,15 @@ def test_a_height_outside_the_block_range_is_flagged_but_still_generated(pipelin
     assert "小さすぎる" in adult_warnings
 
 
-def test_the_absence_of_a_mens_block_is_stated_not_hidden():
-    """男性原型が無いことを、無いと書いてあること。
+def test_the_absence_of_an_inferred_mens_formula_is_stated_not_hidden():
+    """男性原型の推定式が無いことと、実測で代替できることを明示する。
 
     黙って無いままにすると、利用者は探し続ける。何が足りないのか
     (式が数字で書かれた出典)まで書いてあれば、持っている人が持ってこられる。
     """
-    assert "男性の原型はまだありません" in MENS_BLOCK_ABSENT_NOTE
+    assert "男性用を自動推定する原型式はまだありません" in MENS_BLOCK_ABSENT_NOTE
     assert "出典" in MENS_BLOCK_ABSENT_NOTE
+    assert "採寸指定（専用原型）" in MENS_BLOCK_ABSENT_NOTE
     assert set(BLOCKS) == {"adult_female", "child"}
 
 
@@ -410,7 +411,8 @@ def test_the_form_offers_every_block_with_its_source(client):
     for block in BLOCKS.values():
         assert f'value="{block.key}"' in body
         assert block.source_url in body
-    assert "男性の原型はまだありません" in body
+    assert "男性用を自動推定する原型式はまだありません" in body
+    assert 'value="measured"' in body
 
 
 def _form(**extra):

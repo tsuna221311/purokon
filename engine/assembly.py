@@ -52,7 +52,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 
-from .cutting import interfacing_note, needs_interfacing
+from .cutting import part_interfacing_note, part_needs_interfacing
 from .hood import HOOD_FRONT_FOLD_CM
 from .lining import (CB_PLEAT_DEPTH_CM, CB_PLEAT_FABRIC_CM, CB_PLEAT_PART_TYPES,
                       hem_gap_phrase, hem_reduction_sentence,
@@ -120,6 +120,11 @@ def assembly_steps(finalized_parts: list,
                     hem_seam_allowance_cm: float | None = None,
                     sleeve_cap_ease_cm: float | None = None,
                     front_zip: bool = False,
+                    closure: str = "",
+                    closure_length_cm: float | None = None,
+                    closure_count: int | None = None,
+                    closure_spacing_cm: float | None = None,
+                    closure_overlap_cm: float | None = None,
                     split_panels: dict[str, int] | None = None,
                     lining_parts: list | None = None) -> list[AssemblyStep]:
     """このパーツ構成に対する縫製手順を組み立てる。
@@ -139,11 +144,11 @@ def assembly_steps(finalized_parts: list,
         (),
     ))
 
-    interfaced = [p for p in finalized_parts if needs_interfacing(p.part_type)]
+    interfaced = [p for p in finalized_parts if part_needs_interfacing(p)]
     if interfaced:
         # どこに貼るかはパーツによって違う(全面か、見返し部分だけか)。
         where = tuple(dict.fromkeys(
-            f"{_short_name(p)}（{interfacing_note(p.part_type)}）"
+            f"{_short_name(p)}（{part_interfacing_note(p)}）"
             for p in interfaced))
         steps.append((
             "接着芯を貼る",
@@ -184,6 +189,27 @@ def assembly_steps(finalized_parts: list,
                 tuple(dict.fromkeys(_short_name(p) for p in lower_darted)),
             ))
 
+    gathered = [p for p in finalized_parts
+                if p.part_type == "skirt" and "ギャザー" in p.label_suffix]
+    if gathered:
+        steps.append((
+            "スカートのギャザーを寄せる",
+            "型紙の「ギャザー寄せ」線に粗いミシンを2本かけ、上糸を引いて"
+            "印字された出来上がり寸法まで均等に縮めます。前後の中心と脇の"
+            "合印を先に合わせ、ギャザーが一か所へ偏らないよう整えます。",
+            tuple(dict.fromkeys(_short_name(p) for p in gathered)),
+        ))
+    pleated = [p for p in finalized_parts
+               if p.part_type == "skirt" and "プリーツ" in p.label_suffix]
+    if pleated:
+        steps.append((
+            "スカートのプリーツを折る",
+            "型紙の各番号で「折り山」を「折り合わせ」へ重ね、裾まで平行に"
+            "折ります。ウエスト側をしつけで仮固定し、左右のひだ深さと"
+            "折る向きを揃えてから本体へ縫い付けます。",
+            tuple(dict.fromkeys(_short_name(p) for p in pleated)),
+        ))
+
     # --- 2. 開き(前開きファスナー) ------------------------------------------
     # 出典(うさこの洋裁工房)の順番でも、ファスナーは**肩と脇より前**に付ける。
     # 身頃が筒になってからでは、中心前の長い直線にミシンを入れにくい。
@@ -195,6 +221,34 @@ def assembly_steps(finalized_parts: list,
             "ここがいちばん縫いやすい段階です。左右の切り替えの高さが合うよう、"
             "しつけをしてから縫ってください。",
             _names(finalized_parts, {"front_bodice_zip_panel"}),
+        ))
+    elif closure == "back_zip" and closure_length_cm:
+        steps.append((
+            "後ろファスナーを付ける",
+            f"左右の後身頃を中心後で中表に合わせ、上から{closure_length_cm:g}cmの"
+            "開き止まりより下を縫います。中心後の縫い代を割ってから、開き部分へ"
+            "ファスナーをしつけし、左右の切り替え高さを合わせて縫います。",
+            _names(finalized_parts, {"back_bodice"}),
+        ))
+    elif closure == "side_zip" and closure_length_cm:
+        steps.append((
+            "脇ファスナーを付ける",
+            f"型紙の脇ファスナー印に従い、脇下側から{closure_length_cm:g}cmを開けて"
+            "残りの脇線を縫います。縫い代を割り、開き部分へファスナーをしつけして"
+            "から縫います。前後のウエスト線をずらさないでください。",
+            _names(finalized_parts, _BODICE),
+        ))
+    elif closure in {"hooks", "snaps"} and closure_count and closure_spacing_cm:
+        name = "ホック" if closure == "hooks" else "スナップ"
+        overlap = (f"右後ろの持ち出しを{closure_overlap_cm:g}cm重ね、"
+                   if closure == "snaps" and closure_overlap_cm else "")
+        steps.append((
+            f"後ろ{name}を付ける",
+            f"左右の後身頃の中心後を整え、{overlap}型紙の取付印へ{name}を"
+            f"{closure_count}個、中心間隔{closure_spacing_cm:g}cmで付けます。"
+            "上下と左右の対応印を重ねてから、一つずつ手縫いまたは指定の"
+            "打ち具で固定してください。",
+            _names(finalized_parts, {"back_bodice"}),
         ))
 
     # --- 3. 身頃を組む ------------------------------------------------------
@@ -299,11 +353,38 @@ def assembly_steps(finalized_parts: list,
             _names(finalized_parts, {"front_pants", "back_pants"}),
         ))
     if _has(finalized_parts, {"skirt"}):
+        center_slit_parts = [p for p in finalized_parts
+                             if p.part_type == "skirt"
+                             and "中心スリット" in p.label_suffix]
+        side_slit_parts = [p for p in finalized_parts
+                           if p.part_type == "skirt"
+                           and any("脇スリット" in label
+                                   for label, _points in
+                                   getattr(p, "reference_lines", ()))]
+        if center_slit_parts:
+            steps.append((
+                "スカートの中心線をスリット止まりまで縫う",
+                "左右に分かれた中心スリット用パーツを中表に合わせ、ウエスト側から"
+                "型紙のスリット止まりまで縫って返し縫いします。止まりより裾側は"
+                "縫わず、左右の縫い代をそれぞれ裏へ折ります。",
+                tuple(dict.fromkeys(_short_name(p) for p in center_slit_parts)),
+            ))
         steps.append((
             "スカートの脇を縫う",
-            "前後のスカートを中表に合わせ、脇を縫います。",
+            "前後のスカートを中表に合わせ、脇を縫います。"
+            + ("脇スリット側はウエスト側から型紙のスリット止まりまで縫い、"
+               "返し縫いして裾側を開けておきます。" if side_slit_parts else ""),
             _names(finalized_parts, {"skirt"}),
         ))
+        if center_slit_parts or side_slit_parts:
+            steps.append((
+                "スリットを始末する",
+                "スリットの左右の縫い代端をロックミシン等で始末し、裏へ折って"
+                "しつけます。開き止まりは力が集中するため、短い横向きステッチ"
+                "または当て布で補強してから左右を押さえ縫いします。",
+                tuple(dict.fromkeys(_short_name(p)
+                                    for p in center_slit_parts + side_slit_parts)),
+            ))
 
     if _has(finalized_parts, _BODICE) and _has(finalized_parts, _LOWER):
         steps.append((
@@ -318,6 +399,39 @@ def assembly_steps(finalized_parts: list,
             "ウエストバンドを上端に付けます。バンドはウエストより長く作って"
             "あり、その差が開閉の重なり分になります。",
             _names(finalized_parts, {"waistband"}),
+        ))
+
+    petticoat_tiers = [p for p in finalized_parts if p.part_type == "petticoat_tier"]
+    if petticoat_tiers:
+        hoop = any(p.variation == "hoop" for p in petticoat_tiers)
+        steps.append((
+            "パニエの各段を輪にする",
+            "同じ段番号のパネルを番号順に中表で縫い合わせ、最後の両端も縫って"
+            "輪にします。各パネルの上辺に印字された段全体の寄せ上がり寸法を"
+            "確認し、段を取り違えないでください。",
+            _names(finalized_parts, {"petticoat_tier"}),
+        ))
+        steps.append((
+            "パニエの段をつなぐ",
+            "最下段から順に、上辺へ粗いミシンを2本かけて印字寸法まで均等に"
+            "縮め、一つ上の段の下辺へ中表で縫い付けます。中心と四分点に合印を"
+            "付けてから分散すると偏りません。",
+            _names(finalized_parts, {"petticoat_tier"}),
+        ))
+        if hoop:
+            steps.append((
+                "パニエへワイヤーを通す",
+                "各段の『ワイヤー通し位置』で布を折って通し口を作り、印字された"
+                "輪直径に合わせたワイヤーを通します。端部は専用コネクターで接続し、"
+                "肌や表地へ当たらないよう接続部をテープで覆います。",
+                _names(finalized_parts, {"petticoat_tier"}),
+            ))
+        steps.append((
+            "パニエのウエストを作る",
+            "パニエウエストベルトを輪にし、折り線で二つ折りにして上段へ付けます。"
+            "ゴム通し口を残し、着用者のウエストで苦しくない長さに調整したゴムを"
+            "通して端を重ね縫いします。",
+            _names(finalized_parts, {"petticoat_waistband"}),
         ))
 
     # --- 6. 始末 ------------------------------------------------------------
@@ -343,7 +457,8 @@ def assembly_steps(finalized_parts: list,
         lining_names = tuple(dict.fromkeys(p.display_name for p in lining_parts))
         pleated = tuple(dict.fromkeys(
             _short_name(p) for p in lining_parts
-            if p.part_type in CB_PLEAT_PART_TYPES))
+            if p.part_type in CB_PLEAT_PART_TYPES
+            and any(label == "きせ" for label, _points in p.reference_lines)))
         if pleated:
             steps.append((
                 "裏地の背中心にきせをたたむ",
@@ -436,6 +551,11 @@ def assembly_steps_for_result(result) -> list[AssemblyStep]:
         hem_seam_allowance_cm=result.hem_seam_allowance_cm,
         sleeve_cap_ease_cm=ease,
         front_zip=front_zip,
+        closure=str(result.garment_spec.construction.get("closure") or ""),
+        closure_length_cm=result.garment_spec.construction.get("closure_length_cm"),
+        closure_count=result.garment_spec.construction.get("closure_count"),
+        closure_spacing_cm=result.garment_spec.construction.get("closure_spacing_cm"),
+        closure_overlap_cm=result.garment_spec.construction.get("closure_overlap_cm"),
         split_panels=getattr(result, "split_panels", None),
         lining_parts=getattr(result, "lining_parts", None),
     )

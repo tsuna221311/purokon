@@ -10,6 +10,8 @@ from engine.seam import (
     DEFAULT_NOTCH_FRACTIONS, finalize_part, offset_polygon, offset_polygon_variable,
     notch_marks, grainline_marks, _signed_area, _line_intersect,
     _offset_polygon_fallback, _offset_polygon_per_edge, _hem_edge_distances,
+    extend_notches_to_cut_line,
+    SEAM_CORNER_MITRE_LIMIT,
 )
 from engine.svgpath import parse_path, segments_to_polyline
 from engine.templates_db import TemplateDB
@@ -27,6 +29,26 @@ def test_offset_polygon_grows_a_square_outward():
     assert area_after > area_before
     # 1cmの縫い代を四方に付けると、12x12=144cm^2 に近づく
     assert area_after == pytest.approx(144.0, rel=0.05)
+
+
+def test_uniform_seam_allowance_keeps_right_angle_corners_square():
+    """バンドやカフスの直角を丸めず、裁断基準を明確にする。"""
+    result = offset_polygon(_square(10.0), 1.0)
+    assert abs(_signed_area(result)) == pytest.approx(144.0, abs=1e-6)
+    assert set(result[:-1]) == {
+        (-1.0, -1.0), (11.0, -1.0),
+        (11.0, 11.0), (-1.0, 11.0),
+    }
+
+
+@pytest.mark.skipif(not _HAS_SHAPELY, reason="mitre limit is a shapely path")
+def test_acute_seam_allowance_corner_cannot_grow_into_a_long_spike():
+    """鋭角はmiterを無制限に延ばさず、縫い代幅の2倍以内で切る。"""
+    sharp = [(0.0, 0.0), (10.0, 0.0), (10.1, 0.01), (10.0, 10.0),
+             (0.0, 10.0), (0.0, 0.0)]
+    result = offset_polygon(sharp, 1.0)
+    max_x = max(x for x, _y in result)
+    assert max_x <= 10.1 + SEAM_CORNER_MITRE_LIMIT + 1e-6
 
 
 def test_notch_marks_start_on_the_stitch_line():
@@ -68,6 +90,40 @@ def test_grainline_is_vertical_and_centered():
     assert len(grain["arrows"]) == 4
 
 
+@pytest.mark.skipif(not _HAS_SHAPELY, reason="shape-aware grainline requires shapely")
+def test_every_template_grainline_stays_inside_its_cut_outline():
+    """襟ぐりやタブのある型紙でも、布目線と矢羽が外へ出ないこと。"""
+    from shapely.geometry import LineString, Polygon
+    from engine.templates_db import REQUIRED_PARTS
+
+    db = TemplateDB()
+    for part_type, variation in REQUIRED_PARTS:
+        part = finalize_part(
+            part_type, variation, db.get(part_type, variation))
+        polygon = Polygon(part.cut_line).buffer(1e-8)
+        assert polygon.covers(LineString(part.grainline["line"])), (
+            part_type, variation, "line")
+        assert all(polygon.covers(LineString(segment))
+                   for segment in part.grainline["arrows"]), (
+            part_type, variation, "arrows")
+
+
+@pytest.mark.skipif(not _HAS_SHAPELY, reason="shape-aware labels require shapely")
+def test_every_template_label_anchor_is_inside_and_clear_of_the_cut_edge():
+    """凹形状でも、パーツ名を型紙外や外周線上に置かないこと。"""
+    from shapely.geometry import Point, Polygon
+    from engine.templates_db import REQUIRED_PARTS
+
+    db = TemplateDB()
+    for part_type, variation in REQUIRED_PARTS:
+        part = finalize_part(
+            part_type, variation, db.get(part_type, variation))
+        polygon = Polygon(part.cut_line)
+        point = Point(part.label_point)
+        assert polygon.contains(point), (part_type, variation)
+        assert polygon.boundary.distance(point) > 0.1, (part_type, variation)
+
+
 def test_finalize_part_produces_larger_cut_line_than_stitch_line():
     segments = parse_path("M 0 0 L 10 0 L 10 20 L 0 20 Z")
     finalized = finalize_part("front_bodice", "round_neck", segments, seam_allowance_cm=1.0)
@@ -77,6 +133,36 @@ def test_finalize_part_produces_larger_cut_line_than_stitch_line():
     assert finalized.width_cm > 10.0
     assert finalized.height_cm > 20.0
     assert len(finalized.notches) >= 1
+
+
+def test_final_notches_reach_the_actual_cut_line():
+    """縫い代が5mmより広くても、合印が外周まで届くこと。"""
+    segments = parse_path("M 0 0 L 10 0 L 10 10 L 0 10 Z")
+    finalized = finalize_part(
+        "front_bodice", "round_neck", segments, seam_allowance_cm=1.5)
+    assert finalized.notches
+    for stitch_point, cut_point in finalized.notches:
+        length = ((cut_point[0] - stitch_point[0]) ** 2
+                  + (cut_point[1] - stitch_point[1]) ** 2) ** 0.5
+        assert length == pytest.approx(1.5, abs=0.01)
+        # 裁断線のどれかの辺の上に終点がある。
+        from engine.notches import _distance_to_segment
+        assert min(_distance_to_segment(cut_point, a, b)
+                   for a, b in zip(finalized.cut_line,
+                                   finalized.cut_line[1:])) <= 1e-6
+
+
+def test_notch_extension_uses_the_nearest_point_on_the_real_cut_outline():
+    """反転や凹部で法線推定が外れても、実際の裁断線へ届くこと。"""
+    marks = [((0.0, 0.0), (-0.5, -0.5))]
+    cut = [(-1.0, 0.0), (-0.7, -0.7), (0.0, -1.0),
+           (11.0, -1.0), (11.0, 11.0), (-1.0, 11.0), (-1.0, 0.0)]
+    extended = extend_notches_to_cut_line(marks, cut, 3.0)
+    from engine.notches import _distance_to_segment
+    end = extended[0][1]
+    assert min(_distance_to_segment(end, a, b)
+               for a, b in zip(cut, cut[1:])) <= 1e-9
+    assert end != marks[0][1]
 
 
 def test_line_intersect_finds_the_correct_crossing_point():
@@ -185,10 +271,8 @@ def test_offset_polygon_variable_widens_only_the_max_y_edge():
     # base=1.0, hem=3.0の正方形を辺ごとにオフセットすると、裾(y最大の辺、
     # 元の輪郭ではy=10)側だけ標準の縫い代(1cm、y=11相当)より張り出して
     # y=13付近まで届き、他の3辺(x方向・下辺)はbase_distance(1cm)相当の
-    # ままになるはず。shapelyのunion/differenceベースの実装(round join +
-    # 継ぎ目の接線方向への延長)を使うため、正確な座標は解析的な鋭角の
-    # 値(-1,-1)〜(11,13)とは境界付近で若干異なる(丸い角・延長の接合部分)
-    # ため、bboxと概形で確認する。
+    # ままになるはず。shapelyのunion/differenceベースの実装(制限付きmiter +
+    # 継ぎ目の接線方向への延長)なので、bboxと概形で確認する。
     square = _square(10.0)
     result = offset_polygon_variable(square, base_distance=1.0, hem_distance=3.0)
     xs = [p[0] for p in result]

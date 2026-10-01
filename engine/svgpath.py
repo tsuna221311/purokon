@@ -15,7 +15,15 @@ svgpath.py — SVGの path (d属性) を読み書き・変形するための最�
 """
 
 from __future__ import annotations
+from math import hypot
 import re
+
+
+# 0.01cm = 0.1mm。A4分割印刷や業務用プロッタでも、目で見える
+# 角張りを残さないための最終型紙用許容誤差。従来の「各1カーブ12分割」
+# と違い、大きく曲がる袖山は細かく、ほぼ直線の部分は少なく分割する。
+DEFAULT_CURVE_ERROR_CM = 0.01
+_MAX_ADAPTIVE_DEPTH = 14
 
 
 def parse_path(d: str) -> list[tuple[str, list[float]]]:
@@ -78,6 +86,45 @@ def _bezier_point(p0, p1, p2, p3, t):
     y = (mt**3 * p0[1] + 3 * mt**2 * t * p1[1]
          + 3 * mt * t**2 * p2[1] + t**3 * p3[1])
     return (x, y)
+
+
+def _distance_to_chord(point, start, end) -> float:
+    """点から始点ー終点の無限直線までの距離。"""
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    chord = hypot(dx, dy)
+    if chord <= 1e-12:
+        return hypot(point[0] - start[0], point[1] - start[1])
+    return abs(dy * point[0] - dx * point[1]
+               + end[0] * start[1] - end[1] * start[0]) / chord
+
+
+def _split_cubic_half(p0, p1, p2, p3):
+    """de Casteljau法で3次ベジェをt=0.5の2本に分ける。"""
+    p01 = ((p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2)
+    p12 = ((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2)
+    p23 = ((p2[0] + p3[0]) / 2, (p2[1] + p3[1]) / 2)
+    p012 = ((p01[0] + p12[0]) / 2, (p01[1] + p12[1]) / 2)
+    p123 = ((p12[0] + p23[0]) / 2, (p12[1] + p23[1]) / 2)
+    middle = ((p012[0] + p123[0]) / 2,
+              (p012[1] + p123[1]) / 2)
+    return ((p0, p01, p012, middle),
+            (middle, p123, p23, p3))
+
+
+def _flatten_cubic(p0, p1, p2, p3, tolerance_cm: float,
+                   depth: int = 0) -> list[tuple[float, float]]:
+    """カーブが弦から許容値以上離れる間だけ2分し、終点列を返す。
+
+    3次ベジェは制御点の凸包内に必ず収まる。両制御点から弦までの
+    距離を判定に使うことで、実際のカーブの逸脱も許容値以内に収める。
+    """
+    flatness = max(_distance_to_chord(p1, p0, p3),
+                   _distance_to_chord(p2, p0, p3))
+    if flatness <= tolerance_cm or depth >= _MAX_ADAPTIVE_DEPTH:
+        return [p3]
+    left, right = _split_cubic_half(p0, p1, p2, p3)
+    return (_flatten_cubic(*left, tolerance_cm, depth + 1)
+            + _flatten_cubic(*right, tolerance_cm, depth + 1))
 
 
 def translate_segments(segments: list[tuple[str, list[float]]],
@@ -171,12 +218,20 @@ def bounding_box(segments: list[tuple[str, list[float]]]) -> tuple[float, float,
 
 
 def segments_to_polyline(segments: list[tuple[str, list[float]]],
-                         curve_steps: int = 12) -> list[tuple[float, float]]:
+                         curve_steps: int | None = None,
+                         max_curve_error_cm: float = DEFAULT_CURVE_ERROR_CM
+                         ) -> list[tuple[float, float]]:
     """
     曲線を含むパスを、細かい直線の頂点リストに変換する。
     ネスティング（外接矩形の計算）とPDF描画で使う。
-    curve_steps を上げるほどカーブが滑らかになる（頂点は増える）。
+    既定は曲率と実寸に応じて自動分割し、カーブと折れ線の差を
+    `max_curve_error_cm`以内にする。`curve_steps`を明示した場合だけ、
+    互換性のため従来の固定分割を使う。
     """
+    if curve_steps is not None and curve_steps < 1:
+        raise ValueError("curve_stepsは1以上で指定してください")
+    if max_curve_error_cm <= 0:
+        raise ValueError("max_curve_error_cmは0より大きくしてください")
     points: list[tuple[float, float]] = []
     cur = (0.0, 0.0)
     start = (0.0, 0.0)
@@ -192,8 +247,13 @@ def segments_to_polyline(segments: list[tuple[str, list[float]]],
             cur = (cur[0], nums[0]); points.append(cur)
         elif cmd == "C":
             p1 = (nums[0], nums[1]); p2 = (nums[2], nums[3]); p3 = (nums[4], nums[5])
-            for s in range(1, curve_steps + 1):
-                points.append(_bezier_point(cur, p1, p2, p3, s / curve_steps))
+            if curve_steps is None:
+                points.extend(_flatten_cubic(
+                    cur, p1, p2, p3, max_curve_error_cm))
+            else:
+                for s in range(1, curve_steps + 1):
+                    points.append(_bezier_point(
+                        cur, p1, p2, p3, s / curve_steps))
             cur = p3
         elif cmd == "Z":
             points.append(start); cur = start

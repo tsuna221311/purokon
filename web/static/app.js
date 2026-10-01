@@ -23,8 +23,9 @@ const loading = document.getElementById("result-loading");
 const content = document.getElementById("result-content");
 const multiSizeContent = document.getElementById("multi-size-result-content");
 const resultPanel = document.getElementById("result-panel");
+const resultProjectName = document.getElementById("result-project-name");
 const submitButton = form ? form.querySelector('button[type="submit"]') : null;
-const submitButtonLabel = submitButton ? submitButton.textContent : "";
+let submitButtonLabel = submitButton ? submitButton.textContent.trim() : "";
 
 // 衣装カタログは50件ある。ネイティブselectを残してキーボード操作とフォーム送信
 // の互換性を保ちつつ、検索・ジャンル絞り込み・おすすめボタンを上に重ねる。
@@ -35,6 +36,9 @@ const costumeProjectSearch = document.getElementById("costume-project-search");
 const costumeProjectCategory = document.getElementById("costume-project-category");
 const costumeProjectSummary = document.getElementById("costume-project-selection-summary");
 const referenceModeButton = document.getElementById("switch-to-reference-mode");
+const referenceFirstCallout = document.getElementById("reference-first-callout");
+const illustrationWorkflowOverview = document.getElementById("illustration-workflow-overview");
+const formReadiness = document.getElementById("form-readiness");
 const CURATED_PROJECT_KEYS = new Set([
   "endministrator_female", "endministrator_male", "perlica", "chen_qianyu",
   "hatsune_miku_classic", "yor_forger_thorn_princess",
@@ -300,6 +304,150 @@ function endGenerating() {
 }
 
 const illustrationFileInput = illustrationSection.querySelector('input[name="illustration"]');
+const referenceBoard = document.getElementById("reference-board");
+const referencePreviewList = document.getElementById("reference-preview-list");
+const referenceBoardSummary = document.getElementById("reference-board-summary");
+const referenceClearAll = document.getElementById("reference-clear-all");
+const maxReferenceImages = Number(illustrationSection?.dataset.maxImages || 10);
+const referenceInputs = [
+  { kind: "front", label: "正面", input: illustrationFileInput },
+  { kind: "back", label: "背面", input: illustrationSection?.querySelector('input[name="illustration_back"]') },
+  { kind: "side", label: "側面", input: illustrationSection?.querySelector('input[name="illustration_side"]') },
+  { kind: "detail", label: "装飾", input: illustrationSection?.querySelector('input[name="illustration_detail"]') },
+].filter((item) => item.input);
+let referenceRenderToken = 0;
+let workflowResultReady = false;
+
+function referenceFiles() {
+  return referenceInputs.flatMap(({ kind, label, input }) =>
+    Array.from(input.files || []).map((file, index) => ({ kind, label, input, file, index })));
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+function replaceInputFiles(input, files) {
+  if (typeof DataTransfer !== "function") {
+    input.value = "";
+    return;
+  }
+  const transfer = new DataTransfer();
+  files.forEach((file) => transfer.items.add(file));
+  input.files = transfer.files;
+}
+
+function removeReferenceFile(input, index) {
+  replaceInputFiles(input, Array.from(input.files || []).filter((_, i) => i !== index));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function readPreview(file, image, token) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    if (token === referenceRenderToken) image.src = String(reader.result || "");
+  };
+  reader.onerror = () => image.classList.add("is-unavailable");
+  reader.readAsDataURL(file);
+}
+
+function syncWorkflowProgress() {
+  if (!illustrationWorkflowOverview) return;
+  const steps = Array.from(illustrationWorkflowOverview.children);
+  const hasFront = Boolean(illustrationFileInput?.files?.length);
+  steps.forEach((step) => step.classList.remove("is-active", "is-complete"));
+  if (!hasFront) {
+    steps[0]?.classList.add("is-active");
+    return;
+  }
+  steps[0]?.classList.add("is-complete");
+  if (workflowResultReady) {
+    steps[1]?.classList.add("is-complete");
+    steps[2]?.classList.add("is-complete");
+  } else {
+    steps[1]?.classList.add("is-active");
+  }
+}
+
+function renderReferenceBoard() {
+  if (!referenceBoard || !referencePreviewList) return;
+  const token = ++referenceRenderToken;
+  const files = referenceFiles();
+  const kinds = new Set(files.map((item) => item.kind));
+  referencePreviewList.replaceChildren();
+
+  referenceBoard.querySelectorAll("[data-reference-kind]").forEach((chip) => {
+    chip.classList.toggle("is-present", kinds.has(chip.dataset.referenceKind));
+  });
+  referenceClearAll?.classList.toggle("hidden", files.length === 0);
+
+  if (referenceBoardSummary) {
+    if (!files.length) {
+      referenceBoardSummary.textContent = "正面画像を追加すると、ここで内容を確認できます。";
+    } else {
+      const remaining = Math.max(0, maxReferenceImages - files.length);
+      const back = kinds.has("back") ? "背面あり" : "背面を足すと後ろ姿の判断が安定します";
+      referenceBoardSummary.textContent = `${files.length}/${maxReferenceImages}枚・${back}`
+        + (remaining ? `（あと${remaining}枚追加できます）` : "（上限です）");
+    }
+  }
+
+  files.forEach(({ label, input, file, index }) => {
+    const card = document.createElement("article");
+    card.className = "reference-preview";
+    const image = document.createElement("img");
+    image.alt = `${label}資料：${file.name}`;
+    readPreview(file, image, token);
+    const body = document.createElement("div");
+    body.className = "reference-preview-body";
+    const kind = document.createElement("strong");
+    kind.textContent = label;
+    const name = document.createElement("span");
+    name.textContent = file.name;
+    name.title = file.name;
+    const size = document.createElement("small");
+    size.textContent = formatFileSize(file.size);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "reference-remove";
+    remove.textContent = "外す";
+    remove.setAttribute("aria-label", `${label}資料「${file.name}」を外す`);
+    remove.addEventListener("click", () => removeReferenceFile(input, index));
+    body.append(kind, name, size, remove);
+    card.append(image, body);
+    referencePreviewList.appendChild(card);
+  });
+  syncWorkflowProgress();
+}
+
+function validateReferencesBeforeSubmit() {
+  const mode = form.querySelector('input[name="mode"]:checked')?.value;
+  if (mode !== "illustration") return null;
+  const files = referenceFiles();
+  if (!illustrationFileInput?.files?.length) return "正面の資料画像を1枚以上追加してください。";
+  if (files.length > maxReferenceImages) {
+    return `資料画像は合計${maxReferenceImages}枚までです。現在${files.length}枚選択されています。`;
+  }
+  if (files.some(({ file }) => file.type && !file.type.startsWith("image/"))) {
+    return "画像ではないファイルが含まれています。JPEG・PNG・WebPなどの画像を選んでください。";
+  }
+  return null;
+}
+
+referenceInputs.forEach(({ input }) => input.addEventListener("change", () => {
+  workflowResultReady = false;
+  renderReferenceBoard();
+  syncPrimaryAction();
+}));
+referenceClearAll?.addEventListener("click", () => {
+  referenceInputs.forEach(({ input }) => { input.value = ""; });
+  workflowResultReady = false;
+  renderReferenceBoard();
+  syncPrimaryAction();
+  illustrationFileInput?.focus();
+});
+renderReferenceBoard();
 // round34: 袖の形は<select>からサムネイルのラジオになった。値の読み取りと
 // 変更の監視だけが必要なので、「選ばれている袖の形」を返す小さな関数と、
 // 「変わったら呼ぶ」の登録に置き換える(選び方のUIが変わっても、ここから
@@ -312,16 +460,186 @@ function selectedSleeveStyle() {
 }
 const includeCuffsInput = document.getElementById("include-cuffs-input");
 const multiSizeSection = document.getElementById("multi-size-section");
-// round10で追加: カスタムパーツ(自由形状パーツ)セクションは、現状バックエンド
-// (app.pyの`/api/generate`)がイラストモード・サイズ展開モードとの併用に
-// 未対応(明確なエラーを返す設計、README参照)のため、手動モードでのみ表示する。
+// 自由形状パーツは全モードで利用できる。サイズ展開では体格比を推測せず、
+// カードで明示した幅・高さの刻みだけを適用する（0なら実寸固定）。
 const customPanelSection = document.getElementById("custom-panel-section");
+const accessory3dCheckbox = document.getElementById("field-generate-accessory-stl");
+const accessory3dFields = document.getElementById("accessory-3d-fields");
+const accessory3dAvailability = document.getElementById("accessory-3d-availability");
+const accessoryCurveAxis = document.getElementById("accessory-curve-axis");
+const accessoryHeightRadius = document.getElementById("accessory-curvature-radius-height");
+const accessoryAttachment = document.getElementById("accessory-attachment-interface");
+const accessoryAttachmentDiameter = document.getElementById("accessory-attachment-hole-diameter");
+const accessoryAttachmentInset = document.getElementById("accessory-attachment-hole-inset");
+const accessoryHolePattern = document.getElementById("accessory-mounting-hole-pattern");
+const accessoryHoleDiameter = document.getElementById("accessory-mounting-hole-diameter");
+const accessoryHoleInset = document.getElementById("accessory-mounting-hole-inset");
+const accessorySlotPattern = document.getElementById("accessory-mounting-slot-pattern");
+const accessorySlotLength = document.getElementById("accessory-mounting-slot-length");
+const accessorySlotWidth = document.getElementById("accessory-mounting-slot-width");
+const accessorySlotAxis = document.getElementById("accessory-mounting-slot-axis");
+const accessorySlotInset = document.getElementById("accessory-mounting-slot-inset");
+const accessoryMagnetPattern = document.getElementById("accessory-magnet-pocket-pattern");
+const accessoryMagnetDiameter = document.getElementById("accessory-magnet-pocket-diameter");
+const accessoryMagnetDepth = document.getElementById("accessory-magnet-pocket-depth");
+const accessoryMagnetInset = document.getElementById("accessory-magnet-pocket-inset");
+const illustrationStageInputs = form.querySelectorAll('input[name="illustration_stage"]');
+/** @type {Array<object>} 各要素は1つのカスタムパーツカードの状態。 */
+const customPanels = [];
+
+function syncAccessory3dAvailability() {
+  if (!accessory3dCheckbox) return;
+  const modeInput = form.querySelector('input[name="mode"]:checked');
+  const supportsCustomPanels = modeInput
+    && (modeInput.value === "manual" || modeInput.value === "illustration");
+  const draftIllustration = modeInput && modeInput.value === "illustration"
+    && form.querySelector('input[name="illustration_stage"]:checked')?.value === "draft";
+  const hasPanels = customPanels.length > 0;
+  accessory3dCheckbox.disabled = !supportsCustomPanels || !hasPanels || draftIllustration;
+  if (accessory3dCheckbox.disabled) accessory3dCheckbox.checked = false;
+  if (accessory3dAvailability) {
+    accessory3dAvailability.textContent = draftIllustration
+      ? "ラフ確認ではSTLを出しません。製作用データを選び、構造確認を完了してください。"
+      : !supportsCustomPanels
+      ? "3D小物は手動または画像モードで利用できます。"
+      : hasPanels
+        ? "バッジ・バックル・髪飾り・装甲などを、平板または実測半径の曲面STLへ変換できます。"
+        : "先にカスタムパーツを1つ以上追加すると選択できます。";
+  }
+  syncAccessory3dFields();
+}
+
+function syncAccessory3dFields() {
+  if (!accessory3dCheckbox || !accessory3dFields) return;
+  const enabled = accessory3dCheckbox.checked && !accessory3dCheckbox.disabled;
+  accessory3dFields.classList.toggle("hidden", !enabled);
+  accessory3dFields.querySelectorAll("input, select").forEach((control) => {
+    control.disabled = !enabled;
+  });
+  syncAccessoryHoleFields();
+  syncAccessoryAttachmentFields();
+  syncAccessorySlotFields();
+  syncAccessoryMagnetFields();
+  syncAccessoryCurvatureFields();
+}
+
+function syncAccessoryCurvatureFields() {
+  if (!accessoryHeightRadius || !accessoryCurveAxis) return;
+  const enabled = accessory3dCheckbox && accessory3dCheckbox.checked
+    && !accessory3dCheckbox.disabled;
+  accessoryHeightRadius.disabled = !enabled || accessoryCurveAxis.value !== "both";
+}
+
+if (accessoryCurveAxis) {
+  accessoryCurveAxis.addEventListener("change", syncAccessoryCurvatureFields);
+}
+
+function syncAccessoryAttachmentFields() {
+  if (!accessoryAttachment) return;
+  const enabled = accessory3dCheckbox && accessory3dCheckbox.checked
+    && !accessory3dCheckbox.disabled;
+  const method = accessoryAttachment.value;
+  const hasInterface = enabled && method !== "none";
+  if (accessoryAttachmentDiameter) {
+    accessoryAttachmentDiameter.disabled = !hasInterface;
+    accessoryAttachmentDiameter.required = hasInterface;
+  }
+  if (accessoryAttachmentInset) {
+    const paired = ["sew_on_clip", "brooch_pin"].includes(method);
+    accessoryAttachmentInset.disabled = !enabled || !paired;
+    accessoryAttachmentInset.required = enabled && paired;
+  }
+  if (accessoryHolePattern) {
+    if (hasInterface) accessoryHolePattern.value = "none";
+    accessoryHolePattern.disabled = !enabled || hasInterface;
+  }
+  syncAccessoryHoleFields();
+}
+
+function syncAccessoryMagnetFields() {
+  if (!accessoryMagnetPattern) return;
+  const enabled = accessory3dCheckbox && accessory3dCheckbox.checked
+    && !accessory3dCheckbox.disabled;
+  const pattern = accessoryMagnetPattern.value;
+  const hasPocket = enabled && pattern !== "none";
+  for (const control of [accessoryMagnetDiameter, accessoryMagnetDepth]) {
+    if (!control) continue;
+    control.disabled = !hasPocket;
+    control.required = hasPocket;
+  }
+  if (accessoryMagnetInset) {
+    const paired = ["pair_width", "pair_height"].includes(pattern);
+    accessoryMagnetInset.disabled = !enabled || !paired;
+    accessoryMagnetInset.required = enabled && paired;
+  }
+}
+
+function syncAccessorySlotFields() {
+  if (!accessorySlotPattern) return;
+  const enabled = accessory3dCheckbox && accessory3dCheckbox.checked
+    && !accessory3dCheckbox.disabled;
+  const pattern = accessorySlotPattern.value;
+  const hasSlot = enabled && pattern !== "none";
+  for (const control of [accessorySlotLength, accessorySlotWidth, accessorySlotAxis]) {
+    if (!control) continue;
+    control.disabled = !hasSlot;
+    control.required = hasSlot;
+  }
+  if (accessorySlotInset) {
+    const paired = ["pair_width", "pair_height"].includes(pattern);
+    accessorySlotInset.disabled = !enabled || !paired;
+    accessorySlotInset.required = enabled && paired;
+  }
+}
+
+function syncAccessoryHoleFields() {
+  if (!accessoryHolePattern) return;
+  const enabled = accessory3dCheckbox && accessory3dCheckbox.checked
+    && !accessory3dCheckbox.disabled;
+  const hasAttachment = accessoryAttachment && accessoryAttachment.value !== "none";
+  const pattern = hasAttachment ? "none" : accessoryHolePattern.value;
+  if (accessoryHoleDiameter) {
+    accessoryHoleDiameter.disabled = !enabled || pattern === "none";
+    accessoryHoleDiameter.required = enabled && pattern !== "none";
+  }
+  if (accessoryHoleInset) {
+    accessoryHoleInset.disabled = !enabled || !["pair_width", "pair_height"].includes(pattern);
+    accessoryHoleInset.required = enabled && ["pair_width", "pair_height"].includes(pattern);
+  }
+}
+
+if (accessory3dCheckbox) {
+  accessory3dCheckbox.addEventListener("change", syncAccessory3dFields);
+  syncAccessory3dFields();
+}
+if (accessoryHolePattern) {
+  accessoryHolePattern.addEventListener("change", syncAccessoryHoleFields);
+}
+if (accessoryAttachment) {
+  accessoryAttachment.addEventListener("change", syncAccessoryAttachmentFields);
+}
+if (accessorySlotPattern) {
+  accessorySlotPattern.addEventListener("change", syncAccessorySlotFields);
+}
+if (accessoryMagnetPattern) {
+  accessoryMagnetPattern.addEventListener("change", syncAccessoryMagnetFields);
+}
+illustrationStageInputs.forEach((input) => {
+  input.addEventListener("change", () => {
+    syncAccessory3dAvailability();
+    syncPrimaryAction();
+  });
+});
+if (illustrationFileInput) illustrationFileInput.addEventListener("change", syncPrimaryAction);
 
 // round25で追加: ゆとりを「数値で指定する」を選んだときだけ入力欄を出す。
 // 隠している間は入力欄を無効化して送信データに含めない(disabledな要素は
 // FormDataに入らないので、隠したまま古い値が送られる事故を防げる)。
 const fitSelect = document.getElementById("fit");
 const blockSelect = document.getElementById("block");
+const measuredBlockFields = document.getElementById("measured-block-fields");
+const liningInput = document.getElementById("field-lining");
+const liningScopeFields = document.getElementById("lining-scope-fields");
 const customEaseFields = document.getElementById("custom-ease-fields");
 // round30: 「伸びる生地」を選んだときだけ、伸縮率の入力欄を出す。
 // 隠している入力は disabled にして送信データから外す（そうしないと、
@@ -344,10 +662,18 @@ const stretchHint = document.getElementById("stretch-hint");
 function syncFitLabels() {
   if (!fitSelect || !blockSelect) return;
   const block = blockSelect.selectedOptions[0];
+  const isMeasured = blockSelect.value === "measured";
   const easeText = block ? block.dataset.easeText : "";
   const isDefaultAbsolute = easeText && !easeText.includes("/");
   fitSelect.querySelectorAll("option[data-fit-label]").forEach((option) => {
     const label = option.dataset.fitLabel;
+    if (isMeasured) {
+      const delta = Number(option.dataset.fitDelta);
+      const shift = delta === 0 ? "そのまま"
+        : `${delta > 0 ? "+" : "−"}${Math.abs(delta)}cm`;
+      option.textContent = `${label}（入力した標準ゆとり ${shift}）`;
+      return;
+    }
     if (isDefaultAbsolute) {
       // 定数の原型(大人)は、これまでどおり絶対値で書ける。
       option.textContent = `${label}（身頃 バスト+${option.dataset.fitAbs}cm）`;
@@ -359,6 +685,13 @@ function syncFitLabels() {
       : `${delta > 0 ? "+" : "−"}${Math.abs(delta)}cm`;
     option.textContent = `${label}（身頃 ${easeText} ${shift}）`;
   });
+  if (measuredBlockFields) {
+    measuredBlockFields.classList.toggle("hidden", !isMeasured);
+    measuredBlockFields.querySelectorAll("input").forEach((input) => {
+      input.disabled = !isMeasured;
+      input.required = isMeasured;
+    });
+  }
 }
 
 function syncCustomEaseFields() {
@@ -386,6 +719,13 @@ if (blockSelect) {
   syncFitLabels();
 }
 
+function syncLiningScopeFields() {
+  if (!liningScopeFields || !liningInput) return;
+  liningScopeFields.disabled = !liningInput.checked;
+}
+if (liningInput) liningInput.addEventListener("change", syncLiningScopeFields);
+syncLiningScopeFields();
+
 // チェックボックスと「バリエーション選択」を1組にした4項目(パンツ/衿/
 // カフス/ウエストバンド)。チェックが入っていない間はselectを無効化して
 // 送信データに含めない（ブラウザはdisabledなフォーム要素をFormDataに
@@ -412,10 +752,43 @@ OPTION_WITH_STYLE_IDS.forEach(([checkboxId]) => {
 });
 syncOptionStyleSelects();
 
+/** 選んだ作り方に合わせて、次にすることを1行で示す。 */
+function syncPrimaryAction() {
+  if (!form || !submitButton) return;
+  const mode = form.querySelector('input[name="mode"]:checked')?.value || "illustration";
+  const stage = form.querySelector('input[name="illustration_stage"]:checked')?.value || "draft";
+  const hasReference = Boolean(illustrationFileInput?.files?.length);
+
+  if (mode === "illustration") {
+    submitButtonLabel = stage === "draft" ? "ラフ型紙を生成する" : "製作用データを生成する";
+    if (formReadiness) {
+      formReadiness.textContent = hasReference
+        ? `準備OK：正面資料 ${illustrationFileInput.files.length}枚を使います`
+        : "あと1つ：正面の資料画像を追加してください";
+      formReadiness.classList.toggle("is-ready", hasReference);
+    }
+  } else if (mode === "multi_size") {
+    submitButtonLabel = "サイズ別型紙を生成する";
+    if (formReadiness) {
+      formReadiness.textContent = "採寸と必要なサイズを確認して生成します";
+      formReadiness.classList.remove("is-ready");
+    }
+  } else {
+    submitButtonLabel = "型紙を生成する";
+    if (formReadiness) {
+      formReadiness.textContent = "採寸と服の形を確認して生成します";
+      formReadiness.classList.remove("is-ready");
+    }
+  }
+  if (!submitButton.disabled) submitButton.textContent = submitButtonLabel;
+}
+
 function setMode(mode) {
   const isIllustration = mode === "illustration";
   const isMultiSize = mode === "multi_size";
   const isManual = mode === "manual";
+  if (illustrationWorkflowOverview) illustrationWorkflowOverview.classList.toggle("hidden", !isIllustration);
+  if (referenceFirstCallout) referenceFirstCallout.classList.toggle("hidden", isIllustration);
   illustrationSection.classList.toggle("hidden", !isIllustration);
   // 「③ パーツ構成」(ネックライン・袖等の選択)は、手動モードだけでなく
   // サイズ展開モードでも同じ構成を使う(サイズ展開は「同じデザインを複数
@@ -429,10 +802,10 @@ function setMode(mode) {
   [costumeProjectSelect, costumeProjectSearch, costumeProjectCategory]
     .filter(Boolean)
     .forEach((input) => { input.disabled = !isManual; });
-  // round10で追加: カスタムパーツは手動モードのみ対応(上のコメント参照)。
   if (customPanelSection) {
-    customPanelSection.classList.toggle("hidden", !isManual);
+    customPanelSection.classList.toggle("hidden", !(isManual || isIllustration || isMultiSize));
   }
+  syncAccessory3dAvailability();
   // round49はここで裏地の節をサイズ展開モードだけ隠していた。サーバの
   // generate_multi_size が lining を受け取らず、チェックしても黙って
   // 無視されていたためで、「押せるのに効かない」を無くす回避だった。
@@ -447,6 +820,7 @@ function setMode(mode) {
   // 直後の見出しが固定の番号のままだと表示中の見出しの並びと食い違って
   // 見える(実際に画面を見て確認して壊れて見えた不具合の再発防止)。
   syncStepNumbers();
+  syncPrimaryAction();
 }
 
 //: 任意セクションの番号(①②③…)。
@@ -507,7 +881,7 @@ if (referenceModeButton) {
     illustrationFileInput.focus({ preventScroll: true });
   });
 }
-setMode(form.querySelector('input[name="mode"]:checked')?.value || "manual");
+setMode(form.querySelector('input[name="mode"]:checked')?.value || "illustration");
 
 for (const input of sleeveStyleInputs) {
   input.addEventListener("change", syncCuffsAvailability);
@@ -638,6 +1012,574 @@ function renderPartsList(parts) {
     list.appendChild(chip);
   }
 }
+
+// -- 服と小物を合わせた軽量3D完成イメージ (round81) -----------------
+// 裁断用メッシュではなく、result.summary() のパーツ種・丈・幅を人台へ
+// 組み直す確認用ビュー。外部3Dライブラリや通信を使わず、Canvasへ3D座標を
+// 透視投影するため、オフライン環境でもドラッグで360度確認できる。
+const outfitPreviewBox = document.getElementById("outfit-preview-3d");
+const outfitCanvas = document.getElementById("outfit-preview-canvas");
+const outfitSummary = document.getElementById("outfit-preview-summary");
+const outfitAutoRotate = document.getElementById("outfit-auto-rotate");
+const outfitAccessoryList = document.getElementById("outfit-accessory-list");
+const outfitShowGarment = document.getElementById("outfit-show-garment");
+const outfitShowAccessories = document.getElementById("outfit-show-accessories");
+const outfitShowMannequin = document.getElementById("outfit-show-mannequin");
+const outfitResetView = document.getElementById("outfit-reset-view");
+const outfitExpandPreview = document.getElementById("outfit-expand-preview");
+const outfitSaveImage = document.getElementById("outfit-save-image");
+const outfitSaveFourViews = document.getElementById("outfit-save-four-views");
+const outfitSaveStatus = document.getElementById("outfit-save-status");
+const outfitGarmentColor = document.getElementById("outfit-garment-color");
+const outfitAccessoryColor = document.getElementById("outfit-accessory-color");
+let outfitPreviewPlaceholder = null;
+const outfitState = {
+  angle: 0, tilt: 0, zoom: 1, parts: [], dragging: false, lastX: 0,
+  auto: false, frame: 0, showGarment: true, showAccessories: true,
+  showMannequin: true, accessoryAnchors: {}, accessoryTransforms: {},
+  selectedAccessory: "", projectName: "", garmentColor: "#4f46e5",
+  accessoryColor: "#16a34a",
+};
+
+function _previewClamp(value, low, high) {
+  return Math.max(low, Math.min(high, value));
+}
+
+function _previewFrustum(faces, yTop, yBottom, rxTop, rzTop, rxBottom, rzBottom,
+                         color, xOffset = 0, zOffset = 0, segments = 16,
+                         kind = "garment", itemId = "") {
+  const top = [], bottom = [];
+  for (let i = 0; i < segments; i += 1) {
+    const a = i * Math.PI * 2 / segments;
+    top.push([xOffset + Math.cos(a) * rxTop, yTop, zOffset + Math.sin(a) * rzTop]);
+    bottom.push([xOffset + Math.cos(a) * rxBottom, yBottom, zOffset + Math.sin(a) * rzBottom]);
+  }
+  for (let i = 0; i < segments; i += 1) {
+    const next = (i + 1) % segments;
+    faces.push({ points: [top[i], top[next], bottom[next], bottom[i]], color, kind, itemId });
+  }
+  faces.push({ points: top, color, kind, itemId });
+  faces.push({ points: [...bottom].reverse(), color, kind, itemId });
+}
+
+function _previewBox(faces, x, y, z, width, height, depth, color,
+                     kind = "garment", itemId = "") {
+  const x0 = x - width / 2, x1 = x + width / 2;
+  const y0 = y - height / 2, y1 = y + height / 2;
+  const z0 = z - depth / 2, z1 = z + depth / 2;
+  const p = [
+    [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
+    [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1],
+  ];
+  for (const indices of [[0,1,2,3], [4,7,6,5], [0,4,5,1], [3,2,6,7], [1,5,6,2], [0,3,7,4]]) {
+    faces.push({ points: indices.map((index) => p[index]), color, kind, itemId });
+  }
+}
+
+const OUTFIT_ANCHORS = {
+  head: [0, -1.48, -.30], chest: [0, -.38, -.43], back: [0, -.30, .43],
+  waist: [0, .35, -.43], left_shoulder: [-.69, -.72, -.14],
+  right_shoulder: [.69, -.72, -.14], left_hip: [-.50, .45, -.34],
+  right_hip: [.50, .45, -.34],
+};
+
+function _previewPartKey(part, index) {
+  return part.identifier || `${part.display_name || "accessory"}-${index}`;
+}
+
+function _previewAccessoryAnchor(part, index) {
+  const override = outfitState.accessoryAnchors[_previewPartKey(part, index)];
+  if (override && OUTFIT_ANCHORS[override]) return OUTFIT_ANCHORS[override];
+  const label = `${part.display_name || ""} ${part.variation || ""}`.toLocaleLowerCase("ja-JP");
+  if (/(頭|髪|ヘッド|帽子|冠|ティアラ|hair|head|hat|crown)/.test(label)) return OUTFIT_ANCHORS.head;
+  if (/(背|翼|羽|マント|バック|wing|back|cape)/.test(label)) return OUTFIT_ANCHORS.back;
+  if (/(腰|帯|ベルト|バックル|ウエスト|belt|buckle|waist)/.test(label)) return OUTFIT_ANCHORS.waist;
+  if (/(肩|ショルダー|肩当|shoulder|pauldron)/.test(label)) {
+    return index % 2 ? OUTFIT_ANCHORS.right_shoulder : OUTFIT_ANCHORS.left_shoulder;
+  }
+  if (/(胸|ブローチ|バッジ|ネクタイ|リボン|chest|brooch|badge|tie|ribbon)/.test(label)) {
+    return OUTFIT_ANCHORS.chest;
+  }
+  const fallback = [OUTFIT_ANCHORS.chest, OUTFIT_ANCHORS.left_shoulder,
+    OUTFIT_ANCHORS.right_shoulder, OUTFIT_ANCHORS.waist, OUTFIT_ANCHORS.back,
+    OUTFIT_ANCHORS.left_hip, OUTFIT_ANCHORS.right_hip];
+  return fallback[index % fallback.length];
+}
+
+function _previewAccessoryTransform(key) {
+  return outfitState.accessoryTransforms[key] || { scale: 1, x: 0, y: 0 };
+}
+
+function _outfitScene(parts) {
+  const faces = [];
+  const types = new Set((parts || []).map((part) => part.part_type));
+  const first = (type) => (parts || []).find((part) => part.part_type === type);
+  // Canvas用の色はround70の共通パレットだけを使う。画面テーマとは別の
+  // 直書き色を増やすと、明暗テーマの一元管理が崩れるため。
+  const skin = "#e7e2d9", body = "#1e293b", garment = outfitState.garmentColor;
+  const garmentDark = outfitState.garmentColor, accent = outfitState.accessoryColor;
+
+  // 人台。服の無い場所でも正面・背面と小物位置を判断できる最小形状。
+  _previewFrustum(faces, -1.68, -1.20, .28, .25, .28, .25, skin, 0, 0, 16, "mannequin");
+  _previewFrustum(faces, -1.15, .45, .62, .30, .52, .27, body, 0, 0, 16, "mannequin");
+  _previewFrustum(faces, .42, 1.38, .48, .26, .42, .23, body, 0, 0, 16, "mannequin");
+  _previewFrustum(faces, -.82, .62, .16, .14, .13, .12, body, -.75, 0, 10, "mannequin");
+  _previewFrustum(faces, -.82, .62, .16, .14, .13, .12, body, .75, 0, 10, "mannequin");
+  _previewFrustum(faces, 1.28, 2.48, .20, .18, .15, .14, body, -.27, 0, 10, "mannequin");
+  _previewFrustum(faces, 1.28, 2.48, .20, .18, .15, .14, body, .27, 0, 10, "mannequin");
+
+  if (types.has("front_bodice") || types.has("back_bodice")
+      || types.has("front_bodice_zip_panel") || types.has("front_princess_center")) {
+    _previewFrustum(faces, -1.08, .48, .69, .35, .58, .31, garment);
+  }
+  if (types.has("sleeve")) {
+    const sleeve = first("sleeve");
+    const sleeveEnd = _previewClamp(-.74 + (sleeve?.height_cm || 54) / 54 * 1.35, -.10, .72);
+    const puff = sleeve?.variation === "puff" ? .25 : .19;
+    _previewFrustum(faces, -.86, sleeveEnd, puff, .18, .15, .13, garmentDark, -.78, 0, 12);
+    _previewFrustum(faces, -.86, sleeveEnd, puff, .18, .15, .13, garmentDark, .78, 0, 12);
+  }
+  if (types.has("skirt")) {
+    const skirt = first("skirt");
+    const length = _previewClamp((skirt?.height_cm || 60) / 60, .55, 1.65);
+    const flare = skirt?.variation === "tight" ? .56
+      : skirt?.variation === "mermaid" ? .88 : 1.03;
+    _previewFrustum(faces, .40, .40 + length, .56, .31, flare, .55, garment);
+  }
+  if (types.has("front_pants") || types.has("back_pants")) {
+    _previewFrustum(faces, .42, 2.30, .31, .25, .23, .18, garmentDark, -.28, 0, 12);
+    _previewFrustum(faces, .42, 2.30, .31, .25, .23, .18, garmentDark, .28, 0, 12);
+  }
+  if (types.has("waistband")) _previewFrustum(faces, .34, .54, .62, .35, .62, .35, garmentDark);
+  if (types.has("collar")) _previewFrustum(faces, -1.16, -1.00, .38, .28, .52, .32, garmentDark);
+  if (types.has("hood")) _previewFrustum(faces, -1.58, -.82, .43, .38, .48, .34, garmentDark, 0, .12);
+  if (types.has("cuffs")) {
+    _previewFrustum(faces, .42, .62, .19, .16, .19, .16, garmentDark, -.78, 0, 10);
+    _previewFrustum(faces, .42, .62, .19, .16, .19, .16, garmentDark, .78, 0, 10);
+  }
+
+  const accessories = (parts || []).filter((part) => part.part_type === "custom_panel");
+  accessories.forEach((part, index) => {
+    const anchor = _previewAccessoryAnchor(part, index);
+    const key = _previewPartKey(part, index);
+    const transform = _previewAccessoryTransform(key);
+    const width = _previewClamp((part.width_cm || 12) / 25, .16, .72) * transform.scale;
+    const height = _previewClamp((part.height_cm || 12) / 25, .12, .72) * transform.scale;
+    _previewBox(faces, anchor[0] + transform.x, anchor[1] + transform.y,
+      anchor[2], width, height, .13 * transform.scale,
+      accent, "accessory", key);
+  });
+  return { faces, accessories, types };
+}
+
+function _outfitColor(hex, shade) {
+  const raw = hex.replace("#", "");
+  const values = [0, 2, 4].map((offset) => parseInt(raw.slice(offset, offset + 2), 16));
+  return `rgb(${values.map((value) => Math.round(_previewClamp(value * shade, 0, 255))).join(",")})`;
+}
+
+function drawOutfitPreview() {
+  if (!outfitCanvas || !outfitState.parts.length) return;
+  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  const width = Math.max(280, outfitCanvas.clientWidth);
+  const height = Math.max(260, outfitCanvas.clientHeight);
+  if (outfitCanvas.width !== Math.round(width * ratio)
+      || outfitCanvas.height !== Math.round(height * ratio)) {
+    outfitCanvas.width = Math.round(width * ratio);
+    outfitCanvas.height = Math.round(height * ratio);
+  }
+  const context = outfitCanvas.getContext("2d");
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  context.clearRect(0, 0, width, height);
+  // CSS背景は画像保存へ入らないため、Canvas内にも背景を描く。
+  const background = context.createRadialGradient(width / 2, height * .42, 10,
+    width / 2, height * .42, Math.max(width, height) * .72);
+  background.addColorStop(0, "#303250");
+  background.addColorStop(1, "#11121d");
+  context.fillStyle = background;
+  context.fillRect(0, 0, width, height);
+  const scene = _outfitScene(outfitState.parts);
+  const cosine = Math.cos(outfitState.angle), sine = Math.sin(outfitState.angle);
+  const tiltCosine = Math.cos(outfitState.tilt), tiltSine = Math.sin(outfitState.tilt);
+  const visibleFaces = scene.faces.filter((face) => {
+    if (face.kind === "mannequin") return outfitState.showMannequin;
+    if (face.kind === "accessory") return outfitState.showAccessories;
+    return outfitState.showGarment;
+  });
+  const projected = visibleFaces.map((face) => {
+    const points = face.points.map(([x, y, z]) => {
+      const rx = x * cosine + z * sine;
+      const rz = -x * sine + z * cosine;
+      const ry = y * tiltCosine - rz * tiltSine;
+      const tiltedZ = y * tiltSine + rz * tiltCosine;
+      const perspective = 4.8 / (5.5 + tiltedZ);
+      return { x: width / 2 + rx * height * .22 * perspective * outfitState.zoom,
+               y: height * .45 + ry * height * .205 * perspective * outfitState.zoom,
+               z: tiltedZ };
+    });
+    return { ...face, points, depth: points.reduce((sum, point) => sum + point.z, 0) / points.length };
+  }).sort((a, b) => b.depth - a.depth);
+
+  // 足元の基準円で回転方向と接地位置を分かりやすくする。
+  context.strokeStyle = "rgba(181,178,255,.30)";
+  context.lineWidth = 1;
+  context.beginPath();
+  context.ellipse(width / 2, height * .93, height * .18, height * .045, 0, 0, Math.PI * 2);
+  context.stroke();
+  projected.forEach((face) => {
+    context.beginPath();
+    face.points.forEach((point, index) => index ? context.lineTo(point.x, point.y) : context.moveTo(point.x, point.y));
+    context.closePath();
+    context.fillStyle = _outfitColor(face.color, _previewClamp(1.02 - face.depth * .10, .60, 1.15));
+    context.fill();
+    const selected = face.kind === "accessory" && face.itemId === outfitState.selectedAccessory;
+    context.strokeStyle = selected ? "rgba(255,230,120,.95)" : "rgba(255,255,255,.10)";
+    context.lineWidth = selected ? 2.4 : .7;
+    context.stroke();
+  });
+  context.fillStyle = "rgba(235,233,255,.72)";
+  context.font = "600 11px sans-serif";
+  context.textAlign = "center";
+  const degrees = ((outfitState.angle * 180 / Math.PI) % 360 + 360) % 360;
+  context.fillText(`${Math.round(degrees)}° ・ ${Math.round(outfitState.zoom * 100)}%`, width / 2, height - 10);
+  window.PatternForge3D?.update(outfitState);
+}
+
+function setOutfitAngle(angle) {
+  outfitState.angle = angle;
+  const exactViews = { front: 0, right: Math.PI / 2, back: Math.PI, left: -Math.PI / 2 };
+  document.querySelectorAll("[data-outfit-view]").forEach((button) => {
+    const target = exactViews[button.dataset.outfitView];
+    const delta = Math.abs(Math.atan2(Math.sin(angle - target), Math.cos(angle - target)));
+    button.setAttribute("aria-pressed", String(delta < .02));
+  });
+  drawOutfitPreview();
+}
+
+function _outfitAnchorLabel(part, index) {
+  const anchor = _previewAccessoryAnchor(part, index);
+  const found = Object.entries(OUTFIT_ANCHORS).find(([, value]) => value === anchor);
+  return found ? found[0] : "chest";
+}
+
+function renderOutfitAccessoryList(accessories) {
+  if (!outfitAccessoryList) return;
+  outfitAccessoryList.innerHTML = "";
+  outfitAccessoryList.classList.toggle("hidden", accessories.length === 0);
+  const choices = [
+    ["head", "頭・帽子"], ["chest", "胸元"], ["back", "背中"], ["waist", "腰中央"],
+    ["left_shoulder", "左肩"], ["right_shoulder", "右肩"],
+    ["left_hip", "左腰"], ["right_hip", "右腰"],
+  ];
+  accessories.forEach((part, index) => {
+    const key = _previewPartKey(part, index);
+    const row = document.createElement("div");
+    row.className = "outfit-accessory-row";
+    const copy = document.createElement("div");
+    const name = document.createElement("strong");
+    name.textContent = part.display_name || `小物 ${index + 1}`;
+    const size = document.createElement("span");
+    size.textContent = `${part.width_cm || "?"} × ${part.height_cm || "?"} cm`;
+    copy.append(name, size);
+    const controls = document.createElement("div");
+    controls.className = "outfit-accessory-controls";
+    const select = document.createElement("select");
+    select.setAttribute("aria-label", `${name.textContent}の取付位置`);
+    choices.forEach(([value, label]) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      select.appendChild(option);
+    });
+    select.value = outfitState.accessoryAnchors[key] || _outfitAnchorLabel(part, index);
+    select.addEventListener("focus", () => {
+      outfitState.selectedAccessory = key;
+      drawOutfitPreview();
+    });
+    select.addEventListener("change", () => {
+      outfitState.accessoryAnchors[key] = select.value;
+      outfitState.selectedAccessory = key;
+      drawOutfitPreview();
+    });
+    controls.appendChild(select);
+    const transform = _previewAccessoryTransform(key);
+    const sliders = [
+      ["scale", "大きさ", 60, 160, 5, Math.round(transform.scale * 100), "%"],
+      ["x", "左右", -50, 50, 5, Math.round(transform.x / .006), ""],
+      ["y", "上下", -50, 50, 5, Math.round(transform.y / .006), ""],
+    ];
+    sliders.forEach(([field, label, min, max, step, value, suffix]) => {
+      const line = document.createElement("label");
+      line.className = "outfit-accessory-slider";
+      const labelText = document.createElement("span");
+      const output = document.createElement("output");
+      output.textContent = `${value}${suffix}`;
+      labelText.textContent = label;
+      const input = document.createElement("input");
+      input.type = "range";
+      input.min = String(min); input.max = String(max); input.step = String(step);
+      input.value = String(value);
+      input.setAttribute("aria-label", `${name.textContent}の${label}`);
+      input.addEventListener("input", () => {
+        const next = outfitState.accessoryTransforms[key] || { scale: 1, x: 0, y: 0 };
+        if (field === "scale") next.scale = Number(input.value) / 100;
+        else next[field] = Number(input.value) * .006;
+        outfitState.accessoryTransforms[key] = next;
+        outfitState.selectedAccessory = key;
+        output.textContent = `${input.value}${suffix}`;
+        drawOutfitPreview();
+      });
+      line.append(labelText, input, output);
+      controls.appendChild(line);
+    });
+    row.append(copy, controls);
+    outfitAccessoryList.appendChild(row);
+  });
+}
+
+function syncOutfitToggle(button, enabled) {
+  if (!button) return;
+  button.classList.toggle("is-on", enabled);
+  button.setAttribute("aria-pressed", String(enabled));
+}
+
+function renderOutfitPreview(data) {
+  if (!outfitPreviewBox || !outfitCanvas) return;
+  const parts = Array.isArray(data.parts) ? data.parts : [];
+  outfitPreviewBox.classList.toggle("hidden", parts.length === 0);
+  if (!parts.length) return;
+  outfitState.parts = parts;
+  outfitState.projectName = data.project_name || "PatternForge-complete-look";
+  const accessories = parts.filter((part) => part.part_type === "custom_panel");
+  const garmentTypes = new Set(parts.filter((part) => part.part_type !== "custom_panel")
+    .map((part) => part.part_type));
+  if (outfitSummary) {
+    outfitSummary.textContent = `${garmentTypes.size}種類の服パーツ`
+      + (accessories.length ? `と小物・造形パーツ${accessories.length}点をアバターへ配置しています。` : "をアバターへ配置しています。小物を追加すると同じ画面へ重ねて表示します。")
+      + " 左右へドラッグして、正面・側面・背面のバランスを確認できます。";
+  }
+  renderOutfitAccessoryList(accessories);
+  window.PatternForge3D?.setOutfit(parts, outfitState);
+  setOutfitAngle(0);
+}
+
+window.addEventListener("patternforge3dready", () => {
+  if (outfitState.parts.length) window.PatternForge3D?.setOutfit(outfitState.parts, outfitState);
+});
+
+if (outfitCanvas) {
+  outfitCanvas.addEventListener("pointerdown", (event) => {
+    outfitState.dragging = true;
+    outfitState.lastX = event.clientX;
+    outfitCanvas.setPointerCapture(event.pointerId);
+  });
+  outfitCanvas.addEventListener("pointermove", (event) => {
+    if (!outfitState.dragging) return;
+    outfitState.angle += (event.clientX - outfitState.lastX) * .012;
+    outfitState.lastX = event.clientX;
+    drawOutfitPreview();
+  });
+  const endDrag = () => { outfitState.dragging = false; };
+  outfitCanvas.addEventListener("pointerup", endDrag);
+  outfitCanvas.addEventListener("pointercancel", endDrag);
+  outfitCanvas.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    outfitState.zoom = _previewClamp(outfitState.zoom + (event.deltaY < 0 ? .08 : -.08), .72, 1.42);
+    drawOutfitPreview();
+  }, { passive: false });
+  outfitCanvas.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+    event.preventDefault();
+    if (event.key === "ArrowLeft") setOutfitAngle(outfitState.angle - .18);
+    if (event.key === "ArrowRight") setOutfitAngle(outfitState.angle + .18);
+    if (event.key === "ArrowUp") {
+      outfitState.tilt = _previewClamp(outfitState.tilt - .06, -.28, .28);
+      drawOutfitPreview();
+    }
+    if (event.key === "ArrowDown") {
+      outfitState.tilt = _previewClamp(outfitState.tilt + .06, -.28, .28);
+      drawOutfitPreview();
+    }
+  });
+  new ResizeObserver(drawOutfitPreview).observe(outfitCanvas);
+}
+document.querySelectorAll("[data-outfit-view]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const view = button.dataset.outfitView;
+    if (view === "front") setOutfitAngle(0);
+    if (view === "back") setOutfitAngle(Math.PI);
+    if (view === "left") setOutfitAngle(-Math.PI / 2);
+    if (view === "right") setOutfitAngle(Math.PI / 2);
+  });
+});
+
+outfitShowGarment?.addEventListener("click", () => {
+  outfitState.showGarment = !outfitState.showGarment;
+  syncOutfitToggle(outfitShowGarment, outfitState.showGarment);
+  drawOutfitPreview();
+});
+outfitShowAccessories?.addEventListener("click", () => {
+  outfitState.showAccessories = !outfitState.showAccessories;
+  syncOutfitToggle(outfitShowAccessories, outfitState.showAccessories);
+  drawOutfitPreview();
+});
+outfitShowMannequin?.addEventListener("click", () => {
+  outfitState.showMannequin = !outfitState.showMannequin;
+  syncOutfitToggle(outfitShowMannequin, outfitState.showMannequin);
+  drawOutfitPreview();
+});
+outfitResetView?.addEventListener("click", () => {
+  outfitState.angle = 0;
+  outfitState.tilt = 0;
+  outfitState.zoom = 1;
+  outfitState.showGarment = true;
+  outfitState.showAccessories = true;
+  outfitState.showMannequin = true;
+  outfitState.accessoryAnchors = {};
+  outfitState.accessoryTransforms = {};
+  outfitState.garmentColor = "#4f46e5";
+  outfitState.accessoryColor = "#16a34a";
+  outfitState.selectedAccessory = "";
+  if (outfitGarmentColor) outfitGarmentColor.value = outfitState.garmentColor;
+  if (outfitAccessoryColor) outfitAccessoryColor.value = outfitState.accessoryColor;
+  syncOutfitToggle(outfitShowGarment, true);
+  syncOutfitToggle(outfitShowAccessories, true);
+  syncOutfitToggle(outfitShowMannequin, true);
+  renderOutfitAccessoryList(outfitState.parts.filter((part) => part.part_type === "custom_panel"));
+  drawOutfitPreview();
+});
+
+outfitExpandPreview?.addEventListener("click", () => {
+  const expanded = !outfitPreviewBox.classList.contains("is-expanded");
+  if (expanded) {
+    // #result-panel はデスクトップで独立スクロールするため、その内側で
+    // position:fixed にしてもパネル境界に切り取られるブラウザがある。
+    // 拡大中だけ body 直下へ移し、閉じたら元のDOM位置へ正確に戻す。
+    outfitPreviewPlaceholder = document.createComment("outfit-preview-home");
+    outfitPreviewBox.parentNode.insertBefore(outfitPreviewPlaceholder, outfitPreviewBox);
+    document.body.appendChild(outfitPreviewBox);
+    outfitPreviewBox.classList.add("is-expanded");
+  } else {
+    outfitPreviewBox.classList.remove("is-expanded");
+    if (outfitPreviewPlaceholder?.parentNode) {
+      outfitPreviewPlaceholder.parentNode.insertBefore(outfitPreviewBox, outfitPreviewPlaceholder);
+      outfitPreviewPlaceholder.remove();
+    }
+    outfitPreviewPlaceholder = null;
+  }
+  outfitExpandPreview.setAttribute("aria-pressed", String(expanded));
+  outfitExpandPreview.textContent = expanded ? "元の大きさに戻す" : "大きく表示";
+  document.body.classList.toggle("has-outfit-preview-expanded", expanded);
+  window.setTimeout(() => {
+    drawOutfitPreview();
+    window.PatternForge3D?.resize();
+  }, 30);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && outfitPreviewBox?.classList.contains("is-expanded")) {
+    event.preventDefault();
+    outfitExpandPreview?.click();
+  }
+});
+
+outfitGarmentColor?.addEventListener("input", () => {
+  outfitState.garmentColor = outfitGarmentColor.value;
+  drawOutfitPreview();
+});
+outfitAccessoryColor?.addEventListener("input", () => {
+  outfitState.accessoryColor = outfitAccessoryColor.value;
+  drawOutfitPreview();
+});
+
+function _outfitSafeFileName() {
+  return (outfitState.projectName || "PatternForge-complete-look")
+    .replace(/[\\/:*?"<>|]/g, "-").slice(0, 60);
+}
+
+function _downloadOutfitCanvas(canvas, suffix, successMessage) {
+  const saveBlob = (blob) => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${_outfitSafeFileName()}-${suffix}.png`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    if (outfitSaveStatus) outfitSaveStatus.textContent = successMessage;
+  };
+  if (canvas.toBlob) canvas.toBlob(saveBlob, "image/png");
+  else {
+    const link = document.createElement("a");
+    link.href = canvas.toDataURL("image/png");
+    link.download = `${_outfitSafeFileName()}-${suffix}.png`;
+    link.click();
+    if (outfitSaveStatus) outfitSaveStatus.textContent = successMessage;
+  }
+}
+
+outfitSaveImage?.addEventListener("click", () => {
+  drawOutfitPreview();
+  const source = window.PatternForge3D?.canvas || outfitCanvas;
+  _downloadOutfitCanvas(source, "完成イメージ", "高品質3DイメージをPNG保存しました");
+});
+
+outfitSaveFourViews?.addEventListener("click", () => {
+  if (!outfitCanvas || !outfitState.parts.length) return;
+  const webglSheet = window.PatternForge3D?.makeFourViewSheet(outfitState.projectName);
+  if (webglSheet) {
+    _downloadOutfitCanvas(webglSheet, "完成4面図", "高品質3Dの完成4面図を保存しました");
+    return;
+  }
+  const previousAngle = outfitState.angle;
+  const previousTilt = outfitState.tilt;
+  const sheet = document.createElement("canvas");
+  sheet.width = 1600;
+  sheet.height = 1500;
+  const context = sheet.getContext("2d");
+  context.fillStyle = "#11121d";
+  context.fillRect(0, 0, sheet.width, sheet.height);
+  context.fillStyle = "#f8f7ff";
+  context.font = "700 42px sans-serif";
+  context.fillText(`${outfitState.projectName || "PatternForge"}　完成4面図`, 48, 62);
+  context.font = "500 22px sans-serif";
+  context.fillStyle = "#b9b7d2";
+  context.fillText("配置・シルエット確認用（製造寸法はPDF・DXF・STL・3MFを参照）", 48, 98);
+  const views = [
+    ["正面", 0], ["右側面", Math.PI / 2],
+    ["背面", Math.PI], ["左側面", -Math.PI / 2],
+  ];
+  outfitState.tilt = 0;
+  views.forEach(([label, angle], index) => {
+    outfitState.angle = angle;
+    drawOutfitPreview();
+    const column = index % 2, row = Math.floor(index / 2);
+    const x = 40 + column * 780, y = 130 + row * 670;
+    context.fillStyle = "#202238";
+    context.fillRect(x, y, 740, 620);
+    context.drawImage(outfitCanvas, x + 16, y + 46, 708, 550);
+    context.fillStyle = "#ffffff";
+    context.font = "700 28px sans-serif";
+    context.fillText(label, x + 22, y + 35);
+  });
+  outfitState.angle = previousAngle;
+  outfitState.tilt = previousTilt;
+  setOutfitAngle(previousAngle);
+  _downloadOutfitCanvas(sheet, "完成4面図", "正面・背面・左右の4面図を保存しました");
+});
+function animateOutfitPreview() {
+  if (!outfitState.auto) return;
+  outfitState.angle += .008;
+  drawOutfitPreview();
+  outfitState.frame = window.requestAnimationFrame(animateOutfitPreview);
+}
+outfitAutoRotate?.addEventListener("click", () => {
+  outfitState.auto = !outfitState.auto;
+  outfitAutoRotate.setAttribute("aria-pressed", String(outfitState.auto));
+  outfitAutoRotate.textContent = outfitState.auto ? "自動回転を停止" : "自動回転";
+  if (outfitState.auto) animateOutfitPreview();
+  else window.cancelAnimationFrame(outfitState.frame);
+});
 
 // round34: 「布を何m買えばいいか」を先頭に出す。
 //
@@ -983,6 +1925,18 @@ function renderFabricGroups(data) {
       + "（コンビニで1回の印刷で済ませたい場合はこちら）。";
     list.appendChild(row);
     list.appendChild(note);
+  }
+  const specification = data.download && data.download.spec_pdf;
+  if (specification) {
+    const row = document.createElement("div");
+    row.className = "download-row";
+    row.style.margin = "0 0 10px";
+    const anchor = document.createElement("a");
+    anchor.href = specification;
+    anchor.className = "btn-outline";
+    anchor.textContent = "衣装全体の製作仕様書PDF";
+    row.appendChild(anchor);
+    list.appendChild(row);
   }
   for (const group of groups) {
     const block = document.createElement("div");
@@ -1598,6 +2552,20 @@ const CUSTOM_PANEL_MEASUREMENT_FIELDS = [
   ["bust", "バスト"], ["waist", "ウエスト"], ["hip", "ヒップ"],
   ["height", "身長"], ["sleeve_length", "袖丈"], ["shoulder_width", "肩幅"],
 ];
+const CUSTOM_PANEL_REPLACEMENT_TYPES = [
+  ["", "追加パーツとして使う（標準パーツは残す）"],
+  ["front_bodice", "前身頃を置き換える"],
+  ["back_bodice", "後身頃を置き換える"],
+  ["front_bodice_zip_panel", "前開きの前身頃を置き換える"],
+  ["sleeve", "袖を置き換える"],
+  ["skirt", "スカートを置き換える"],
+  ["front_pants", "パンツ前を置き換える"],
+  ["back_pants", "パンツ後ろを置き換える"],
+  ["collar", "衿を置き換える"],
+  ["cuffs", "カフスを置き換える"],
+  ["waistband", "ウエスト帯を置き換える"],
+  ["hood", "フードを置き換える"],
+];
 // 画像を読み込んだ際、キャンバスの内部描画バッファ(=座標系)の最大辺(px)。
 // 校正(calibrate_points_to_cm)は参照線1本の実寸を基準にした一様スケーリング
 // のため、この値を変えても最終的なcm換算結果には影響しない
@@ -1635,8 +2603,6 @@ const addCustomPanelBtn = document.getElementById("add-custom-panel-btn");
 const customPanelsJsonInput = document.getElementById("custom-panels-json-input");
 
 let customPanelIdCounter = 0;
-/** @type {Array<object>} 各要素は1つのカスタムパーツカードの状態。 */
-const customPanels = [];
 
 function _toolButton(text) {
   const b = document.createElement("button");
@@ -1658,6 +2624,9 @@ function syncAddCustomPanelButton() {
   addCustomPanelBtn.textContent = atLimit
     ? `カスタムパーツを追加（1リクエストあたり上限${CUSTOM_PANEL_MAX_PANELS_CLIENT}個に達しました）`
     : "＋ カスタムパーツを追加";
+  // 3D出力はカスタムパーツを入力にする。追加・削除と同じ同期点で
+  // 有効状態も更新し、途中のプレビュー更新が失敗しても古い状態を残さない。
+  syncAccessory3dAvailability();
 }
 
 // panel.points/refA/refBはすべて「キャンバスの内部描画バッファ」座標系
@@ -1858,6 +2827,10 @@ function updateCustomPanelsJson() {
       mirror: panel.els.mirrorInput.checked,
       // round57: 収まらないときに分けてよいか(既定は分けない)。
       allow_split: panel.els.splitInput.checked,
+      replacement_part_type: panel.els.replacementSelect.value || null,
+      seam_fit_confirmed: panel.els.seamFitConfirmed.checked,
+      grade_width_cm: parseFloat(panel.els.gradeWidthInput.value) || 0,
+      grade_height_cm: parseFloat(panel.els.gradeHeightInput.value) || 0,
     };
     if (panel.els.measurementRadio.checked) {
       entry.measurement_field = panel.els.measurementSelect.value;
@@ -2104,6 +3077,69 @@ function createCustomPanel() {
   header.append(labelInput, quantityLabel, mirrorLabel, splitLabel, removeBtn);
   card.appendChild(header);
 
+  const relationshipBox = document.createElement("div");
+  relationshipBox.className = "custom-panel-calibration";
+  const replacementLabel = document.createElement("label");
+  replacementLabel.appendChild(document.createTextNode("この輪郭の使い方 "));
+  const replacementSelect = document.createElement("select");
+  replacementSelect.setAttribute("aria-label", "カスタム輪郭の使い方");
+  CUSTOM_PANEL_REPLACEMENT_TYPES.forEach(([value, label]) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    replacementSelect.appendChild(option);
+  });
+  replacementLabel.appendChild(replacementSelect);
+  relationshipBox.appendChild(replacementLabel);
+  const seamConfirmLabel = document.createElement("label");
+  seamConfirmLabel.className = "checkbox-row hidden";
+  const seamFitConfirmed = document.createElement("input");
+  seamFitConfirmed.type = "checkbox";
+  seamConfirmLabel.append(
+    seamFitConfirmed,
+    document.createTextNode(
+      " これは着用画像の外形ではなく、実寸の平面型紙輪郭です。"
+      + "接続する縫い線の長さも確認しました"));
+  relationshipBox.appendChild(seamConfirmLabel);
+  const replacementHint = document.createElement("p");
+  replacementHint.className = "hint hint-warn hidden";
+  replacementHint.textContent =
+    "置換を選ぶと、同じ種類の標準型紙を外してこの輪郭を使います。"
+    + "必要枚数が不足する場合や縫い線確認がない場合は出力を止めます。"
+    + "着た状態のシルエットは平面型紙ではないため置換に使えません。";
+  relationshipBox.appendChild(replacementHint);
+  const gradeBox = document.createElement("div");
+  gradeBox.className = "custom-panel-calibration";
+  const gradeTitle = document.createElement("strong");
+  gradeTitle.textContent = "サイズ展開（1段階当たり・0なら実寸固定）";
+  const gradeWidthLabel = document.createElement("label");
+  gradeWidthLabel.appendChild(document.createTextNode(" 幅 "));
+  const gradeWidthInput = document.createElement("input");
+  gradeWidthInput.type = "number";
+  gradeWidthInput.step = "0.1";
+  gradeWidthInput.min = "-20";
+  gradeWidthInput.max = "20";
+  gradeWidthInput.value = "0";
+  gradeWidthInput.setAttribute("aria-label", "1サイズ当たりの幅の増減量(cm)");
+  gradeWidthLabel.append(gradeWidthInput, document.createTextNode(" cm"));
+  const gradeHeightLabel = document.createElement("label");
+  gradeHeightLabel.appendChild(document.createTextNode(" 高さ "));
+  const gradeHeightInput = document.createElement("input");
+  gradeHeightInput.type = "number";
+  gradeHeightInput.step = "0.1";
+  gradeHeightInput.min = "-20";
+  gradeHeightInput.max = "20";
+  gradeHeightInput.value = "0";
+  gradeHeightInput.setAttribute("aria-label", "1サイズ当たりの高さの増減量(cm)");
+  gradeHeightLabel.append(gradeHeightInput, document.createTextNode(" cm"));
+  const gradeHint = document.createElement("p");
+  gradeHint.className = "hint";
+  gradeHint.textContent = "XS/S/M/L/XLで隣のサイズへ移るごとの増減量です。"
+    + "バックルや穴位置を固定したい小物は0のままにします。";
+  gradeBox.append(gradeTitle, gradeWidthLabel, gradeHeightLabel, gradeHint);
+  relationshipBox.appendChild(gradeBox);
+  card.appendChild(relationshipBox);
+
   const traceRow = document.createElement("div");
   traceRow.className = "custom-panel-trace-row";
   const fileInput = document.createElement("input");
@@ -2225,11 +3261,25 @@ function createCustomPanel() {
     img: null, points: [], refA: null, refB: null, mode: "add", dragging: null,
     els: {
       labelInput, quantityInput, mirrorInput, splitInput, fileInput, autoTraceBtn,
+      replacementSelect, seamFitConfirmed, seamConfirmLabel, replacementHint,
+      gradeWidthInput, gradeHeightInput,
       addModeBtn, refABtn, refBBtn, undoBtn, clearBtn, removeBtn,
       manualRadio, measurementRadio, referenceCmInput, referenceCmField,
       measurementSelect, measurementFieldBox, status, sizePreview,
     },
   };
+  const syncReplacementFields = () => {
+    const replacing = replacementSelect.value !== "";
+    seamConfirmLabel.classList.toggle("hidden", !replacing);
+    replacementHint.classList.toggle("hidden", !replacing);
+    seamFitConfirmed.required = replacing;
+    if (!replacing) seamFitConfirmed.checked = false;
+    updateCustomPanelsJson();
+  };
+  replacementSelect.addEventListener("change", syncReplacementFields);
+  seamFitConfirmed.addEventListener("change", updateCustomPanelsJson);
+  gradeWidthInput.addEventListener("input", updateCustomPanelsJson);
+  gradeHeightInput.addEventListener("input", updateCustomPanelsJson);
   customPanels.push(panel);
   redrawPanel(panel);
   wireCustomPanelEvents(panel);
@@ -2242,6 +3292,7 @@ if (addCustomPanelBtn) {
   addCustomPanelBtn.addEventListener("click", () => createCustomPanel());
 }
 wireCustomPanelSizeDependencies();
+syncAccessory3dAvailability();
 
 // フォーム送信前の入力チェック。手動モード以外では常に空配列に戻す
 // (バックエンドはイラスト/サイズ展開モードでcustom_panels_jsonが空でない
@@ -2251,7 +3302,13 @@ wireCustomPanelSizeDependencies();
 function validateCustomPanelsBeforeSubmit() {
   const modeInput = form.querySelector('input[name="mode"]:checked');
   const isManual = modeInput && modeInput.value === "manual";
-  if (!isManual || customPanels.length === 0) {
+  const isIllustration = modeInput && modeInput.value === "illustration";
+  const isMultiSize = modeInput && modeInput.value === "multi_size";
+  const supportsCustomPanels = isManual || isIllustration || isMultiSize;
+  if (supportsCustomPanels && accessory3dCheckbox && accessory3dCheckbox.checked && customPanels.length === 0) {
+    return "3D小物を作るには、先にカスタムパーツを1つ以上追加してください。";
+  }
+  if (!supportsCustomPanels || customPanels.length === 0) {
     if (customPanelsJsonInput) customPanelsJsonInput.value = "[]";
     return null;
   }
@@ -2266,8 +3323,129 @@ function validateCustomPanelsBeforeSubmit() {
       const cm = parseFloat(panel.els.referenceCmInput.value);
       if (!(cm > 0)) return `カスタムパーツ「${label}」: 参照点A〜B間の実寸(cm)を入力してください。`;
     }
+    if (panel.els.replacementSelect.value && !panel.els.seamFitConfirmed.checked) {
+      return `カスタムパーツ「${label}」: 標準パーツを置き換えるには、平面型紙の輪郭と縫い線を確認したチェックを入れてください。`;
+    }
   }
   updateCustomPanelsJson();
+  return null;
+}
+
+function validateIllustrationProductionBeforeSubmit() {
+  const mode = form.querySelector('input[name="mode"]:checked')?.value;
+  const stage = form.querySelector('input[name="illustration_stage"]:checked')?.value;
+  if (mode !== "illustration" || stage !== "production") return null;
+  const requiredSelections = [
+    ["illustration_neckline", "前の襟ぐり"],
+    ["illustration_back_neckline", "後ろの襟ぐり"],
+    ["illustration_sleeve_style", "袖"],
+    ["illustration_skirt_style", "スカート"],
+    ["illustration_pants_style", "パンツ"],
+    ["illustration_collar_style", "衿"],
+    ["illustration_cuffs_style", "カフス"],
+    ["illustration_waistband_style", "ウエストベルト"],
+    ["illustration_hood", "フード"],
+    ["illustration_closure", "開閉方法"],
+    ["illustration_symmetry", "左右構造"],
+    ["illustration_internal_support", "内部構造"],
+    ["illustration_movement", "使用時の動き"],
+  ];
+  const missing = requiredSelections.filter(([name]) => {
+    const control = form.elements.namedItem(name);
+    return !control || control.value === "auto";
+  });
+  const closure = form.elements.namedItem("illustration_closure")?.value;
+  if (["back_zip", "side_zip"].includes(closure)) {
+    const length = parseFloat(form.elements.namedItem("illustration_closure_length_cm")?.value || "");
+    if (!(length >= 1 && length <= 100)) {
+      missing.push(["illustration_closure_length_cm", "ファスナーの開き長"]);
+    }
+  }
+  if (["hooks", "snaps"].includes(closure)) {
+    const count = parseInt(form.elements.namedItem("illustration_closure_count")?.value || "", 10);
+    const spacing = parseFloat(form.elements.namedItem("illustration_closure_spacing_cm")?.value || "");
+    const overlap = parseFloat(form.elements.namedItem("illustration_closure_overlap_cm")?.value || "");
+    if (!(count >= 2 && count <= 30)) {
+      missing.push(["illustration_closure_count", "ホック／スナップの個数"]);
+    }
+    if (!(spacing >= 1 && spacing <= 20)) {
+      missing.push(["illustration_closure_spacing_cm", "ホック／スナップの間隔"]);
+    }
+    if (closure === "snaps" && !(overlap >= 1 && overlap <= 10)) {
+      missing.push(["illustration_closure_overlap_cm", "スナップの重なり量"]);
+    }
+  }
+  const pleatCount = parseInt(form.elements.namedItem("illustration_pleat_count")?.value || "0", 10);
+  if (pleatCount > 0) {
+    const depth = parseFloat(form.elements.namedItem("illustration_pleat_depth_cm")?.value || "");
+    if (!(depth >= 0.5 && depth <= 10)) {
+      missing.push(["illustration_pleat_depth_cm", "プリーツのひだ深さ"]);
+    }
+  }
+  const symmetry = form.elements.namedItem("illustration_symmetry")?.value;
+  let customPanels = [];
+  try {
+    customPanels = JSON.parse(form.elements.namedItem("custom_panels_json")?.value || "[]");
+  } catch (_error) {
+    customPanels = [];
+  }
+  if (symmetry === "asymmetric") {
+    const distinct = new Set((Array.isArray(customPanels) ? customPanels : [])
+      .map((panel) => JSON.stringify(panel?.points || panel?.points_px || [])));
+    if (distinct.size < 2) {
+      return "左右非対称の製作用データには、左側と右側を別々にトレースした異なる輪郭が2件以上必要です。カスタムパーツで両側を追加するか、ラフ確認を選んでください。";
+    }
+  }
+  const support = form.elements.namedItem("illustration_internal_support")?.value;
+  if (support === "petticoat") {
+    const style = form.elements.namedItem("illustration_petticoat_style")?.value;
+    const tiers = parseInt(form.elements.namedItem("illustration_petticoat_tier_count")?.value || "", 10);
+    const length = parseFloat(form.elements.namedItem("illustration_petticoat_length_cm")?.value || "");
+    if (!["soft", "hoop"].includes(style)) missing.push(["illustration_petticoat_style", "パニエ方式"]);
+    if (!(tiers >= 1 && tiers <= 5)) missing.push(["illustration_petticoat_tier_count", "パニエの段数"]);
+    if (!(length >= 20 && length <= 120)) missing.push(["illustration_petticoat_length_cm", "パニエ丈"]);
+    if (style === "soft") {
+      const ratio = parseFloat(form.elements.namedItem("illustration_petticoat_fullness_ratio")?.value || "");
+      if (!(ratio >= 1.2 && ratio <= 2.5)) missing.push(["illustration_petticoat_fullness_ratio", "段ごとの周長倍率"]);
+    }
+    if (style === "hoop") {
+      const values = (form.elements.namedItem("illustration_petticoat_hoop_diameters_cm")?.value || "")
+        .split(",").map((value) => parseFloat(value.trim())).filter(Number.isFinite);
+      if (values.length !== tiers || values.some((value) => value < 20 || value > 180)
+          || values.some((value, index) => index > 0 && value <= values[index - 1])) {
+        missing.push(["illustration_petticoat_hoop_diameters_cm", "上段から大きくなる輪直径"]);
+      }
+    }
+  }
+  if (support === "interfacing") {
+    const checked = form.querySelectorAll(
+      'input[name="illustration_interfacing_targets"]:checked');
+    const inset = parseFloat(
+      form.elements.namedItem("illustration_interfacing_inset_cm")?.value || "");
+    if (!checked.length) {
+      missing.push(["illustration_interfacing_targets", "接着芯を貼る部位"]);
+    }
+    if (!(inset >= 0 && inset <= 5)) {
+      missing.push(["illustration_interfacing_inset_cm", "接着芯の縁からの控え"]);
+    }
+  }
+  if (support === "armor_base" && (!Array.isArray(customPanels) || !customPanels.length)) {
+    return "造形物用の土台には、実寸校正したカスタムパーツ輪郭が必要です。画像上で土台をトレースしてください。";
+  }
+  if (!missing.length) return null;
+  const firstNamed = form.elements.namedItem(missing[0][0]);
+  const firstControl = firstNamed && typeof firstNamed.closest === "function"
+    ? firstNamed : firstNamed?.[0];
+  const details = firstControl && firstControl.closest("details");
+  if (details) details.open = true;
+  if (firstControl) firstControl.focus();
+  return `製作用データには確認が必要です：${missing.map(([, label]) => label).join("、")}。`
+    + "まだ決められない場合は「ラフ確認だけ」を選んでください。";
+}
+
+function validateMeasuredBlockBeforeSubmit() {
+  // 専用原型も、肩幅・バストのサイズ差から幅と袖ぐり深さを展開できる。
+  // 角度と設計ゆとりは固定されるため、ここでモードを禁止しない。
   return null;
 }
 
@@ -2275,13 +3453,32 @@ form.addEventListener("submit", async (event) => {
   event.preventDefault();
   clearError();
 
+  const referenceError = validateReferencesBeforeSubmit();
+  if (referenceError) {
+    showError(referenceError);
+    referenceBoard?.scrollIntoView({ behavior: "smooth", block: "center" });
+    illustrationFileInput?.focus({ preventScroll: true });
+    return;
+  }
+
   const customPanelError = validateCustomPanelsBeforeSubmit();
   if (customPanelError) {
     showError(customPanelError);
     return;
   }
+  const illustrationConfirmationError = validateIllustrationProductionBeforeSubmit();
+  if (illustrationConfirmationError) {
+    showError(illustrationConfirmationError);
+    return;
+  }
+  const measuredBlockError = validateMeasuredBlockBeforeSubmit();
+  if (measuredBlockError) {
+    showError(measuredBlockError);
+    return;
+  }
 
   placeholder.classList.add("hidden");
+  if (resultProjectName) resultProjectName.classList.add("hidden");
   content.classList.add("hidden");
   multiSizeContent.classList.add("hidden");
   loading.classList.remove("hidden");
@@ -2295,6 +3492,12 @@ form.addEventListener("submit", async (event) => {
       signal: timer.signal,
     });
     const data = await readJsonOrThrow(response, "型紙の生成に失敗しました。");
+
+    if (resultProjectName) {
+      const name = (data.project_name || "").trim();
+      resultProjectName.textContent = name ? `プロジェクト：${name}` : "";
+      resultProjectName.classList.toggle("hidden", !name);
+    }
 
     if (data.mode === "multi_size") {
       renderMultiSizeResults(data);
@@ -2327,10 +3530,29 @@ form.addEventListener("submit", async (event) => {
     renderFabricGroups(data);
 
     const cacheBust = `?t=${Date.now()}`;
-    document.getElementById("preview-img").src = data.download.svg + cacheBust;
-    document.getElementById("download-svg").href = data.download.svg;
-    document.getElementById("download-pdf").href = data.download.pdf;
-    document.getElementById("download-dxf").href = data.download.dxf;
+    const previewUrl = data.preview_svg || data.download.svg;
+    const previewImg = document.getElementById("preview-img");
+    if (previewImg && previewUrl) previewImg.src = previewUrl + cacheBust;
+    const svgLink = document.getElementById("download-svg");
+    const pdfLink = document.getElementById("download-pdf");
+    const dxfLink = document.getElementById("download-dxf");
+    if (svgLink) {
+      svgLink.classList.toggle("hidden", !data.download.svg);
+      if (data.download.svg) svgLink.href = data.download.svg;
+    }
+    if (pdfLink) {
+      pdfLink.classList.toggle("hidden", !data.download.pdf);
+      if (data.download.pdf) pdfLink.href = data.download.pdf;
+    }
+    const specPdfLink = document.getElementById("download-spec-pdf");
+    if (specPdfLink) {
+      specPdfLink.classList.toggle("hidden", !data.download.spec_pdf);
+      if (data.download.spec_pdf) specPdfLink.href = data.download.spec_pdf;
+    }
+    if (dxfLink) {
+      dxfLink.classList.toggle("hidden", !data.download.dxf);
+      if (data.download.dxf) dxfLink.href = data.download.dxf;
+    }
     // round39: プロジェクター投影用。応答に無い場合(古いジョブの再生成など)は
     // リンクを隠す——押せるのに404になる方が分かりにくい。
     const projectorLink = document.getElementById("download-projector");
@@ -2338,6 +3560,92 @@ form.addEventListener("submit", async (event) => {
       const href = data.download.projector;
       projectorLink.classList.toggle("hidden", !href);
       if (href) projectorLink.href = href + cacheBust;
+    }
+
+    const stlLink = document.getElementById("download-stl");
+    const vendorLink = document.getElementById("download-vendor-zip");
+    const accessoryBox = document.getElementById("accessory-3d-result");
+    const accessorySummary = document.getElementById("accessory-3d-summary");
+    const accessoryWarnings = document.getElementById("accessory-3d-warnings");
+    const accessory = data.accessory_3d;
+    if (stlLink) {
+      stlLink.classList.toggle("hidden", !data.download.stl);
+      if (data.download.stl) stlLink.href = data.download.stl + cacheBust;
+    }
+    if (vendorLink) {
+      vendorLink.classList.toggle("hidden", !data.download.vendor_zip);
+      if (data.download.vendor_zip) vendorLink.href = data.download.vendor_zip + cacheBust;
+    }
+    if (accessoryBox) accessoryBox.classList.toggle("hidden", !accessory);
+    if (accessory && accessorySummary) {
+      const curveText = accessory.curvature_radius_mm
+        ? (accessory.curve_axis === "both"
+          ? `・曲率半径 横${accessory.curvature_radius_mm}mm／縦${accessory.curvature_radius_height_mm || accessory.curvature_radius_mm}mm（二方向）`
+          : `・曲率半径${accessory.curvature_radius_mm}mm（${accessory.curve_axis === "height" ? "縦" : "横"}曲げ）`)
+        : "・平板";
+      const holeNames = { center: "中央1穴", pair_width: "左右2穴", pair_height: "上下2穴" };
+      const holeText = accessory.mounting_hole_pattern && accessory.mounting_hole_pattern !== "none"
+        ? `・取り付け穴 ${holeNames[accessory.mounting_hole_pattern] || accessory.mounting_hole_pattern}`
+          + `（直径${accessory.mounting_hole_diameter_mm}mm）`
+        : "・取り付け穴なし";
+      const slotText = accessory.mounting_slot_pattern && accessory.mounting_slot_pattern !== "none"
+        ? `・ベルト長穴 ${holeNames[accessory.mounting_slot_pattern] || accessory.mounting_slot_pattern}`
+          + `（${accessory.mounting_slot_length_mm}×${accessory.mounting_slot_width_mm}mm・`
+          + `${accessory.mounting_slot_axis === "height" ? "縦" : "横"}向き）`
+        : "・ベルト長穴なし";
+      const magnetText = accessory.magnet_pocket_pattern && accessory.magnet_pocket_pattern !== "none"
+        ? `・磁石ポケット ${holeNames[accessory.magnet_pocket_pattern] || accessory.magnet_pocket_pattern}`
+          + `（直径${accessory.magnet_pocket_diameter_mm}mm・深さ${accessory.magnet_pocket_depth_mm}mm・非貫通）`
+        : "・磁石ポケットなし";
+      const attachmentNames = {
+        sew_on_clip: "縫い付けクリップ", brooch_pin: "ブローチピン",
+        pivot_joint: "可動軸・リベット",
+      };
+      const attachmentText = accessory.attachment_interface
+          && accessory.attachment_interface !== "none"
+        ? `・市販金具 ${attachmentNames[accessory.attachment_interface] || accessory.attachment_interface}`
+        : "";
+      accessorySummary.textContent = `${accessory.piece_count}個・厚み${accessory.thickness_mm}mm・`
+        + `配置サイズ ${accessory.arranged_width_mm}×${accessory.arranged_depth_mm}mm`
+        + `${curveText}${holeText}${slotText}${magnetText}${attachmentText}。`
+        + "自宅印刷はSTL、業者への見積依頼は入稿用ZIPを使ってください。";
+    }
+    if (accessoryWarnings) {
+      accessoryWarnings.innerHTML = "";
+      for (const message of (accessory && accessory.warnings) || []) {
+        const li = document.createElement("li");
+        li.textContent = message;
+        accessoryWarnings.appendChild(li);
+      }
+    }
+
+    const productionBox = document.getElementById("production-status");
+    const productionTitle = document.getElementById("production-status-title");
+    const productionDetail = document.getElementById("production-status-detail");
+    const productionPending = document.getElementById("production-status-pending");
+    const continueToProduction = document.getElementById("continue-to-production");
+    const production = data.production_status;
+    if (productionBox) productionBox.classList.toggle("hidden", !production);
+    if (continueToProduction) {
+      continueToProduction.classList.toggle("hidden", !production || production.ready);
+    }
+    if (production && productionTitle && productionDetail) {
+      productionBox.classList.toggle("note-warn", !production.ready);
+      productionBox.classList.toggle("note-info", production.ready);
+      productionTitle.textContent = production.ready
+        ? "製作用データとして出力しました"
+        : "ラフ確認です — 本番生地を裁断しないでください";
+      productionDetail.textContent = production.ready
+        ? "確認入力と自動検査を通過しています。実物の仮縫い確認は別途必要です。"
+        : "未確認事項が残っているため、裁断用PDF・DXF・STLは出力していません。";
+    }
+    if (productionPending) {
+      productionPending.innerHTML = "";
+      for (const message of (production && production.pending) || []) {
+        const li = document.createElement("li");
+        li.textContent = message;
+        productionPending.appendChild(li);
+      }
     }
 
     document.getElementById("rotation-warning").classList.toggle("hidden", !data.rotation_used);
@@ -2431,6 +3739,36 @@ form.addEventListener("submit", async (event) => {
       compatibilityWarningList.appendChild(li);
     }
 
+    const quality = data.production_quality;
+    const qualityBox = document.getElementById("production-quality-result");
+    if (qualityBox) {
+      qualityBox.classList.toggle("hidden", !quality);
+      if (quality) {
+        document.getElementById("production-quality-summary").textContent = quality.summary || "";
+        const blockers = document.getElementById("production-quality-blockers");
+        blockers.innerHTML = "";
+        blockers.classList.toggle("hidden", !(quality.blockers || []).length);
+        for (const message of (quality.blockers || [])) {
+          const li = document.createElement("li");
+          li.textContent = message;
+          blockers.appendChild(li);
+        }
+        const checklist = document.getElementById("production-quality-checklist");
+        checklist.innerHTML = "";
+        for (const item of (quality.fitting_checklist || [])) {
+          const row = document.createElement("div");
+          row.className = "field-box";
+          const title = document.createElement("strong");
+          title.textContent = item.label;
+          const detail = document.createElement("p");
+          detail.className = "hint";
+          detail.textContent = `${item.method} 合格条件: ${item.pass_condition}`;
+          row.append(title, detail);
+          checklist.appendChild(row);
+        }
+      }
+    }
+
     document.getElementById("ai-contribution-note").textContent = data.ai_contribution || "";
 
     // round50: 「AI使用」かどうかは、サーバが返す `ai_engine` で決める。
@@ -2460,11 +3798,14 @@ form.addEventListener("submit", async (event) => {
 
     renderCompareBars(data.used_length_cm, data.naive_used_length_cm || data.used_length_cm);
     renderPartsList(data.parts);
+    renderOutfitPreview(data);
     renderClassificationLog(data.classification_log);
     updateUsageNote(data.usage);
 
     loading.classList.add("hidden");
     content.classList.remove("hidden");
+    workflowResultReady = true;
+    syncWorkflowProgress();
     // 結果を差し込んだ後にも先頭へ戻す(高さが変わると位置がずれるため)。
     if (resultPanel) resultPanel.scrollTop = 0;
     // round46: パネルの中を先頭へ戻すだけでは、1段組(768px以下)では
@@ -2515,52 +3856,110 @@ form.addEventListener("submit", async (event) => {
   }
 });
 
-// -- 同時に選べない組み合わせを、押す前に止める (round67) -------------------
-//
-// 前開きファスナーと切り替え線(プリンセスライン)は同時に指定できない
-// (engine/pipeline.py の build_garment_spec がはっきり断る。前開きの
-// パネルは左右非対称で、切り替え線の分割がその形を前提にしていないため)。
-//
-// round66まで画面は両方押せてしまい、**「型紙を生成する」を押してから**
-// エラーで戻されていた。説明文の中に一行書いてはあったが、round32の
-// 折りたたみで隠れることがあるうえ、押せてしまうことに変わりはない。
-// 片方を選んだ時点で、もう片方をその場で押せなくして理由を出す。
+const continueToProduction = document.getElementById("continue-to-production");
+continueToProduction?.addEventListener("click", () => {
+  const productionStage = form.querySelector('input[name="illustration_stage"][value="production"]');
+  const advanced = illustrationSection?.querySelector("details.advanced-options");
+  if (productionStage) {
+    productionStage.checked = true;
+    productionStage.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  if (advanced) {
+    advanced.open = true;
+    advanced.scrollIntoView({ behavior: "smooth", block: "start" });
+    const firstControl = advanced.querySelector("select, input:not([type='hidden'])");
+    window.setTimeout(() => firstControl?.focus({ preventScroll: true }), 300);
+  }
+});
+
 const optFrontZip = document.getElementById("opt-front-zip");
 const optPrincess = document.getElementById("opt-princess-line");
-const zipPrincessConflict = document.getElementById("zip-princess-conflict");
 
-function syncZipPrincessConflict() {
-  if (!optFrontZip || !optPrincess || !zipPrincessConflict) return;
-  const blockedByZip = optFrontZip.checked;
-  const blockedByPrincess = optPrincess.checked;
-  optPrincess.disabled = blockedByZip;
-  optFrontZip.disabled = blockedByPrincess;
-  const chosen = blockedByZip ? "前開きファスナー"
-                : blockedByPrincess ? "切り替え線（プリンセスライン）" : "";
-  const blocked = blockedByZip ? "切り替え線（プリンセスライン）"
-                : blockedByPrincess ? "前開きファスナー" : "";
-  if (!chosen) {
-    zipPrincessConflict.textContent = "";
-    zipPrincessConflict.classList.add("hidden");
-    optPrincess.removeAttribute("aria-describedby");
-    optFrontZip.removeAttribute("aria-describedby");
-    return;
+const illustrationClosure = document.getElementById("illustration-closure");
+const illustrationClosureLength = document.getElementById("illustration-closure-length");
+const illustrationClosureCount = document.getElementById("illustration-closure-count");
+const illustrationClosureSpacing = document.getElementById("illustration-closure-spacing");
+const illustrationClosureOverlap = document.getElementById("illustration-closure-overlap");
+
+function syncIllustrationClosureLength() {
+  if (!illustrationClosureLength || !illustrationClosure) return;
+  const needsLength = ["back_zip", "side_zip"].includes(illustrationClosure.value);
+  illustrationClosureLength.disabled = !needsLength;
+  illustrationClosureLength.required = needsLength;
+  const needsDiscrete = ["hooks", "snaps"].includes(illustrationClosure.value);
+  for (const control of [illustrationClosureCount, illustrationClosureSpacing]) {
+    if (!control) continue;
+    control.disabled = !needsDiscrete;
+    control.required = needsDiscrete;
   }
-  zipPrincessConflict.textContent =
-    `「${chosen}」を選んでいる間は、「${blocked}」は選べません`
-    + "（前開きのパネルは左右非対称で、切り替え線の分割がその形に対応して"
-    + `いないためです）。「${blocked}」を使いたい場合は、`
-    + `「${chosen}」のチェックを外してください。`;
-  zipPrincessConflict.classList.remove("hidden");
-  // 押せない方に、押せない理由を結び付ける(読み上げで理由が分かるように)。
-  const blockedInput = blockedByZip ? optPrincess : optFrontZip;
-  blockedInput.setAttribute("aria-describedby", "zip-princess-conflict");
+  if (illustrationClosureOverlap) {
+    const needsOverlap = illustrationClosure.value === "snaps";
+    illustrationClosureOverlap.disabled = !needsOverlap;
+    illustrationClosureOverlap.required = needsOverlap;
+  }
+}
+if (illustrationClosure) {
+  illustrationClosure.addEventListener("change", syncIllustrationClosureLength);
+  syncIllustrationClosureLength();
 }
 
-if (optFrontZip && optPrincess) {
-  optFrontZip.addEventListener("change", syncZipPrincessConflict);
-  optPrincess.addEventListener("change", syncZipPrincessConflict);
-  syncZipPrincessConflict();
+const illustrationSlitPosition = document.getElementById("illustration-slit-position");
+const illustrationSlitLength = document.getElementById("illustration-slit-length");
+function syncIllustrationSlit() {
+  if (!illustrationSlitPosition || !illustrationSlitLength) return;
+  const enabled = illustrationSlitPosition.value !== "none";
+  illustrationSlitLength.disabled = !enabled;
+  illustrationSlitLength.required = enabled;
+  if (!enabled) illustrationSlitLength.value = "";
+}
+
+const illustrationSupport = document.getElementById("illustration-internal-support");
+const interfacingSettings = document.getElementById("illustration-interfacing-settings");
+const petticoatSettings = document.getElementById("illustration-petticoat-settings");
+const petticoatStyle = document.getElementById("illustration-petticoat-style");
+const petticoatFullnessRow = document.getElementById("illustration-petticoat-fullness-row");
+const petticoatHoopsRow = document.getElementById("illustration-petticoat-hoops-row");
+function syncPetticoatSettings() {
+  if (!illustrationSupport || !petticoatSettings) return;
+  const enabled = illustrationSupport.value === "petticoat";
+  const interfacingEnabled = illustrationSupport.value === "interfacing";
+  interfacingSettings?.classList.toggle("hidden", !interfacingEnabled);
+  interfacingSettings?.querySelectorAll("input").forEach((control) => {
+    control.disabled = !interfacingEnabled;
+    if (!interfacingEnabled && control.type === "checkbox") control.checked = false;
+  });
+  petticoatSettings.classList.toggle("hidden", !enabled);
+  petticoatSettings.querySelectorAll("input, select").forEach((control) => {
+    control.disabled = !enabled;
+  });
+  const hoop = petticoatStyle?.value === "hoop";
+  petticoatFullnessRow?.classList.toggle("hidden", hoop);
+  petticoatHoopsRow?.classList.toggle("hidden", !hoop);
+}
+illustrationSupport?.addEventListener("change", syncPetticoatSettings);
+petticoatStyle?.addEventListener("change", syncPetticoatSettings);
+syncPetticoatSettings();
+if (illustrationSlitPosition && illustrationSlitLength) {
+  illustrationSlitPosition.addEventListener("change", syncIllustrationSlit);
+  syncIllustrationSlit();
+}
+
+const illustrationMotifPosition = document.getElementById("illustration-motif-position");
+const illustrationMotifWidth = document.getElementById("illustration-motif-width");
+const illustrationMotifHeight = document.getElementById("illustration-motif-height");
+const illustrationMotifImage = document.getElementById("illustration-motif-image");
+function syncIllustrationMotif() {
+  if (!illustrationMotifPosition || !illustrationMotifWidth || !illustrationMotifHeight) return;
+  const enabled = illustrationMotifPosition.value !== "none";
+  for (const input of [illustrationMotifWidth, illustrationMotifHeight, illustrationMotifImage].filter(Boolean)) {
+    input.disabled = !enabled;
+    if (input !== illustrationMotifImage) input.required = enabled;
+    if (!enabled) input.value = "";
+  }
+}
+if (illustrationMotifPosition) {
+  illustrationMotifPosition.addEventListener("change", syncIllustrationMotif);
+  syncIllustrationMotif();
 }
 
 // -- 採寸図: 入力中の項目を図の上で光らせる (round34) -------------------------
@@ -2907,6 +4306,165 @@ for (const input of form ? form.querySelectorAll('input[name="mode"]') : []) {
   input.addEventListener("change", () => window.setTimeout(collapseLongHints, 0));
 }
 if (fitSelect) fitSelect.addEventListener("change", () => window.setTimeout(collapseLongHints, 0));
+
+// -- このタブ内の入力保護と、生成直前の要約 (round79) ---------------------
+// 採寸値や選択項目は長いフォームの途中で入力する。誤って再読み込みすると
+// すべて既定値へ戻り、どこまで確認したかも失われる。サーバーや永続ストレージ
+// には送らず、タブを閉じると消える sessionStorage だけへ一時保存する。
+// 画像は容量とプライバシーの都合で保存しない。
+const SESSION_DRAFT_KEY = "patternforge:form-draft:v1";
+const SESSION_DRAFT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+const sessionDraftStatus = document.getElementById("session-draft-status");
+const sessionDraftClear = document.getElementById("session-draft-clear");
+const generationSummaryText = document.getElementById("generation-summary-text");
+let sessionDraftTimer = null;
+
+function _draftControlsByName(name) {
+  const named = form.elements.namedItem(name);
+  if (!named) return [];
+  if (named instanceof Element) return [named];
+  return Array.from(named);
+}
+
+function collectSessionDraft() {
+  const fields = {};
+  const controls = form.querySelectorAll("input[name], select[name], textarea[name]");
+  controls.forEach((control) => {
+    const type = (control.type || "").toLowerCase();
+    if (["file", "hidden", "submit", "button", "password"].includes(type)) return;
+    if (!control.name) return;
+    if (type === "radio") {
+      if (control.checked) fields[control.name] = { type, value: control.value };
+      return;
+    }
+    if (type === "checkbox") {
+      if (!fields[control.name]) fields[control.name] = { type, values: [] };
+      if (control.checked) fields[control.name].values.push(control.value);
+      return;
+    }
+    fields[control.name] = { type: "value", value: control.value };
+  });
+  return { version: 1, savedAt: Date.now(), fields };
+}
+
+function saveSessionDraft() {
+  try {
+    sessionStorage.setItem(SESSION_DRAFT_KEY, JSON.stringify(collectSessionDraft()));
+    if (sessionDraftStatus && !sessionDraftStatus.dataset.restored) {
+      sessionDraftStatus.textContent = "入力をこのタブ内に保存しました（画像を除く）";
+    }
+  } catch (_error) {
+    if (sessionDraftStatus) sessionDraftStatus.textContent = "このブラウザでは入力の一時保存を利用できません";
+  }
+}
+
+function scheduleSessionDraftSave() {
+  window.clearTimeout(sessionDraftTimer);
+  sessionDraftTimer = window.setTimeout(saveSessionDraft, 250);
+}
+
+function restoreSessionDraft() {
+  let draft;
+  try {
+    draft = JSON.parse(sessionStorage.getItem(SESSION_DRAFT_KEY) || "null");
+  } catch (_error) {
+    try { sessionStorage.removeItem(SESSION_DRAFT_KEY); } catch (_removeError) {}
+    return false;
+  }
+  if (!draft || draft.version !== 1 || !draft.savedAt || !draft.fields
+      || Date.now() - draft.savedAt > SESSION_DRAFT_MAX_AGE_MS) {
+    try { sessionStorage.removeItem(SESSION_DRAFT_KEY); } catch (_error) {}
+    return false;
+  }
+
+  const changed = [];
+  Object.entries(draft.fields).forEach(([name, saved]) => {
+    const controls = _draftControlsByName(name);
+    controls.forEach((control) => {
+      if (saved.type === "radio") {
+        const selected = control.value === saved.value;
+        control.checked = selected;
+        // 同じnameの未選択ラジオにもchangeを送ると、その値へモードが
+        // 切り替わったようにUIだけが変わる。選ばれた1個だけ同期させる。
+        if (selected) changed.push(control);
+      } else if (saved.type === "checkbox") {
+        const checked = Array.isArray(saved.values) && saved.values.includes(control.value);
+        const wasChecked = control.checked;
+        control.checked = checked;
+        if (wasChecked !== checked) changed.push(control);
+      } else if (saved.type === "value" && "value" in control) {
+        const oldValue = control.value;
+        control.value = saved.value;
+        if (oldValue !== saved.value) changed.push(control);
+      }
+    });
+  });
+  let measurementChanged = false;
+  changed.forEach((control) => {
+    if (HINT_FIELDS.includes(control.name)) {
+      measurementChanged = true;
+      return;
+    }
+    control.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  // 6項目を復元して6回APIを呼ばず、採寸チェックは最後に1回だけ行う。
+  if (measurementChanged) refreshMeasurementHints();
+  // 復元対象が多い場合でも、最後は実際にcheckedなモードを唯一の正として
+  // 表示を確定する。保存データの列挙順や他項目のchange順に依存させない。
+  const restoredMode = form.querySelector('input[name="mode"]:checked');
+  if (restoredMode) setMode(restoredMode.value);
+  if (sessionDraftStatus) {
+    sessionDraftStatus.dataset.restored = "true";
+    sessionDraftStatus.textContent = "前回の入力をこのタブから復元しました（画像は再選択してください）";
+  }
+  return true;
+}
+
+function selectedStyleLabel(name) {
+  const input = form.querySelector(`input[name="${name}"]:checked`);
+  const label = input?.closest("label")?.querySelector("span");
+  return label?.textContent?.trim() || input?.value || "未選択";
+}
+
+function syncGenerationSummary() {
+  if (!generationSummaryText) return;
+  const mode = form.querySelector('input[name="mode"]:checked')?.value || "illustration";
+  const bust = form.elements.namedItem("bust")?.value || "—";
+  const waist = form.elements.namedItem("waist")?.value || "—";
+  const hip = form.elements.namedItem("hip")?.value || "—";
+  const height = form.elements.namedItem("height")?.value || "—";
+  const projectName = form.elements.namedItem("project_name")?.value?.trim();
+  let plan;
+  if (mode === "illustration") {
+    const stage = form.querySelector('input[name="illustration_stage"]:checked')?.value;
+    plan = `画像${stage === "production" ? "製作用" : "ラフ"}・資料${referenceFiles().length}枚`;
+  } else if (mode === "multi_size") {
+    const count = form.querySelectorAll('input[name="sizes"]:checked').length;
+    plan = `サイズ展開 ${count}サイズ・${selectedStyleLabel("neckline")}`;
+  } else {
+    plan = `手動・${selectedStyleLabel("neckline")}／${selectedStyleLabel("sleeve_style")}／${selectedStyleLabel("skirt_style")}`;
+  }
+  const prefix = projectName ? `「${projectName}」・` : "";
+  generationSummaryText.textContent = `${prefix}${plan}・B${bust} / W${waist} / H${hip}・身長${height}cm`;
+}
+
+restoreSessionDraft();
+syncGenerationSummary();
+form.addEventListener("input", () => {
+  scheduleSessionDraftSave();
+  syncGenerationSummary();
+});
+form.addEventListener("change", () => {
+  scheduleSessionDraftSave();
+  syncGenerationSummary();
+});
+sessionDraftClear?.addEventListener("click", () => {
+  const confirmed = window.confirm(
+    "このタブに一時保存した入力と、選択中の画像を消して最初の状態に戻しますか？");
+  if (!confirmed) return;
+  try { sessionStorage.removeItem(SESSION_DRAFT_KEY); } catch (_error) {}
+  window.location.reload();
+});
 
 // -- 採寸プロフィール（ログイン時のみ表示。複数顧客・家族分の採寸値を
 //    名前付きで保存・呼び出しできるようにする） -----------------------

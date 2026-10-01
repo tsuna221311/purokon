@@ -22,6 +22,7 @@ def _valid_form():
         "sleeve_length": "54", "shoulder_width": "37",
         "mode": "manual", "neckline": "round_neck",
         "sleeve_style": "straight", "skirt_style": "flare",
+        "illustration_stage": "draft",
     }
 
 
@@ -32,6 +33,31 @@ def _cape_png_bytes():
     image.save(buf, format="PNG")
     buf.seek(0)
     return buf
+
+
+def test_motif_image_outline_is_normalized_for_safe_regeneration():
+    upload = type("Upload", (), {"stream": _cape_png_bytes(), "filename": "logo.png"})()
+    points = app_module._trace_normalized_motif_outline(upload)
+    assert len(points) >= 4
+    assert min(x for x, _y in points) == 0
+    assert max(x for x, _y in points) == 1
+    assert min(y for _x, y in points) == 0
+    assert max(y for _x, y in points) == 1
+
+
+def test_motif_image_extracts_major_colour_regions():
+    image = Image.new("RGBA", (120, 80), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle([10, 10, 109, 69], fill=(220, 20, 40, 255))
+    draw.ellipse([40, 20, 80, 60], fill=(20, 80, 220, 255))
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    buf.seek(0)
+    upload = type("Upload", (), {"stream": buf, "filename": "logo.png"})()
+    outline, regions = app_module._trace_normalized_motif_data(upload)
+    assert len(outline) >= 4
+    assert len(regions) >= 2
+    assert all(region["color"].startswith("#") for region in regions)
 
 
 def _cape_panel_payload(label="マント", quantity=1, mirror=False, reference_cm=40.0,
@@ -49,6 +75,31 @@ def _cape_panel_payload(label="マント", quantity=1, mirror=False, reference_c
     else:
         panel["reference_cm"] = reference_cm
     return panel
+
+
+def _fitted_sleeve_replacement_payload():
+    """標準袖そのものの実寸縫い線を、確認済み置換入力へ変換する。"""
+    from engine.measurements import Measurements
+    from engine.pipeline import PatternForgePipeline, build_garment_spec
+
+    measurements = Measurements(
+        bust=84, waist=68, hip=92, height=160,
+        sleeve_length=54, shoulder_width=37)
+    result = PatternForgePipeline().generate_from_selection(
+        build_garment_spec(sleeve_style="straight", skirt_style="flare"),
+        measurements, skip_export=True)
+    sleeve = next(part for part in result.finalized_parts
+                  if part.part_type == "sleeve")
+    points = [list(point) for point in sleeve.stitch_line]
+    if points[0] == points[-1]:
+        points.pop()
+    return {
+        "label": "確認済み袖", "points": points,
+        # 入力座標をすでにcmとして扱うため100単位=100cm、倍率1.0。
+        "ref_point_a": [0, 0], "ref_point_b": [100, 0],
+        "reference_cm": 100, "quantity": 1, "mirror": True,
+        "replacement_part_type": "sleeve", "seam_fit_confirmed": True,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +234,49 @@ def test_generate_manual_mode_custom_panel_mirror_produces_two_parts(client):
     assert data["part_count"] == 2
 
 
+def test_standard_part_replacement_requires_flat_pattern_seam_confirmation(client):
+    form = _valid_form()
+    panel = _cape_panel_payload(label="左袖")
+    panel["replacement_part_type"] = "sleeve"
+    panel["seam_fit_confirmed"] = False
+    form["custom_panels_json"] = json.dumps([panel])
+    response = client.post("/api/generate", data=form)
+    assert response.status_code == 400
+    assert "平面型紙" in response.get_json()["error"]
+
+
+def test_standard_part_replacement_refuses_to_guess_missing_other_sleeve(client):
+    form = _valid_form()
+    panel = _cape_panel_payload(label="左袖")
+    panel.update({"replacement_part_type": "sleeve", "seam_fit_confirmed": True})
+    form["custom_panels_json"] = json.dumps([panel])
+    response = client.post("/api/generate", data=form)
+    assert response.status_code == 400
+    assert "2枚必要" in response.get_json()["error"]
+
+
+def test_confirmed_mirrored_outline_replaces_both_standard_sleeves(client):
+    form = _valid_form()
+    form["custom_panels_json"] = json.dumps([_fitted_sleeve_replacement_payload()])
+    response = client.post("/api/generate", data=form)
+    assert response.status_code == 200, response.get_json().get("error")
+    sleeves = [part for part in response.get_json()["parts"]
+               if part["part_type"] == "sleeve"]
+    assert len(sleeves) == 2
+    assert {part["variation"] for part in sleeves} == {
+        "確認済み袖", "確認済み袖(反転)"}
+
+
+def test_confirmed_but_mismatched_replacement_is_withheld(client):
+    form = _valid_form()
+    panel = _cape_panel_payload(label="合わない袖", mirror=True)
+    panel.update({"replacement_part_type": "sleeve", "seam_fit_confirmed": True})
+    form["custom_panels_json"] = json.dumps([panel])
+    response = client.post("/api/generate", data=form)
+    assert response.status_code == 400
+    assert "裁断用PDF・SVG・DXFは出力していません" in response.get_json()["error"]
+
+
 def test_generate_manual_mode_custom_panel_invalid_json_returns_clear_error(client):
     form = _valid_form()
     form["custom_panels_json"] = "not valid json"
@@ -212,7 +306,7 @@ def test_generate_manual_mode_custom_panel_over_limit_count_rejected(client):
     assert response.status_code == 400
 
 
-def test_generate_illustration_mode_rejects_custom_panels_json(client, monkeypatch):
+def test_generate_illustration_mode_combines_detected_and_custom_panels(client, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     form = _valid_form()
     form["mode"] = "illustration"
@@ -221,18 +315,33 @@ def test_generate_illustration_mode_rejects_custom_panels_json(client, monkeypat
         **form,
         "illustration": (_cape_png_bytes(), "cape.png"),
     }, content_type="multipart/form-data")
-    assert response.status_code == 400
-    assert "イラストモード" in response.get_json()["error"]
+    assert response.status_code == 200, response.get_json().get("error")
+    payload = response.get_json()
+    assert any(part["part_type"] == "custom_panel" for part in payload["parts"])
+    assert any(part["part_type"] == "front_bodice" for part in payload["parts"])
 
 
-def test_generate_multi_size_mode_rejects_custom_panels_json(client):
+def test_generate_multi_size_mode_grades_custom_panels_json(client):
     form = _valid_form()
     form["mode"] = "multi_size"
-    form["sizes"] = "M"
-    form["custom_panels_json"] = json.dumps([_cape_panel_payload()])
+    form["sizes"] = ["S", "M", "L"]
+    panel = _cape_panel_payload()
+    panel["grade_width_cm"] = 2
+    panel["grade_height_cm"] = 4
+    form["custom_panels_json"] = json.dumps([panel])
     response = client.post("/api/generate", data=form)
-    assert response.status_code == 400
-    assert "サイズ展開モード" in response.get_json()["error"]
+    assert response.status_code == 200, response.get_json().get("error")
+    results = response.get_json()["results"]
+    widths, heights = [], []
+    for size in ("S", "M", "L"):
+        part = next(item for item in results[size]["parts"]
+                    if item["part_type"] == "custom_panel")
+        widths.append(part["width_cm"])
+        heights.append(part["height_cm"])
+    assert widths[1] - widths[0] == pytest.approx(2, abs=0.05)
+    assert widths[2] - widths[1] == pytest.approx(2, abs=0.05)
+    assert heights[1] - heights[0] == pytest.approx(4, abs=0.05)
+    assert heights[2] - heights[1] == pytest.approx(4, abs=0.05)
 
 
 def test_generate_manual_mode_custom_panel_failure_does_not_consume_daily_usage(client):
@@ -275,12 +384,34 @@ def test_regenerate_job_recreates_custom_panel_from_stored_spec(client):
     assert "再生成しました" in regen_response.get_data(as_text=True)
 
 
+def test_regenerate_keeps_confirmed_standard_part_replacement(client):
+    _signup(client, email="replacement_regen@example.com")
+    form = _valid_form()
+    form["custom_panels_json"] = json.dumps([_fitted_sleeve_replacement_payload()])
+    generated = client.post("/api/generate", data=form)
+    assert generated.status_code == 200, generated.get_json().get("error")
+    job_id = generated.get_json()["job_id"]
+
+    regenerated = client.post(
+        f"/account/jobs/{job_id}/regenerate", follow_redirects=True)
+    assert regenerated.status_code == 200
+    assert "再生成しました" in regenerated.get_data(as_text=True)
+
+
 # --- round11: トレース画面の寸法プレビュー・頂点の個別削除 -------------------
 
 def _app_js() -> str:
     import pathlib
     import app as app_module
     return (pathlib.Path(app_module.BASE_DIR) / "web" / "static" / "app.js").read_text(encoding="utf-8")
+
+
+def test_browser_sends_replacement_target_and_requires_seam_confirmation():
+    js = _app_js()
+    assert "replacement_part_type: panel.els.replacementSelect.value || null" in js
+    assert "seam_fit_confirmed: panel.els.seamFitConfirmed.checked" in js
+    assert "着用画像の外形ではなく、実寸の平面型紙輪郭" in js
+    assert "標準パーツを置き換えるには" in js
 
 
 def test_client_side_dimension_limits_match_the_server_side_constants():

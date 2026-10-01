@@ -82,6 +82,8 @@ ASSIGNABLE_AREAS: tuple[AssignableArea, ...] = (
     AssignableArea("cuffs", "カフス", ("cuffs",)),
     AssignableArea("hood", "フード", ("hood",)),
     AssignableArea("waistband", "ウエストバンド", ("waistband",)),
+    AssignableArea("petticoat", "パニエ",
+                   ("petticoat_tier", "petticoat_waistband")),
     AssignableArea("custom_panel", "カスタムパーツ", ("custom_panel",)),
 )
 

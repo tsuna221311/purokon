@@ -38,9 +38,10 @@ round26以降、この型紙エンジンが「正直な限界」として毎回�
   「BPを通る縫い目の曲がり」で作っている。つまり得られる胸の立体は、
   ウエストで開いた量に応じた分だけで、新文化式の胸ぐせダーツ角
   (B/4−2.5度)を再現するものではない。足りない場合は開示する。
-* **BPの上下で縁の長さがそろっていない。** 中央側と脇側の縁は、BPを
-  中心にわずかに長さが違う(実測で最大0.6cm)。実物の型紙では長い方を
-  いせ込むか、線を引き直して合わせる。ここでは差を実測して開示する。
+* **切り替え線は必ず縫合長を整える。** 中央側と脇側の曲線は、
+  袖ぐり始点・BP・ウエスト・裾を動かさずに長い側だけをトゥルーイングし、
+  0.01cm以内に合わせる。制御点を保ったままでは合わせられない極端な体型だけ、
+  無理に形を壊さず差を警告する。合わせ位置には弧長35%・70%の合印を付ける。
 * **後ろ身頃の切り替え線の頂点は、肩甲骨の位置ではなくバストラインの
   高さに置いている。** 肩甲骨の高さを決める採寸項目を持っていないため。
 """
@@ -57,15 +58,18 @@ from .svgpath import segments_to_polyline
 
 Point = tuple[float, float]
 
-#: 切り替え線を分割できるパーツ種。前開きの片側パネル
-#: (front_bodice_zip_panel)は左右非対称で中心前が輪郭の縁にあるため対象外。
-PRINCESS_PART_TYPES = ("front_bodice", "back_bodice")
+#: 切り替え線を分割できるパーツ種。前開きの片側パネルは
+#: 対称身頃とは別の片身アルゴリズムで分ける。
+PRINCESS_PART_TYPES = ("front_bodice", "back_bodice", "front_bodice_zip_panel")
 
 #: 分割後のパーツ種の名前。`part_type`はラベルにそのまま出るので、
 #: 「中央」「脇」が分かる名前にしてある。
 PRINCESS_PANEL_TYPES: dict[str, tuple[str, str]] = {
     "front_bodice": ("front_bodice_center", "front_bodice_side"),
     "back_bodice": ("back_bodice_center", "back_bodice_side"),
+    # 中心側は見返しを持つ前開きパネルのままとし、既存の
+    # ファスナー長・接着芯・縫製手順の判定を保つ。
+    "front_bodice_zip_panel": ("front_bodice_zip_panel", "front_bodice_side"),
 }
 
 #: 切り替え線が袖ぐりから始まる位置。脇の下から袖ぐりの弧長の何割か。
@@ -157,6 +161,83 @@ def _edge_length(points: list[Point]) -> float:
     return sum(hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(points, points[1:]))
 
 
+def _points_at_edge_ratios(points: list[Point], ratios=(0.35, 0.70)) -> list[Point]:
+    """縫い線上の同じ弧長位置に合印用の点を返す。"""
+    total = _edge_length(points)
+    if total <= 1e-9:
+        return []
+    output: list[Point] = []
+    for ratio in ratios:
+        target = total * ratio
+        walked = 0.0
+        for a, b in zip(points, points[1:]):
+            length = hypot(b[0] - a[0], b[1] - a[1])
+            if walked + length >= target:
+                t = (target - walked) / length if length else 0.0
+                output.append((a[0] + (b[0] - a[0]) * t,
+                               a[1] + (b[1] - a[1]) * t))
+                break
+            walked += length
+    return output
+
+
+def _linear_x_at(controls: list[Point], y: float) -> float:
+    """制御点を直線で結んだ場合の x(y)。制御点は必ず通る。"""
+    for (y0, x0), (y1, x1) in zip(controls, controls[1:]):
+        if y0 <= y <= y1:
+            if abs(y1 - y0) <= 1e-9:
+                return x0
+            ratio = (y - y0) / (y1 - y0)
+            return x0 + (x1 - x0) * ratio
+    return controls[0][1] if y < controls[0][0] else controls[-1][1]
+
+
+def _blend_edge_toward_controls(edge: list[Point], controls: list[Point],
+                                smooth_ratio: float) -> list[Point]:
+    """BP・ウエスト等の制御点を保ったまま、曲線を直線側へ整える。"""
+    return [(_linear_x_at(controls, y)
+             + (x - _linear_x_at(controls, y)) * smooth_ratio, y)
+            for x, y in edge]
+
+
+def _true_edge_pair(center_edge: list[Point], side_edge: list[Point],
+                    center_controls: list[Point], side_controls: list[Point]
+                    ) -> tuple[list[Point], list[Point]]:
+    """中央側と脇側の縫い線を1mm以内で同じ長さに整える。
+
+    長い側のエルミート曲線を、各制御点を結ぶ折れ線の方へだけ
+    寄せる。そのため袖ぐり始点・BP・ウエスト・裾は動かず、
+    絞り量も保たれる。縫合線を合わせてから縫い代を付ける、
+    型紙のtrueing/equalizing処理。
+    """
+    center_length = _edge_length(center_edge)
+    side_length = _edge_length(side_edge)
+    if abs(center_length - side_length) <= 0.01:
+        return center_edge, side_edge
+    if center_length > side_length:
+        longer, controls, target = center_edge, center_controls, side_length
+        replace_center = True
+    else:
+        longer, controls, target = side_edge, side_controls, center_length
+        replace_center = False
+    straightened = _blend_edge_toward_controls(longer, controls, 0.0)
+    if _edge_length(straightened) > target + 0.01:
+        # 制御点を動かさずにはこれ以上短くできない。無理に合わせず、
+        # 従来どおり差を警告で開示する。
+        return center_edge, side_edge
+    low, high = 0.0, 1.0
+    best = longer
+    for _ in range(40):
+        mid = (low + high) / 2.0
+        candidate = _blend_edge_toward_controls(longer, controls, mid)
+        if _edge_length(candidate) > target:
+            high = mid
+        else:
+            low = mid
+        best = candidate
+    return (best, side_edge) if replace_center else (center_edge, best)
+
+
 def _crossing_index(points: list[Point], y: float, start: int, stop: int,
                      left: bool) -> int | None:
     """points[start:stop] のうち、高さ`y`を跨ぐ辺の番号を返す。"""
@@ -221,7 +302,7 @@ def split_bodice(part_type: str, scaled, measurements: Measurements,
 
     実測値の辞書には、開示に使う量を入れる:
         waist_intake_cm … 切り替え線1本がウエストで摘む量
-        edge_gap_cm     … 中央側と脇側の縁の長さの差(いせ込む量)
+        edge_gap_cm     … トゥルーイング後の中央側と脇側の縫合長差
     """
     if part_type not in PRINCESS_PART_TYPES:
         return None
@@ -233,6 +314,9 @@ def split_bodice(part_type: str, scaled, measurements: Measurements,
         return None
     xs = [p[0] for p in points]
     ys = [p[1] for p in points]
+    if part_type == "front_bodice_zip_panel":
+        return _split_zip_panel(points, scaled, measurements, fit)
+
     center_x = (min(xs) + max(xs)) / 2.0
     hem_y = max(ys)
     waist_y = scaled.waist_y_cm
@@ -285,6 +369,207 @@ def split_bodice(part_type: str, scaled, measurements: Measurements,
     return center_segments, side_segments, stats
 
 
+def _scaled_anchor_x(scaled, role: str) -> float | None:
+    return next((float(x) for name, x in getattr(scaled, "fit_anchors_scaled", ())
+                 if name == role), None)
+
+
+def _point_on_walk(points: list[Point], start: int, stop: int,
+                   ratio: float) -> tuple[Point, int]:
+    """輪郭の points[start:stop+1] を弧長で歩き、点と挿入辺を返す。"""
+    walk = points[start:stop + 1]
+    total = _edge_length(walk)
+    if len(walk) < 2 or total <= 0:
+        raise PrincessError("袖ぐりの点列が短すぎます")
+    target = total * ratio
+    acc = 0.0
+    for offset, (a, b) in enumerate(zip(walk, walk[1:])):
+        length = hypot(b[0] - a[0], b[1] - a[1])
+        if acc + length >= target:
+            t = (target - acc) / length if length else 0.0
+            return ((a[0] + (b[0] - a[0]) * t,
+                     a[1] + (b[1] - a[1]) * t), start + offset)
+        acc += length
+    raise PrincessError("袖ぐりの上に開始点を置けません")
+
+
+def _split_zip_panel(points: list[Point], scaled, measurements: Measurements,
+                     fit=None) -> tuple[list, list, dict] | None:
+    """見返し付きの片身前パネルを、中心側と脇側の2枚に分ける。
+
+    対称身頃用の`_build_panels`は左右の袖ぐりがある前提なので、
+    片身の場合は外側脇線から肩先までだけを袖ぐりとして歩く。
+    中心前より外側の見返しは中心側パネルへそのまま残す。
+    """
+    if scaled.waist_y_cm is None or scaled.bust_line_y_cm is None:
+        return None
+    cf_x = _scaled_anchor_x(scaled, "cf")
+    side_x = _scaled_anchor_x(scaled, "side")
+    shoulder_x = _scaled_anchor_x(scaled, "shoulder")
+    if cf_x is None or side_x is None or shoulder_x is None:
+        return None
+    direction = 1.0 if side_x > cf_x else -1.0
+    half_width = abs(side_x - cf_x)
+    intake = princess_intake_cm(half_width, measurements.waist,
+                                 fit_ease(fit).waist_cm)
+    if intake <= 0.2:
+        return None
+
+    # 閉じた輪郭は同じ始終点を1つだけ持つ。同梱テンプレートは
+    # 「脇裾→脇線→袖ぐり→肩→襟ぐり→見返し→裾」の順。
+    ring = points[:-1]
+    # round77: 回転の起点は**裾の高さにある、中心前からいちばん遠い点**。
+    #
+    # 【round76までここで何が起きていたか】起点を「xが脇アンカーに
+    # いちばん近い点」で選んでいた。ところがヒップを通すために裾は脇より
+    # 外へ開く(`engine/bodice_fit.py`の`apply_hip_widening`)ので、裾のxは
+    # 脇アンカーと一致しない。一方**脇の下**のxはアンカーとぴったり一致
+    # する。その結果、脇裾のつもりで**脇の下**から輪郭を回し始めていた。
+    #
+    # 実測(バスト83・ウエスト66・ヒップ91=このプロジェクトの標準M):
+    #
+    #     脇アンカー x=45.50 / 選ばれた起点 (45.50, 23.50) ←バスト線の高さ
+    #     そこから測った「袖ぐりの下端」 (18.44, 23.50) ←見返しの側の点
+    #
+    # 切り替え線の起点が袖ぐりではなく裾のすぐ上に落ち、中心前パネルが
+    # **16.2×7.4cm**の切れ端になっていた(前身頃の丈は60.4cm)。しかも
+    # 縫い合わせの警告も「確かめていません」も出ない。
+    #
+    # 裾は輪郭のいちばん下にあり、脇裾はその中で中心前から最も遠い点
+    # である——これはヒップの開きがあっても動かない。
+    side_hem = max(range(len(ring)), key=lambda i: (
+        round(ring[i][1], 3), direction * (ring[i][0] - cf_x)))
+    ring = ring[side_hem:] + ring[:side_hem]
+    # 脇裾から**脇線を上へ**辿る向きにそろえる(輪郭の回り方に依存しない)。
+    if len(ring) > 2 and ring[1][1] > ring[-1][1]:
+        ring = [ring[0]] + list(reversed(ring[1:]))
+    ring.append(ring[0])
+    # 袖ぐりの下端は「脇裾から上へ辿って、最初に脇の下の高さへ届く点」。
+    # 脇線はウエストの絞りやヒップの開きで何本にも折れるので、辺の本数で
+    # 数えると途中で止まる。高さで決めれば折れ方に左右されない。
+    underarm_y = (scaled.underarm_y_cm if scaled.underarm_y_cm is not None
+                  else scaled.bust_line_y_cm)
+    side_upper = next(
+        (i for i in range(1, len(ring)) if ring[i][1] <= underarm_y + 0.05), None)
+    if side_upper is None:
+        return None
+    shoulder_candidates = range(side_upper + 1, len(ring) - 1)
+    if not shoulder_candidates:
+        return None
+    shoulder_i = min(shoulder_candidates,
+                     key=lambda i: abs(ring[i][0] - shoulder_x) + ring[i][1] * .001)
+    try:
+        arm, arm_edge = _point_on_walk(
+            ring, side_upper, shoulder_i, PRINCESS_ARMHOLE_FROM_UNDERARM)
+    except PrincessError:
+        return None
+
+    waist_y = float(scaled.waist_y_cm)
+    hem_y = max(y for _x, y in ring)
+    apex_y = float(scaled.bust_point_y_cm or scaled.bust_line_y_cm)
+    apex_y = min(max(apex_y, min(y for _x, y in ring) + 1.0), waist_y - 2.0)
+    apex_offset = min(
+        bust_point_from_cf_cm(measurements.bust, measurements.bust_point_spacing),
+        half_width - MIN_PANEL_WIDTH_CM)
+    if apex_offset <= MIN_PANEL_WIDTH_CM:
+        return None
+    apex_x = cf_x + direction * apex_offset
+    hem_x = apex_x
+    half = intake / 2.0
+    center_controls = [
+        (arm[1], arm[0]), (apex_y, apex_x),
+        (waist_y, apex_x - direction * half), (hem_y, hem_x)]
+    side_controls = [
+        (arm[1], arm[0]), (apex_y, apex_x),
+        (waist_y, apex_x + direction * half), (hem_y, hem_x)]
+    center_edge = _sample_edge(center_controls)
+    side_edge = _sample_edge(side_controls)
+    center_edge, side_edge = _true_edge_pair(
+        center_edge, side_edge, center_controls, side_controls)
+    center_notch_edge = center_edge
+    side_notch_edge = side_edge
+
+    # 袖ぐりの開始点と裾の着地点を輪郭へ挿入。裾の着地点は
+    # 最後の「中心前裾→脇裾」の辺上にある。
+    work = _insert(ring, arm_edge, arm)
+    arm_at = arm_edge + 1
+    hem_edge = _hem_insert_index(work, hem_y, hem_x)
+    if hem_edge is None:
+        return None
+    work = _insert(work, hem_edge, (hem_x, hem_y))
+    hem_at = hem_edge + 1
+    if hem_at <= arm_at:
+        return None
+
+    side_panel = list(reversed(work[:arm_at + 1])) + [(hem_x, hem_y)] \
+        + list(reversed(side_edge))
+    center_panel = work[arm_at:hem_at + 1] + list(reversed(center_edge))
+    center_panel = _dedupe(center_panel)
+    side_panel = _dedupe(side_panel)
+    if len(center_panel) < 4 or len(side_panel) < 4:
+        return None
+    # 極端な体型で袖ぐりとBPが近すぎると、見た目上は点列が
+    # 作れても縫い線が自己交差する。その場合は壊れた切り替えを
+    # 出さず、呼び出し側の「分割できなかった」警告と元パネルへ戻す。
+    from shapely.geometry import Polygon
+    if any(not Polygon(panel).is_valid or Polygon(panel).area <= 1e-6
+           for panel in (center_panel, side_panel)):
+        from shapely.geometry import LineString
+        from shapely.ops import split
+        line = list(center_edge)
+        if len(line) < 2:
+            return None
+        ax, ay = line[0]
+        bx, by = line[1]
+        ex, ey = line[-1]
+        px, py = line[-2]
+        first_len = hypot(ax - bx, ay - by) or 1.0
+        last_len = hypot(ex - px, ey - py) or 1.0
+        cutter = LineString([
+            (ax + (ax - bx) / first_len, ay + (ay - by) / first_len),
+            *line[1:-1],
+            (ex + (ex - px) / last_len, ey + (ey - py) / last_len),
+        ])
+        pieces = [geom for geom in split(Polygon(ring), cutter).geoms
+                  if geom.geom_type == "Polygon" and geom.area > 1e-6]
+        if len(pieces) != 2:
+            return None
+        pieces.sort(key=lambda geom: abs(geom.centroid.x - cf_x))
+        center_geom, side_geom = pieces
+        center_panel = list(center_geom.exterior.coords)[:-1]
+        side_panel = list(side_geom.exterior.coords)[:-1]
+        if any(not Polygon(panel).is_valid for panel in (center_panel, side_panel)):
+            return None
+        # 安全分割では、最初に予定したcenter_edgeと実際の分割境界が
+        # 一致するとは限らない。予定線の座標を合印へ使うと、生成済み
+        # パネルの外へ10cm以上離れる例があった。分割後の2枚が実際に
+        # 共有する境界線を取り直し、中央側・脇側の両方に同じ弧長位置を使う。
+        shared = center_geom.boundary.intersection(side_geom.boundary)
+        lines = ([shared] if shared.geom_type == "LineString" else
+                 [geom for geom in getattr(shared, "geoms", ())
+                  if geom.geom_type == "LineString"])
+        if not lines:
+            return None
+        shared_points = list(max(lines, key=lambda geom: geom.length).coords)
+        if len(shared_points) < 2:
+            return None
+        center_notch_edge = shared_points
+        side_notch_edge = shared_points
+        unresolved_intake = intake
+        intake = 0.0
+    else:
+        unresolved_intake = 0.0
+    stats = {
+        "waist_intake_cm": intake,
+        "edge_gap_cm": abs(_edge_length(center_edge) - _edge_length(side_edge)),
+        "facing_width_cm": abs(cf_x - (_scaled_anchor_x(scaled, "cut") or cf_x)),
+        "unresolved_intake_cm": unresolved_intake,
+        "center_notch_points": _points_at_edge_ratios(center_notch_edge),
+        "side_notch_points": _points_at_edge_ratios(side_notch_edge),
+    }
+    return _to_segments(center_panel), _to_segments(side_panel), stats
+
+
 def _hem_insert_index(points: list[Point], hem_y: float, x: float) -> int | None:
     """裾の水平な辺のうち、xを含むものの番号。
 
@@ -326,6 +611,8 @@ def _build_panels(points: list[Point], side_index: int, center_x: float,
                       (waist_y, apex_x - half), (hem_y, hem_x)]
     center_edge = _sample_edge(center_controls)      # 上→下
     side_edge = _sample_edge(side_controls)          # 上→下
+    center_edge, side_edge = _true_edge_pair(
+        center_edge, side_edge, center_controls, side_controls)
 
     def _mirror(seq: list[Point]) -> list[Point]:
         return [(2 * center_x - x, y) for x, y in seq]
@@ -374,7 +661,12 @@ def _build_panels(points: list[Point], side_index: int, center_x: float,
     if len(center_panel) < 4 or len(side_panel) < 4:
         raise PrincessError("分割後の輪郭が短すぎます")
 
-    stats = {"edge_gap_cm": abs(_edge_length(center_edge) - _edge_length(side_edge))}
+    center_notches = _points_at_edge_ratios(center_edge)
+    stats = {
+        "edge_gap_cm": abs(_edge_length(center_edge) - _edge_length(side_edge)),
+        "center_notch_points": center_notches + _mirror(center_notches),
+        "side_notch_points": _points_at_edge_ratios(side_edge),
+    }
     return _to_segments(center_panel), _to_segments(side_panel), stats
 
 

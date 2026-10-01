@@ -22,9 +22,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
-from .cutting import needs_interfacing
+from .cutting import part_needs_interfacing
 from .nesting import DEFAULT_FABRIC_WIDTHS_CM, nest_parts
 
 #: 生地を買うときの丸め単位(cm)。10cm単位で切り売りされるのが普通。
@@ -172,7 +172,21 @@ def interfacing_length_cm(parts: list,
     面積÷幅では、細長いパーツが並ばない事情(衿やウエストバンドは長い)を
     取りこぼす。
     """
-    interfaced = [p for p in parts if needs_interfacing(p.part_type)]
+    interfaced = []
+    for part in parts:
+        if not part_needs_interfacing(part):
+            continue
+        outline = next((points for label, points in part.reference_lines
+                        if label.startswith("接着芯裁断線")), None)
+        # 明示指定した「縁からの控え」がある場合は、表地の外形ではなく
+        # 実際に印字した芯地裁断線を並べる。安全側の概算ではなく、注文量と
+        # 型紙上の線を同じ形状から算出する。
+        if outline:
+            interfaced.append(replace(
+                part, stitch_line=list(outline), cut_line=list(outline),
+                notches=[], internal_lines=[], reference_lines=[]))
+        else:
+            interfaced.append(part)
     if not interfaced:
         return 0
     result = nest_parts(interfaced, fabric_width_cm=width_cm, allow_rotation=False)

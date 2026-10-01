@@ -30,6 +30,9 @@ Point = tuple[float, float]
 Segment = tuple[Point, Point]
 
 DEFAULT_SEAM_ALLOWANCE_CM = 1.0
+# 直角は正確に角を立てる一方、鋭角で縫い代が長い針状に伸びるのを
+# 防ぐmiter長の上限。縫い代幅の2倍を超える鋭角はbevelに落とす。
+SEAM_CORNER_MITRE_LIMIT = 2.0
 
 
 @dataclass
@@ -41,6 +44,9 @@ class FinalizedPart:
     notches: list[Segment]
     grainline: dict
     seam_allowance_cm: float
+    # 裾だけ別幅にした値。後工程でパーツを分割して再確定するときも、
+    # 元の裾幅を失わないために保持する。
+    hem_seam_allowance_cm: float | None = None
     # 「前/後」「左/右」など、同じテンプレートを複数枚使うときにどちらの
     # ピースかを区別するラベル（印刷される型紙にもそのまま表示する）。
     # 実際の縫製では前後・左右で形が同一でも必ずラベルを振って区別するため、
@@ -78,12 +84,22 @@ class FinalizedPart:
     #: Noneなら基準線のバスト線(BL)を脇の下として扱う(round75までと同じ)。
     #: `engine/compatibility.py`の`underarm_y_of`が読む。
     underarm_y_cm: float | None = None
+    # 後工程で左右へ分割したパーツなど、輪郭の並び順が元テンプレートと
+    # 変わる場合の縫い合わせ実測値。compatibility.pyが再推定せず使用する。
+    compatibility_measurements: dict[str, float] = field(default_factory=dict)
+    #: 利用者が明示した接着芯指示。空ならpart_typeごとの既定指示を使う。
+    interfacing_instruction: str = ""
+    #: パーツ名と裁ち方指示を置く、必ず裁断線内にある座標。
+    label_point: Point | None = None
     bbox: tuple[float, float, float, float] = field(init=False)
 
     def __post_init__(self) -> None:
         xs = [p[0] for p in self.cut_line]
         ys = [p[1] for p in self.cut_line]
         self.bbox = (min(xs), min(ys), max(xs), max(ys))
+        if self.label_point is None:
+            self.label_point = ((self.bbox[0] + self.bbox[2]) / 2.0,
+                                (self.bbox[1] + self.bbox[3]) / 2.0)
 
     @property
     def width_cm(self) -> float:
@@ -129,7 +145,9 @@ class FinalizedPart:
     def cutting_note(self) -> str:
         """裁ち方の指示(生地・枚数・わ裁ち・接着芯)。engine/cutting.py参照。"""
         from .cutting import cutting_note
-        return cutting_note(self.part_type, self.cut_quantity, self.cut_on_fold)
+        return cutting_note(
+            self.part_type, self.cut_quantity, self.cut_on_fold,
+            interfacing_instruction=self.interfacing_instruction)
 
 
 def _signed_area(points: list[Point]) -> float:
@@ -281,7 +299,12 @@ def _offset_polygon_per_edge(points: list[Point], edge_distances: list[float]) -
 
 
 def offset_polygon(points: list[Point], distance: float) -> list[Point]:
-    """輪郭を外側に distance(cm) だけオフセットする（縫い代の裁断線を作る）。"""
+    """輪郭を外側に distance(cm) だけオフセットする（縫い代の裁断線を作る）。
+
+    直線の角はmitre joinで延長線の交点まで出す。これによりバンド・カフス・
+    裾の90度角が丸くならず、折り位置を読み取れる。鋭角はmiter limitで
+    bevelに切り替え、危険な長い突起を作らない。
+    """
     if _HAS_SHAPELY:
         pts = points[:-1] if points and points[0] == points[-1] else points
         if len(pts) < 3:
@@ -289,7 +312,9 @@ def offset_polygon(points: list[Point], distance: float) -> list[Point]:
         poly = _ShapelyPolygon(pts)
         if not poly.is_valid:
             poly = poly.buffer(0)
-        buffered = poly.buffer(distance, join_style=1, quad_segs=8)  # round join
+        buffered = poly.buffer(
+            distance, join_style=2,
+            mitre_limit=SEAM_CORNER_MITRE_LIMIT)
         if buffered.is_empty:
             return _offset_polygon_fallback(points, distance)
         coords = list(buffered.exterior.coords)
@@ -372,33 +397,33 @@ def _offset_polygon_variable_shapely(points: list[Point], base_distance: float,
 
     対策として、shapelyが使える場合はこの手計算方式を使わず、
     以下の頑健な合成アプローチに変更した:
-      1. まず全辺base_distanceで`offset_polygon`と同じ一様buffer(shapelyの
-         round join、自己交差の心配が無い)を作る。
+      1. まず全辺base_distanceで`offset_polygon`と同じ、制限付きmitre joinの
+         一様bufferを作る。
       2. 「裾」と判定された辺だけ、元の頂点から外向きにhem_distance分
          張り出した帯状の四角形を作り、辺の両端を接線方向に少し延長した
-         上で(隣接する辺の丸まった角にもきちんと重なるようにするため)、
+         上で(隣接する辺の角にもきちんと重なるようにするため)、
          hem_distance > base_distanceならunion(張り出しを追加)、
          hem_distance < base_distanceならdifference(その分だけ削る)する。
     union/differenceはshapelyの頑健な多角形演算なので、辺単位の手計算
     交差処理と違って自己交差した無効な多角形を生む余地が無い。
-    唯一の近似は、裾の辺の両端(隣の辺との境目)付近が完全な角
-    (miter)ではなく、延長した四角形の端がそのまま境界になる点だが、
-    実用上の縫い代線としては十分な精度で、何より必ず有効な単純多角形に
-    なることを優先した。
+    裾の広い縫い代は延長四角形と結合し、角の折り基準を残しつつ、
+    必ず有効な単純多角形になることを優先する。
     """
     pts = points[:-1] if points and points[0] == points[-1] else list(points)
     n = len(pts)
     base_poly = _ShapelyPolygon(pts)
     if not base_poly.is_valid:
         base_poly = base_poly.buffer(0)
-    result = base_poly.buffer(base_distance, join_style=1, quad_segs=8)
+    result = base_poly.buffer(
+        base_distance, join_style=2,
+        mitre_limit=SEAM_CORNER_MITRE_LIMIT)
 
     edge_distances = _hem_edge_distances(points, base_distance, hem_distance)
     cx = sum(p[0] for p in pts) / n
     cy = sum(p[1] for p in pts) / n
     flip_all = _outward_flip(pts, cx, cy)
 
-    # 接線方向に延長する余白。base_distance分の丸い角の外側まで確実に
+    # 接線方向に延長する余白。base_distance分の角の外側まで確実に
     # 重なる最小限の量として base_distance そのもの(+丸め誤差吸収の
     # 小さな定数)を使う。値を大きくしすぎると自己交差は防げるが、裾の
     # 両端(隣接する辺との継ぎ目)で縫い代がわずかに外側へ膨らむ副作用が
@@ -506,24 +531,139 @@ def notch_marks(stitch_line: list[Point], fractions: list[float],
     return marks
 
 
+def _closest_point_on_segment(point: Point, start: Point, end: Point) -> Point:
+    """線分上でpointに最も近い点。"""
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    length2 = dx * dx + dy * dy
+    if length2 <= 1e-12:
+        return start
+    t = ((point[0] - start[0]) * dx
+         + (point[1] - start[1]) * dy) / length2
+    t = max(0.0, min(1.0, t))
+    return start[0] + t * dx, start[1] + t * dy
+
+
+def extend_notches_to_cut_line(notches: list[Segment],
+                               cut_line: list[Point],
+                               maximum_distance_cm: float
+                               ) -> list[Segment]:
+    """合印の外向き線を、実際の裁断線まで延ばす。
+
+    従来は縫い線から固定5mmだけ描画していた。縫い代1cm以上では
+    合印が裁断線へ届かず、型紙を外周で切ると印の位置が分からなかった。
+    ここでは、すでに計算済みの裁断外周の全辺から最短点を求める。
+    左右反転パネルや凹部で「外向き法線」の推定が逆になっても影響せず、
+    丸い角も実際の外周へ正確に届く。
+    """
+    boundary = (cut_line if cut_line and cut_line[0] == cut_line[-1]
+                else list(cut_line) + ([cut_line[0]] if cut_line else []))
+    output: list[Segment] = []
+    for origin, hint in notches:
+        candidates = [_closest_point_on_segment(origin, start, end)
+                      for start, end in zip(boundary, boundary[1:])]
+        if not candidates:
+            output.append((origin, hint))
+            continue
+        nearest = min(candidates, key=lambda point: math.hypot(
+            point[0] - origin[0], point[1] - origin[1]))
+        distance = math.hypot(
+            nearest[0] - origin[0], nearest[1] - origin[1])
+        output.append((origin, nearest)
+                      if 1e-7 < distance <= maximum_distance_cm
+                      else (origin, hint))
+    return output
+
+
 def grainline_marks(bbox: tuple[float, float, float, float],
-                     margin_ratio: float = 0.08) -> dict:
-    """布目線。パーツ中央に縦方向の矢印つき線を1本引く。"""
+                    margin_ratio: float = 0.08,
+                    outline: list[Point] | None = None) -> dict:
+    """布目線。型紙の内側に収まる最長の縦線を選ぶ。
+
+    `outline`が無い場合は互換性のため従来どおり外接矩形の中央を使う。
+    最終型紙では裁断線を渡し、襟ぐりなどの凹みやボタンタブを避ける。
+    """
     min_x, min_y, max_x, max_y = bbox
     cx = (min_x + max_x) / 2.0
     h = max_y - min_y
-    top = min_y + h * margin_ratio
-    bottom = max_y - h * margin_ratio
+    top, bottom = min_y, max_y
+
+    polygon = None
+    if outline and _HAS_SHAPELY and len(outline) >= 3:
+        polygon = _ShapelyPolygon(outline)
+        if not polygon.is_valid:
+            polygon = polygon.buffer(0)
+        if not polygon.is_empty:
+            from shapely.geometry import LineString as _ShapelyLineString
+
+            def _lines(geometry):
+                if geometry.geom_type == "LineString":
+                    return [geometry]
+                return [part for part in getattr(geometry, "geoms", ())
+                        if part.geom_type == "LineString"]
+
+            # 中央だけではVネックの凹みや脇パネルの細い部分に
+            # 重なる。40分割の候補から、型紙内に取れる最長区間を選ぶ。
+            candidates = []
+            width = max_x - min_x
+            for index in range(41):
+                x = min_x + width * (0.05 + 0.90 * index / 40.0)
+                probe = _ShapelyLineString([
+                    (x, min_y - h - 1.0), (x, max_y + h + 1.0)])
+                for line in _lines(polygon.intersection(probe)):
+                    if line.length > 0.5:
+                        candidates.append((line.length, -abs(x - cx), x, line))
+            if candidates:
+                _length, _centrality, cx, best = max(candidates)
+                ys = [point[1] for point in best.coords]
+                top, bottom = min(ys), max(ys)
+
+    usable = bottom - top
+    padding = min(usable * 0.25, max(0.2, usable * margin_ratio))
+    top += padding
+    bottom -= padding
+    if bottom <= top:
+        top, bottom = min_y + h * margin_ratio, max_y - h * margin_ratio
     arrow = max(0.4, min(1.5, h * 0.03))
-    return {
-        "line": ((cx, top), (cx, bottom)),
-        "arrows": [
-            ((cx - arrow, top + arrow), (cx, top)),
-            ((cx + arrow, top + arrow), (cx, top)),
-            ((cx - arrow, bottom - arrow), (cx, bottom)),
-            ((cx + arrow, bottom - arrow), (cx, bottom)),
-        ],
-    }
+
+    def _arrows(size: float):
+        return [
+            ((cx - size, top + size), (cx, top)),
+            ((cx + size, top + size), (cx, top)),
+            ((cx - size, bottom - size), (cx, bottom)),
+            ((cx + size, bottom - size), (cx, bottom)),
+        ]
+
+    arrows = _arrows(arrow)
+    if polygon is not None and not polygon.is_empty:
+        from shapely.geometry import LineString as _ShapelyLineString
+        # 細いパネルでは矢羽だけが外へ出る。読める下限1mmまで
+        # 段階的に縮め、全ての線分が型紙内にあるサイズを使う。
+        while arrow > 0.1 and not all(
+                polygon.buffer(1e-8).covers(_ShapelyLineString(segment))
+                for segment in arrows):
+            arrow *= 0.75
+            arrows = _arrows(arrow)
+    return {"line": ((cx, top), (cx, bottom)), "arrows": arrows}
+
+
+def label_anchor(cut_line: list[Point]) -> Point:
+    """型紙内で外周から最も離れた、ラベル用の座標を返す。"""
+    xs = [point[0] for point in cut_line]
+    ys = [point[1] for point in cut_line]
+    fallback = ((min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0)
+    if not _HAS_SHAPELY or len(cut_line) < 3:
+        return fallback
+    polygon = _ShapelyPolygon(cut_line)
+    if not polygon.is_valid:
+        polygon = polygon.buffer(0)
+    if polygon.is_empty:
+        return fallback
+    try:
+        from shapely.ops import polylabel
+        point = polylabel(polygon, tolerance=0.05)
+    except (ImportError, ValueError):  # pragma: no cover - 古いshapely用
+        point = polygon.representative_point()
+    return float(point.x), float(point.y)
 
 
 # パーツ種ごとの標準的な合印位置（輪郭の周長比、テンプレート作成時の頂点順に依存）。
@@ -561,6 +701,7 @@ def finalize_part(part_type: str, variation: str, segments: list,
                    internal_lines: list[list[Point]] | None = None,
                    reference_lines: list[tuple[str, list[Point]]] | None = None,
                    underarm_y_cm: float | None = None,
+                   compatibility_measurements: dict[str, float] | None = None,
                    ) -> FinalizedPart:
     """変形済みセグメントから、縫い線・裁断線・合印・布目線を含む最終パーツを作る。
 
@@ -588,7 +729,8 @@ def finalize_part(part_type: str, variation: str, segments: list,
         extra_notch_fractions=extra_notch_fractions,
         dart_count=dart_count, seam_edge=seam_edge,
         notch_points=notch_points, internal_lines=internal_lines,
-        reference_lines=reference_lines, underarm_y_cm=underarm_y_cm)
+        reference_lines=reference_lines, underarm_y_cm=underarm_y_cm,
+        compatibility_measurements=compatibility_measurements)
 
 
 def finalize_from_stitch_line(part_type: str, variation: str,
@@ -603,6 +745,7 @@ def finalize_from_stitch_line(part_type: str, variation: str,
                                internal_lines: list[list[Point]] | None = None,
                                reference_lines: list[tuple[str, list[Point]]] | None = None,
                                underarm_y_cm: float | None = None,
+                               compatibility_measurements: dict[str, float] | None = None,
                                ) -> FinalizedPart:
     """`finalize_part`の本体。縫い線が**点列として既にある**場合の入口。
 
@@ -628,10 +771,16 @@ def finalize_from_stitch_line(part_type: str, variation: str,
         if extra_notch_fractions:
             fractions.extend(extra_notch_fractions)
         notches = notch_marks(stitch_line, fractions)
+    # 合印を固定長の浮いた線にせず、裁断線まで届ける。
+    # 裾だけ広い縫い代の場合も見落とさない上限を渡す。
+    largest_allowance = max(seam_allowance_cm,
+                            hem_seam_allowance_cm or seam_allowance_cm)
+    notches = extend_notches_to_cut_line(
+        notches, cut_line, maximum_distance_cm=largest_allowance * 2.0 + 0.5)
     xs = [p[0] for p in cut_line]
     ys = [p[1] for p in cut_line]
     bbox = (min(xs), min(ys), max(xs), max(ys))
-    grain = grainline_marks(bbox)
+    grain = grainline_marks(bbox, outline=cut_line)
     return FinalizedPart(
         part_type=part_type,
         variation=variation,
@@ -640,10 +789,13 @@ def finalize_from_stitch_line(part_type: str, variation: str,
         notches=notches,
         grainline=grain,
         seam_allowance_cm=seam_allowance_cm,
+        hem_seam_allowance_cm=hem_seam_allowance_cm,
         label_suffix=label_suffix,
         dart_count=dart_count,
         seam_edge=seam_edge,
         internal_lines=list(internal_lines or []),
         reference_lines=list(reference_lines or []),
         underarm_y_cm=underarm_y_cm,
+        compatibility_measurements=dict(compatibility_measurements or {}),
+        label_point=label_anchor(cut_line),
     )

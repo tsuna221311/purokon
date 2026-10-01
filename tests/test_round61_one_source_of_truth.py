@@ -33,6 +33,8 @@ assembly.pyにこう書き残した:
   * `fabric.py` 「(この型紙では1%でも3%でも同じ切り売り単位に収まります)」
 """
 
+import pypdf
+
 import ast
 import re
 import subprocess
@@ -257,8 +259,9 @@ def test_the_printed_pdf_does_not_contradict_itself(tmp_path):
     spec = build_garment_spec(neckline="round_neck", sleeve_style="straight",
                               skirt_style="flare")
     result = pipeline.generate_from_selection(spec, MEAS, lining=True)
-    text = subprocess.run(["pdftotext", result.output_files["pdf"], "-"],
-                          capture_output=True, text=True, check=True).stdout
+    text = "\n".join(
+        page.extract_text() or ""
+        for page in pypdf.PdfReader(result.output_files["pdf"]).pages)
     flat = text.replace("\n", "")
     claims = set(re.findall(r"表地より(\d+(?:\.\d+)?)cm短", flat))
     assert claims == {f"{hem_reduction_cm(1.0):g}"}, (

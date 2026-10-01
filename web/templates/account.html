@@ -178,11 +178,12 @@
         <div class="table-scroll">
         <table class="log-table">
           <thead>
-            <tr><th>生成日時</th><th>パーツ数</th><th>布ロス率</th><th>ダウンロード</th><th></th></tr>
+            <tr><th>プロジェクト</th><th>生成日時</th><th>パーツ数</th><th>布ロス率</th><th>ダウンロード</th><th></th></tr>
           </thead>
           <tbody>
             {% for job in jobs %}
             <tr>
+              <td class="p-2 job-project-name">{{ job.project_name or '名前なし' }}</td>
               <td class="p-2">{{ job.created_at | datetime }}</td>
               <td class="p-2">{{ job.part_count if job.part_count is not none else '—' }}</td>
               <td class="p-2">{{ (job.waste_ratio * 100) | round(1) if job.waste_ratio is not none else '—' }}{{ '%' if job.waste_ratio is not none else '' }}</td>

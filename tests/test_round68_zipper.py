@@ -34,6 +34,8 @@
   5. 前開きでない型紙にファスナーの話が出る
 """
 
+import pypdf
+
 import re
 import subprocess
 from pathlib import Path
@@ -269,9 +271,9 @@ def test_the_printed_memo_has_the_zipper(tmp_path):
     pipe = PatternForgePipeline(output_dir=str(tmp_path))
     spec = build_garment_spec(skirt_style="flare", front_zip=True)
     result = pipe.generate_from_selection(spec, STANDARD)
-    text = subprocess.run(["pdftotext", "-layout", result.output_files["pdf"], "-"],
-                          capture_output=True, text=True, check=True).stdout
-    page = next(p for p in text.split("\f") if "買い物メモ" in p)
+    pages = [page.extract_text() or ""
+             for page in pypdf.PdfReader(result.output_files["pdf"]).pages]
+    page = next(p for p in pages if "買い物メモ" in p)
     assert "ファスナー" in page
     assert "前中心の開き" in page
     opening = result.summary()["shopping_list"]["front_opening_cm"]

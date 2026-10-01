@@ -357,6 +357,12 @@ class NestedPart:
             "arrows": [(self._place([a], shift)[0], self._place([b], shift)[0]) for a, b in arrows],
         }
 
+    def placed_label_point(self) -> Point:
+        """形状内に計算したラベル座標を配置後の座標へ変換する。"""
+        shift = self._shift()
+        point = self.part.label_point or self._flip_center()
+        return self._place([point], shift)[0]
+
     def bbox(self) -> tuple[float, float, float, float]:
         return _bbox(self.placed_cut_line())
 

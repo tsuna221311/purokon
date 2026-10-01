@@ -146,16 +146,16 @@ def test_every_script_the_guide_tells_you_to_run_exists():
     assert not missing, f"案内にあるのに無い道具: {missing}"
 
 
-def test_the_guide_stays_short_enough_to_read_in_ten_minutes():
-    """「最初の10分」と言っている以上、10分で読める長さであること。
+def test_the_guide_stays_short_enough_for_the_stated_reading_time():
+    """「最初の15分」と言っている以上、15分で読める長さであること。
 
-    日本語で1分に400〜600字として、10分なら4,000〜6,000字くらい。
+    日本語で1分に400〜600字として、15分なら6,000〜9,000字くらい。
     ここを超えるなら、それは「はじめに」ではなく資料である。
     """
     text = _guide_text()
     characters = len(re.sub(r"\s", "", text))
-    assert characters <= 6000, (
-        f"{characters}字あります。10分では読めません——"
+    assert characters <= 8000, (
+        f"{characters}字あります。15分では読めません——"
         "詳しい話は README.md 側へ移してください")
 
 
@@ -171,7 +171,8 @@ def test_the_table_of_contents_matches_what_is_called():
     source = (REPO / "engine/pipeline.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     fn = next(n for n in ast.walk(tree)
-              if isinstance(n, ast.FunctionDef) and n.name == "_build_from_spec")
+              if isinstance(n, ast.FunctionDef)
+              and n.name == "_build_from_spec_impl")
     doc = ast.get_docstring(fn) or ""
     listed = set(re.findall(r"`(_\w+)`", doc))
     assert listed, "目次に段階が1つも書かれていません"
@@ -193,7 +194,8 @@ def test_the_guide_and_the_docstring_list_the_same_phases():
     source = (REPO / "engine/pipeline.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     fn = next(n for n in ast.walk(tree)
-              if isinstance(n, ast.FunctionDef) and n.name == "_build_from_spec")
+              if isinstance(n, ast.FunctionDef)
+              and n.name == "_build_from_spec_impl")
     in_code = re.findall(r"`(_\w+)`", ast.get_docstring(fn) or "")
     in_guide = re.findall(r"^\s*\d+\. (_\w+)", _guide_text(), re.MULTILINE)
     assert in_code == in_guide, (

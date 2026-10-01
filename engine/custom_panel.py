@@ -73,12 +73,41 @@ ALLOWED_MEASUREMENT_FIELDS = {"bust", "waist", "hip", "height", "sleeve_length",
 
 CUSTOM_PANEL_PART_TYPE = "custom_panel"
 
+# 実寸の平面型紙輪郭としてトレースした場合だけ、既定テンプレートと置換できる。
+# 画像上の着用シルエットを身頃へ変換する機能ではない。ここに無い内部生成
+# パーツ（プリンセス分割片、パニエ等）は、縫い合わせ関係が自動生成に依存する
+# ため置換させない。
+REPLACEABLE_PART_TYPES: frozenset[str] = frozenset({
+    "front_bodice", "back_bodice", "front_bodice_zip_panel",
+    "sleeve", "skirt", "front_pants", "back_pants",
+    "collar", "cuffs", "waistband", "hood",
+})
+
 #: ラベル(パーツ名)の最大長。型紙PDF/DXFにそのまま印字されるため、
 #: 極端に長い文字列がレイアウトを壊さないよう上限を設ける。
 MAX_LABEL_LENGTH = 40
 
 #: 1つのカスタムパーツで指定できる枚数(quantity)の上限。
 MAX_CUSTOM_PANEL_QUANTITY = 8
+
+#: 自由輪郭を号数1段階ぶん動かす増減量。自動で体格比を当てると、バックルや
+#: 装甲の穴位置まで意図せず変わるため、幅・高さを利用者が別々に指定する。
+CUSTOM_PANEL_GRADE_RANGE_CM = (-20.0, 20.0)
+
+
+def validate_grade_increment(raw_value: object, field_name: str) -> float:
+    """自由輪郭の1サイズ当たり増減量(cm)を検証する。空欄は固定寸法。"""
+    if raw_value in (None, ""):
+        return 0.0
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        raise CustomPanelError(f"{field_name}はcm単位の数値で指定してください。") from None
+    lower, upper = CUSTOM_PANEL_GRADE_RANGE_CM
+    if not math.isfinite(value) or not lower <= value <= upper:
+        raise CustomPanelError(
+            f"{field_name}は1サイズ当たり{lower:g}〜{upper:g}cmで指定してください。")
+    return value
 
 
 def validate_boolean(raw_value: object, field_name: str) -> bool:
@@ -115,6 +144,18 @@ def validate_quantity(raw_quantity: object) -> int:
     if not (1 <= quantity <= MAX_CUSTOM_PANEL_QUANTITY):
         raise CustomPanelError(f"枚数(quantity)は1〜{MAX_CUSTOM_PANEL_QUANTITY}の範囲で指定してください。")
     return quantity
+
+
+def validate_replacement_part_type(raw_value: object) -> str | None:
+    """空欄は追加パーツ、値ありは既定パーツの明示置換として検証する。"""
+    if raw_value in (None, ""):
+        return None
+    if not isinstance(raw_value, str):
+        raise CustomPanelError("置き換える標準パーツの指定が不正です。")
+    value = raw_value.strip()
+    if value not in REPLACEABLE_PART_TYPES:
+        raise CustomPanelError("置き換える標準パーツを画面から選び直してください。")
+    return value
 
 
 class CustomPanelError(ValueError):
@@ -294,3 +335,13 @@ class CustomPanelSpec:
     #: マントは中心で縫い合わせるのがふつうだが、EVAフォームの装甲に
     #: 縫い目を入れるのは別の話なので、既定は「分けない」。
     allow_split: bool = False
+    #: Noneなら従来どおり追加パーツ。値があれば、同じpart_typeの既定
+    #: テンプレートを取り除き、この実寸輪郭を代わりに使う。
+    replacement_part_type: str | None = None
+    #: 着用画像の外形ではなく、縫い線を含む平面型紙輪郭であり、接続する
+    #: 辺の長さを確認済みであること。置換時は必須。
+    seam_fit_confirmed: bool = False
+    #: S/M/L等で1段階動くごとの仕上がり外接幅・高さの増減量。0なら、金具や
+    #: 小道具として実寸を固定する。体格比を推測せず、明示値だけを使う。
+    grade_width_cm: float = 0.0
+    grade_height_cm: float = 0.0
