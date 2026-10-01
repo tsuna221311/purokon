@@ -56,7 +56,9 @@ from engine.pipeline import (
     GarmentSpec, PartRequest, PatternForgePipeline, build_garment_spec,
 )
 from engine.princess import (
-    PRINCESS_PANEL_TYPES, PRINCESS_PART_TYPES, princess_intake_cm, split_bodice,
+    PRINCESS_PANEL_TYPES, PRINCESS_PART_TYPES, _edge_length,
+    _points_at_edge_ratios, _sample_edge, _true_edge_pair,
+    princess_intake_cm, split_bodice,
 )
 from engine.svgpath import segments_to_polyline
 
@@ -297,7 +299,8 @@ def test_the_bodice_splits_into_a_centre_and_a_side_panel(tmp_path, name, bust, 
     """前身頃・後ろ身頃がそれぞれ「中央1枚」「脇2枚」になること。"""
     result = _generate(tmp_path, bust, waist, hip, princess=True)
     types = [p.part_type for p in result.finalized_parts]
-    for base in PRINCESS_PART_TYPES:
+    # 通常身頃のケース。前開き片身パネルは別テストで検証する。
+    for base in ("front_bodice", "back_bodice"):
         center, side = PRINCESS_PANEL_TYPES[base]
         assert types.count(center) == 1, (name, base, types)
         assert types.count(side) == 2, (name, base, types)
@@ -373,6 +376,42 @@ def test_the_princess_split_is_disclosed(tmp_path):
     assert "中央" in notes[0] and "脇" in notes[0]
 
 
+def test_princess_seam_lines_are_trued_without_moving_design_points():
+    """袖ぐり・BP・ウエスト・裾を保ち、中央側と脇側を同じ長さにすること。"""
+    center_controls = [(8.0, 18.0), (16.0, 15.0),
+                       (30.0, 12.0), (40.0, 15.0)]
+    side_controls = [(8.0, 18.0), (16.0, 15.0),
+                     (30.0, 18.0), (40.0, 15.0)]
+    center = _sample_edge(center_controls)
+    side = _sample_edge(side_controls)
+    assert abs(_edge_length(center) - _edge_length(side)) > 0.05
+
+    trued_center, trued_side = _true_edge_pair(
+        center, side, center_controls, side_controls)
+    assert abs(_edge_length(trued_center) - _edge_length(trued_side)) <= 0.01
+    for y, x in side_controls:
+        point = next(point for point in trued_side if point[1] == y)
+        assert point == pytest.approx((x, y))
+
+
+def test_matching_notches_use_the_same_seam_length_ratios():
+    """2本の縫合線の35%・70%に対応する合印を置くこと。"""
+    edge = [(0.0, 0.0), (0.0, 10.0), (10.0, 10.0)]
+    assert _points_at_edge_ratios(edge) == pytest.approx(
+        [(0.0, 7.0), (4.0, 10.0)])
+
+
+def test_generated_princess_panels_have_matching_seam_notches(tmp_path):
+    result = _generate(tmp_path, 83, 66, 91, princess=True)
+    counts = {(part.part_type, part.label_suffix): len(part.notches)
+              for part in result.finalized_parts}
+    assert counts[("front_bodice_center", "中央")] == 4
+    assert counts[("back_bodice_center", "中央")] == 4
+    for side in ("左", "右"):
+        assert counts[("front_bodice_side", side)] == 2
+        assert counts[("back_bodice_side", side)] == 2
+
+
 def test_the_split_declines_instead_of_producing_a_broken_piece():
     """引けない形なら、壊れたパーツを出さずにNoneを返すこと。"""
     from types import SimpleNamespace
@@ -388,10 +427,43 @@ def test_the_split_declines_instead_of_producing_a_broken_piece():
     assert split_bodice("skirt", flat2, Measurements(83, 66, 91, 158, 52, 37)) is None
 
 
-def test_the_princess_line_cannot_be_combined_with_a_front_zip():
-    """前開きファスナーとの併用は、黙って片方を無視せず断ること。"""
-    with pytest.raises(ValueError, match="切り替え線"):
-        build_garment_spec(front_zip=True, princess_line=True)
+@pytest.mark.parametrize("neckline", [
+    "round_neck", "v_neck", "square_neck", "boat_neck", "sweetheart",
+])
+def test_the_princess_line_can_be_combined_with_a_front_zip(tmp_path, neckline):
+    """前中心の見返しを残したまま、左右の中心・脇パネルが出ること。"""
+    result = PatternForgePipeline(output_dir=str(tmp_path)).generate_from_selection(
+        build_garment_spec(neckline=neckline, skirt_style=None,
+                           front_zip=True, princess_line=True),
+        Measurements(96, 66, 100, 158, 52, 37), skip_export=True)
+    types = [part.part_type for part in result.finalized_parts]
+    assert types.count("front_bodice_zip_panel") == 2
+    assert types.count("front_bodice_side") == 2
+    assert all(len(part.notches) == 2 for part in result.finalized_parts
+               if part.part_type in {"front_bodice_zip_panel",
+                                     "front_bodice_side"})
+    assert result.garment_spec.construction["front_zip_princess"] is True
+    assert not [w for w in result.compatibility_warnings()
+                if w.kind == "side_seam"]
+
+
+def test_front_zip_safety_split_recomputes_notches_on_the_real_panels(tmp_path):
+    """安全分割後に、分割前の予定線へ合印を残さないこと。"""
+    geometry = pytest.importorskip("shapely.geometry")
+    result = PatternForgePipeline(output_dir=str(tmp_path)).generate_from_selection(
+        build_garment_spec(skirt_style=None, front_zip=True,
+                           princess_line=True),
+        Measurements(83, 66, 91, 158, 52, 37), skip_export=True)
+    panels = [part for part in result.finalized_parts
+              if part.part_type in {"front_bodice_zip_panel",
+                                    "front_bodice_side"}]
+    assert panels
+    for part in panels:
+        stitch = geometry.LineString(part.stitch_line)
+        cut = geometry.LineString(part.cut_line)
+        for seam_point, cut_point in part.notches:
+            assert stitch.distance(geometry.Point(seam_point)) <= 1e-5
+            assert cut.distance(geometry.Point(cut_point)) <= 1e-5
 
 
 @pytest.mark.parametrize("name,bust,waist,hip", BODIES, ids=[b[0] for b in BODIES])

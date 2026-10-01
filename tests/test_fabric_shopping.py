@@ -107,12 +107,12 @@ def test_the_recommended_width_is_the_one_you_buy_least_of(parts):
     assert recommended.buy_length_cm == min(o.buy_length_cm for o in memo.widths)
 
 
-def test_a_width_that_cannot_hold_the_parts_shows_no_length():
+def test_a_width_that_cannot_hold_the_parts_shows_no_length(tmp_path):
     """収まらない幅に長さを出さないこと。
 
     出すと「その長さを買えば作れる」と読めるが、実際にはその幅では作れない。
     """
-    pipeline = PatternForgePipeline(output_dir="/tmp")
+    pipeline = PatternForgePipeline(output_dir=str(tmp_path))
     spec = build_garment_spec(neckline="round_neck", sleeve_style=None,
                               skirt_style="circle")
     big = pipeline.generate_from_selection(

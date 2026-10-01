@@ -2,6 +2,16 @@ __pycache__/
 *.pyc
 .pytest_cache/
 generated/
+output/
+tmp/
 patternforge.db
 .env
 *.egg-info/
+.render-quality-final/
+.codex-pytest-*/
+.codex-test-tmp-uiux/
+.pytest-current-*/
+.pytest-quality-*/
+.test-run-*/
+.test-tmp-*/
+pytest-cache-files-*/

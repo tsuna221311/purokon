@@ -18,7 +18,7 @@
       <section class="panel">
         <form id="generate-form">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <h2 id="mode-group-label">① 入力モード</h2>
+          <h2 id="mode-group-label">作り方を選ぶ</h2>
           {# round45: スクリーンリーダーで読むと、この3つのラジオには
              「群の名前」が付いていなかった。見出しは視覚的には名前に
              見えるが、プログラム上はつながっていないので、
@@ -27,21 +27,34 @@
              スカートの3つは既に role="group" で名前が付いているので、
              同じ書き方に揃える。 #}
           <div class="mode-row" role="radiogroup" aria-labelledby="mode-group-label">
-            <label>
-              <input type="radio" name="mode" value="manual" checked>
-              手動でパーツを選ぶ（推奨・APIキー不要）
+            <label class="mode-card">
+              <input type="radio" name="mode" value="illustration" checked>
+              <span><strong>資料画像から作る</strong><small>おすすめ・正面1枚から試せます</small></span>
             </label>
-            <label>
-              <input type="radio" name="mode" value="illustration">
-              資料画像から生成（正面・背面資料を使う）
+            <label class="mode-card">
+              <input type="radio" name="mode" value="manual">
+              <span><strong>形を自分で選ぶ</strong><small>APIキー不要・パーツを指定</small></span>
             </label>
-            <label>
+            <label class="mode-card">
               <input type="radio" name="mode" value="multi_size">
-              複数サイズを一括生成（サイズ展開）
+              <span><strong>複数サイズを作る</strong><small>同じデザインをサイズ展開</small></span>
             </label>
           </div>
 
-          <div class="reference-first-callout" id="reference-first-callout">
+          <div class="project-name-field">
+            <label for="project-name"><strong>プロジェクト名</strong> <span class="optional-badge">任意</span></label>
+            <input type="text" name="project_name" id="project-name" maxlength="80"
+                   autocomplete="off" placeholder="例：文化祭用・黒コート">
+            <p class="hint">生成結果と履歴を見分けるための名前です。型紙の寸法やファイル形式には影響しません。</p>
+          </div>
+
+          <div class="workflow-overview" id="illustration-workflow-overview" aria-label="画像から作る流れ">
+            <div><span>1</span><strong>資料を追加</strong><small>まずは正面1枚</small></div>
+            <div><span>2</span><strong>採寸を確認</strong><small>着る人のサイズ</small></div>
+            <div><span>3</span><strong>ラフを確認</strong><small>構造を直して製作用へ</small></div>
+          </div>
+
+          <div class="reference-first-callout hidden" id="reference-first-callout">
             <div>
               <strong>手元の資料から新しく作る</strong>
               <p>キャラクターの正面・背面画像と、着る人の採寸値を使って型紙の土台を作ります。固定キャラの選択は必要ありません。</p>
@@ -49,14 +62,14 @@
             <button type="button" id="switch-to-reference-mode">資料画像を使う</button>
           </div>
 
-          <div class="field-box" id="costume-project-section">
-            <div class="project-section-heading">
+          <details class="field-box catalog-details" id="costume-project-section">
+            <summary class="project-section-heading">
               <div>
                 <label for="costume-project"><strong>参考カタログ（任意）</strong></label>
                 <p class="project-section-subtitle">資料がない場合のシルエット確認用です。ユーザー提供の画像から作る場合は、上の「資料画像を使う」を選んでください。</p>
               </div>
               <span class="project-count" id="costume-project-count">{{ costume_project_choices|length - 1 }}件</span>
-            </div>
+            </summary>
             <div class="project-filters">
               <div class="field">
                 <label for="costume-project-search">名前から探す</label>
@@ -83,7 +96,7 @@
               未選択です。資料画像から作る場合は、上の「資料画像を使う」を選んでください。
             </p>
             <p class="hint" style="margin:6px 0 0;">採寸値は下の欄に必ず入力してください。個別設計済み以外は、シルエット互換性を確認済みの検証ベースです。</p>
-          </div>
+          </details>
 
           <div id="multi-size-section" class="field-box hidden">
             <p id="sizes-group-label" style="font-size:0.85rem; font-weight:600; margin:0 0 8px;">
@@ -124,9 +137,15 @@
             </details>
           </div>
 
-          <div id="illustration-section" class="field-box hidden">
+          <div id="illustration-section" class="field-box"
+               data-max-images="{{ max_illustration_images }}">
+            <div class="section-lead">
+              <span class="eyebrow">ステップ 1</span>
+              <h3>衣装の資料画像</h3>
+              <p>正面が1枚あれば始められます。背面もあると、後ろの襟ぐりや切替をより正確に判断できます。</p>
+            </div>
             <label for="field-illustration" style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:8px;">
-              衣装イラスト・前から見た絵（背景が単色に近い画像を推奨・複数枚可）
+              正面の絵・写真 <span class="required-badge">必須</span>
             </label>
             <input type="file" name="illustration" id="field-illustration" accept="image/*" multiple>
             <p class="hint">
@@ -144,7 +163,7 @@
             </p>
 
             <label for="field-illustration-back" style="font-size:0.85rem; font-weight:600; display:block; margin:12px 0 8px;">
-              後ろから見た絵（任意・複数枚可）
+              後ろから見た絵・背面写真 <span class="optional-badge">あれば追加</span>
             </label>
             <input type="file" name="illustration_back" id="field-illustration-back" accept="image/*" multiple>
             <p class="hint">
@@ -152,8 +171,311 @@
               （指定しなければ、後身頃は前身頃と同じ襟ぐりになります）。
               前後で首の開き幅が違って肩線が縫い合わせられない組み合わせに
               なった場合は、前に合わせたうえで生成結果に理由を表示します。
-              前後あわせて{{ max_illustration_images }}枚までです。
             </p>
+
+            <details class="reference-more">
+            <summary>側面・装飾の拡大も追加する（任意）</summary>
+            <label for="field-illustration-side" style="font-size:0.85rem; font-weight:600; display:block; margin:12px 0 8px;">
+              側面の絵・写真（任意・複数枚可）
+            </label>
+            <input type="file" name="illustration_side" id="field-illustration-side" accept="image/*" multiple>
+            <p class="hint">
+              脇線、前後の丈差、厚み、重なりを確認する補助資料です。
+              側面写真の幅を正面の幅として誤使用しないよう、丈・幅の自動計測には混ぜません。
+            </p>
+
+            <label for="field-illustration-detail" style="font-size:0.85rem; font-weight:600; display:block; margin:12px 0 8px;">
+              装飾・留め具・切替の拡大（任意・複数枚可）
+            </label>
+            <input type="file" name="illustration_detail" id="field-illustration-detail" accept="image/*" multiple>
+            <p class="hint">
+              ファスナー、ボタン、金具、衿・袖口・切替線の拡大を追加できます。
+              正面・背面・側面・拡大を合わせて{{ max_illustration_images }}枚までです。
+            </p>
+            </details>
+
+            <section id="reference-board" class="reference-board" aria-labelledby="reference-board-title">
+              <div class="reference-board-head">
+                <div>
+                  <h4 id="reference-board-title">追加した資料</h4>
+                  <p id="reference-board-summary" class="hint" aria-live="polite">
+                    正面画像を追加すると、ここで内容を確認できます。
+                  </p>
+                </div>
+                <button type="button" id="reference-clear-all" class="reference-clear hidden">
+                  すべて外す
+                </button>
+              </div>
+              <div class="reference-coverage" aria-label="資料のそろい具合">
+                <span data-reference-kind="front" class="reference-chip is-required">正面 必須</span>
+                <span data-reference-kind="back" class="reference-chip">背面 推奨</span>
+                <span data-reference-kind="side" class="reference-chip">側面 任意</span>
+                <span data-reference-kind="detail" class="reference-chip">装飾 任意</span>
+              </div>
+              <div id="reference-preview-list" class="reference-preview-list"></div>
+              <p class="reference-privacy">
+                選択した画像は、この画面で型紙を生成するまで送信されません。
+              </p>
+            </section>
+
+            <fieldset class="field-box" style="margin-top:12px;">
+              <legend>今回作るもの</legend>
+              <label class="checkbox-row">
+                <input type="radio" name="illustration_stage" value="production">
+                <span><strong>製作用データを作る</strong> — 下の構造項目をすべて確認してPDF・DXFを出す</span>
+              </label>
+              <label class="checkbox-row">
+                <input type="radio" name="illustration_stage" value="draft" checked>
+                <span><strong>まずラフを確認（おすすめ）</strong> — 未確認の構造を結果で見つけてから直す</span>
+              </label>
+            </fieldset>
+
+            <details class="advanced-options">
+              <summary>製作用の構造を確認・補正する</summary>
+              <p class="hint">
+                製作用では、画像だけで確定できない項目をすべて選んでください。
+                「自動判定」が残っている場合は裁断用データを出しません。
+                まだ決められない場合は上の「ラフ確認だけ」を選べます。
+              </p>
+              <div class="custom-grade-grid">
+                <label>前の襟ぐり
+                  <select name="illustration_neckline">
+                    <option value="auto">自動判定</option>
+                    {% for s in necklines %}<option value="{{ s }}">{{ s|style_label }}</option>{% endfor %}
+                  </select>
+                </label>
+                <label>後ろの襟ぐり
+                  <select name="illustration_back_neckline">
+                    <option value="auto">自動判定</option>
+                    {% for s in necklines %}<option value="{{ s }}">{{ s|style_label }}</option>{% endfor %}
+                  </select>
+                </label>
+                <label>袖
+                  <select name="illustration_sleeve_style">
+                    <option value="auto">自動判定</option>
+                    <option value="none">なし（ノースリーブ）</option>
+                    {% for s in sleeve_styles %}<option value="{{ s }}">{{ s|style_label }}</option>{% endfor %}
+                  </select>
+                </label>
+                <label>スカート
+                  <select name="illustration_skirt_style">
+                    <option value="auto">自動判定</option>
+                    <option value="none">なし</option>
+                    {% for s in skirt_styles %}<option value="{{ s }}">{{ s|style_label }}</option>{% endfor %}
+                  </select>
+                </label>
+                <label>パンツ
+                  <select name="illustration_pants_style">
+                    <option value="auto">自動判定</option>
+                    <option value="none">なし</option>
+                    <option value="default">標準</option>
+                    {% for s in pants_styles if s %}<option value="{{ s }}">{{ s|style_label }}</option>{% endfor %}
+                  </select>
+                </label>
+                <label>衿
+                  <select name="illustration_collar_style">
+                    <option value="auto">自動判定</option>
+                    <option value="none">なし</option>
+                    <option value="default">標準（スタンドカラー）</option>
+                    {% for s in collar_styles %}<option value="{{ s }}">{{ s|style_label }}</option>{% endfor %}
+                  </select>
+                </label>
+                <label>カフス
+                  <select name="illustration_cuffs_style">
+                    <option value="auto">自動判定</option>
+                    <option value="none">なし</option>
+                    <option value="default">標準</option>
+                    {% for s in cuffs_styles %}<option value="{{ s }}">{{ s|style_label }}</option>{% endfor %}
+                  </select>
+                </label>
+                <label>ウエストベルト
+                  <select name="illustration_waistband_style">
+                    <option value="auto">自動判定</option>
+                    <option value="none">なし</option>
+                    <option value="default">標準</option>
+                    {% for s in waistband_styles %}<option value="{{ s }}">{{ s|style_label }}</option>{% endfor %}
+                  </select>
+                </label>
+                <label>フード
+                  <select name="illustration_hood">
+                    <option value="auto">自動判定</option>
+                    <option value="yes">あり</option>
+                    <option value="no">なし</option>
+                  </select>
+                </label>
+                <label>開閉方法
+                  <select name="illustration_closure" id="illustration-closure">
+                    <option value="auto">自動判定</option>
+                    <option value="none">開閉部品なし</option>
+                    <option value="front_zip">前ファスナー</option>
+                    <option value="back_zip">後ろファスナー</option>
+                    <option value="side_zip">脇ファスナー</option>
+                    <option value="hooks">後ろホック</option>
+                    <option value="snaps">後ろスナップ</option>
+                  </select>
+                </label>
+                <label>ファスナーの開き長（cm）
+                  <input type="number" name="illustration_closure_length_cm"
+                         id="illustration-closure-length" min="1" max="100" step="0.5"
+                         placeholder="後ろ・脇ファスナーで必須" disabled>
+                  <small>首側・脇下側から開き止まりまでの出来上がり寸法です。</small>
+                </label>
+                <label>ホック／スナップの個数
+                  <input type="number" name="illustration_closure_count"
+                         id="illustration-closure-count" min="2" max="30" step="1"
+                         placeholder="例：8" disabled>
+                </label>
+                <label>ホック／スナップの間隔（cm）
+                  <input type="number" name="illustration_closure_spacing_cm"
+                         id="illustration-closure-spacing" min="1" max="20" step="0.5"
+                         placeholder="例：3" disabled>
+                </label>
+                <label>スナップの重なり量（cm）
+                  <input type="number" name="illustration_closure_overlap_cm"
+                         id="illustration-closure-overlap" min="1" max="10" step="0.5"
+                         placeholder="例：2" disabled>
+                </label>
+                <p class="hint hint-warn">
+                  後ろファスナーは後身頃を中心後で左右2枚に分割し、中心後にも
+                  縫い代を付けます。ホック／スナップも後身頃を分割し、確定した
+                  個数・間隔を印します。スナップは右後ろに持ち出しを追加します。
+                </p>
+                <label>重ね枚数
+                  <input type="number" name="illustration_layer_count" value="1" min="1" max="5" step="1">
+                </label>
+                <label>層ごとの丈（cm）
+                  <input type="text" name="illustration_layer_lengths_cm"
+                         placeholder="例：80,65,50（重ね枚数と同じ数）">
+                </label>
+                <label>左右構造
+                  <select name="illustration_symmetry">
+                    <option value="auto">自動判定</option>
+                    <option value="symmetric">左右対称</option>
+                    <option value="asymmetric">左右非対称</option>
+                  </select>
+                </label>
+                <label>内部構造
+                  <select name="illustration_internal_support" id="illustration-internal-support">
+                    <option value="auto">自動判定</option>
+                    <option value="none">芯材なし</option>
+                    <option value="interfacing">接着芯</option>
+                    <option value="boning">ボーン（前後身頃に各3本）</option>
+                    <option value="petticoat">パニエ（専用型紙を追加）</option>
+                    <option value="armor_base">造形物用の土台（輪郭トレース必須）</option>
+                  </select>
+                </label>
+                <div id="illustration-interfacing-settings" class="hidden field-box">
+                  <p class="hint" style="margin:0 0 6px;"><strong>接着芯を貼る部位</strong>（1つ以上）</p>
+                  <div class="checkbox-row">
+                    <label><input type="checkbox" name="illustration_interfacing_targets" value="bodice"> 前後身頃</label>
+                    <label><input type="checkbox" name="illustration_interfacing_targets" value="sleeve"> 袖</label>
+                    <label><input type="checkbox" name="illustration_interfacing_targets" value="skirt"> スカート</label>
+                    <label><input type="checkbox" name="illustration_interfacing_targets" value="pants"> パンツ</label>
+                    <label><input type="checkbox" name="illustration_interfacing_targets" value="collar"> 衿</label>
+                    <label><input type="checkbox" name="illustration_interfacing_targets" value="cuffs"> カフス</label>
+                    <label><input type="checkbox" name="illustration_interfacing_targets" value="waistband"> ウエスト帯</label>
+                    <label><input type="checkbox" name="illustration_interfacing_targets" value="hood"> フード</label>
+                    <label><input type="checkbox" name="illustration_interfacing_targets" value="custom_panel"> カスタムパーツ</label>
+                  </div>
+                  <label>縁からの控え（cm）
+                    <input type="number" name="illustration_interfacing_inset_cm"
+                           id="illustration-interfacing-inset" value="0" min="0" max="5" step="0.1">
+                    <small>0は縫い線と同じ。数値を入れると内側へ控えた芯地裁断線を型紙に印字します。</small>
+                  </label>
+                </div>
+                <div id="illustration-petticoat-settings" class="hidden">
+                  <label>パニエ方式
+                    <select name="illustration_petticoat_style" id="illustration-petticoat-style">
+                      <option value="">選択してください</option>
+                      <option value="soft">柔らかい段フリル式</option>
+                      <option value="hoop">ワイヤー式</option>
+                    </select>
+                  </label>
+                  <label>段数
+                    <input type="number" name="illustration_petticoat_tier_count"
+                           min="1" max="5" step="1" placeholder="例：3">
+                  </label>
+                  <label>仕上がり丈（cm）
+                    <input type="number" name="illustration_petticoat_length_cm"
+                           min="20" max="120" step="0.5" placeholder="例：55">
+                  </label>
+                  <label id="illustration-petticoat-fullness-row">段ごとの周長倍率
+                    <input type="number" name="illustration_petticoat_fullness_ratio"
+                           min="1.2" max="2.5" step="0.1" placeholder="例：1.6">
+                  </label>
+                  <label id="illustration-petticoat-hoops-row" class="hidden">各段のワイヤー輪直径（cm）
+                    <input type="text" name="illustration_petticoat_hoop_diameters_cm"
+                           placeholder="上段から 45,65,85">
+                    <small>段数と同じ数を、上から下へ大きくなる順で入力します。</small>
+                  </label>
+                </div>
+                <label>使用時の動き
+                  <select name="illustration_movement">
+                    <option value="auto">自動判定</option>
+                    <option value="standard">通常動作</option>
+                    <option value="dance">ダンス</option>
+                    <option value="action">激しい演技</option>
+                  </select>
+                </label>
+                <label>ギャザー倍率
+                  <input type="number" name="illustration_gather_ratio" min="1" max="3" step="0.1"
+                         placeholder="例：1.8">
+                </label>
+                <label>プリーツ本数（全体）
+                  <input type="number" name="illustration_pleat_count" min="0" max="40" step="1"
+                         placeholder="例：12">
+                </label>
+                <label>プリーツのひだ深さ（cm）
+                  <input type="number" name="illustration_pleat_depth_cm"
+                         min="0.5" max="10" step="0.5" placeholder="例：2.5">
+                  <small>1本を折り込む深さです。型紙幅へ1本あたり深さ×2を追加します。</small>
+                </label>
+                <label>スリット位置
+                  <select name="illustration_slit_position" id="illustration-slit-position">
+                    <option value="none">なし</option>
+                    <option value="front">前</option>
+                    <option value="back">後ろ</option>
+                    <option value="left">左脇</option>
+                    <option value="right">右脇</option>
+                  </select>
+                </label>
+                <label>スリット長（cm）
+                  <input type="number" name="illustration_slit_length_cm" id="illustration-slit-length" min="1" max="100" step="0.5" disabled
+                         placeholder="位置を選んだ場合に入力">
+                </label>
+                <label>装飾・ロゴの位置
+                  <select name="illustration_motif_position" id="illustration-motif-position">
+                    <option value="none">配置しない</option>
+                    <option value="chest_front">前身頃</option>
+                    <option value="chest_back">後身頃</option>
+                    <option value="skirt_front">前スカート</option>
+                    <option value="skirt_back">後ろスカート</option>
+                    <option value="sleeve">袖</option>
+                  </select>
+                </label>
+                <label>装飾の幅（cm）
+                  <input type="number" name="illustration_motif_width_cm" id="illustration-motif-width"
+                         min="0.5" max="100" step="0.1" disabled>
+                </label>
+                <label>装飾の高さ（cm）
+                  <input type="number" name="illustration_motif_height_cm" id="illustration-motif-height"
+                         min="0.5" max="100" step="0.1" disabled>
+                </label>
+                <label>装飾・ロゴ画像（任意）
+                  <input type="file" name="illustration_motif_image" id="illustration-motif-image"
+                         accept="image/png,image/jpeg,image/webp" disabled>
+                  <small>透明背景PNGが最適です。画像の外周と主要な色面（最大6色）をPDF・SVG・DXF共通の実寸線として配置します。細い線画・グラデーション・刺繍の針順は製作前に別途確認してください。</small>
+                </label>
+              </div>
+              <div class="checkbox-row">
+                <label><input type="checkbox" name="illustration_princess_line" id="illustration-princess-line"> 身頃をプリンセスラインにする</label>
+              </div>
+              <label style="display:block; margin-top:10px;">仕立てメモ（任意）
+                <textarea name="illustration_construction_note" maxlength="500" rows="3"
+                          placeholder="例：左肩だけ装甲あり、背中のリボンは別パーツ、裾は前後差あり"></textarea>
+              </label>
+              <p class="hint">前ファスナーを選ぶと、プリンセスラインは自動的に解除されます。</p>
+            </details>
             <p class="hint">ANTHROPIC_API_KEY が未設定の場合は簡易判定（モック）で動作します。</p>
           </div>
 
@@ -233,6 +555,7 @@
                 {{ b.label }}（身長{{ b.height_lo | int }}〜{{ b.height_hi | int }}cm）
               </option>
               {% endfor %}
+              <option value="measured">採寸指定（専用原型・男性や既存原型の転記）</option>
             </select>
             <p class="hint">
               身頃の背幅・胸幅・襟ぐり・袖ぐりの深さ・胸ぐせダーツ・ゆとりは、
@@ -244,6 +567,41 @@
               {% endfor %}
             </p>
             <p class="hint" style="margin-top:8px;">{{ mens_block_absent_note }}</p>
+            <div id="measured-block-fields" class="hidden" style="margin-top:12px;">
+              <p class="hint hint-warn">
+                8項目すべてを、実測または製図済みの原型から転記してください。
+                空欄を女性原型の式で補うことはありません。幅は片側寸法です。
+              </p>
+              <div class="custom-grade-grid">
+                <label>背幅・片側（cm）
+                  <input type="number" name="block_back_width_cm" min="8" max="40" step="0.1" disabled>
+                  <small>後ろ中心から後ろ袖ぐりまで</small>
+                </label>
+                <label>胸幅・片側（cm）
+                  <input type="number" name="block_chest_width_cm" min="8" max="40" step="0.1" disabled>
+                  <small>前中心から前袖ぐりまで</small>
+                </label>
+                <label>前ネック幅・片側（cm）
+                  <input type="number" name="block_neck_half_cm" min="3" max="15" step="0.1" disabled>
+                </label>
+                <label>袖ぐり深さ（cm）
+                  <input type="number" name="block_armhole_depth_cm" min="10" max="40" step="0.1" disabled>
+                </label>
+                <label>前肩傾斜（度）
+                  <input type="number" name="block_shoulder_slope_front_deg" min="0" max="45" step="0.1" disabled>
+                </label>
+                <label>後ろ肩傾斜（度）
+                  <input type="number" name="block_shoulder_slope_back_deg" min="0" max="45" step="0.1" disabled>
+                </label>
+                <label>身頃の標準ゆとり・総回り（cm）
+                  <input type="number" name="block_standard_ease_cm" min="0" max="30" step="0.1" disabled>
+                </label>
+                <label>胸ぐせダーツ角度（度）
+                  <input type="number" name="block_bust_dart_angle_deg" min="0" max="45" step="0.1" disabled>
+                  <small>胸ぐせ無しなら0</small>
+                </label>
+              </div>
+            </div>
           </div>
 
           {% if current_user %}
@@ -446,21 +804,13 @@
             <div class="checkbox-row">
               <label><input type="checkbox" name="princess_line" id="opt-princess-line"> 切り替え線（プリンセスライン）</label>
             </div>
-            {# round67: この2つは同時に指定できない(build_garment_spec が断る)。
-               round66まで画面は両方押せてしまい、**生成を押してから**
-               エラーで戻されていた。下の説明文の中に一行書いてはあったが、
-               round32の折りたたみで隠れることがあるうえ、押せてしまう
-               ことに変わりはない。片方を選んだら、もう片方をその場で
-               押せなくして、理由をここに出す。文は web/static/app.js が
-               入れる(理由は1か所に置く)。 #}
-            <p class="conflict-note hidden" id="zip-princess-conflict"
-               role="status"></p>
             <p class="hint">
               身頃を「中央」と「脇」の2枚に分け、その縫い目でウエストを絞ります。
               ダーツと違って摘める量に上限が無いので、ウエストとバストの差が
               大きい体型でもぴったり絞れます（実測: バスト83・ウエスト50・
               ヒップ100の体型で、ダーツ式は2.9cm余っていたのが0.0cmになりました）。
-              縫う手間は増えます。前開きファスナーとは同時に指定できません。
+              縫う手間は増えます。前開きファスナーと併用した場合は、
+              見返し付きの中心パネルと脇パネルを左右別に出力します。
             </p>
             <div class="checkbox-row option-with-style">
               <label><input type="checkbox" name="include_pants" id="include-pants-input"> パンツを含める</label>
@@ -526,6 +876,8 @@
                 「カスタムパーツを追加」から画像やクリックで輪郭を取り込み、
                 実寸(cm)に校正して型紙化できます。通常の服と組み合わせる場合は
                 「含める」のまま、小道具だけを作りたい場合は「含めない」にしてください。
+                サイズ展開では、各カードに指定した「1サイズ当たりの幅・高さ」だけを
+                増減します。0cmならバックル等の実寸を全サイズで固定します。
               </p>
               <p class="hint hint-warn">
                 ⚠ 正直な限界: ここで取り込む輪郭は、画像に写っている見た目の
@@ -538,7 +890,10 @@
                 拡大縮小してから輪郭通りに切り出す」手法をそのままコード化した
                 ものに近いイメージです）。校正は参照線1本の実寸を基準にした一様な
                 拡大縮小のため、パースのある(斜めから描かれた)画像では実寸とズレが
-                生じます。
+                生じます。平面型紙そのものの輪郭をトレースした場合は、各カードの
+                「この輪郭の使い方」から前身頃・袖・スカート等の標準型紙を
+                置き換えられます。置換では必要枚数と縫い合わせ長さを検査し、
+                片側不足や縫い線不一致があれば裁断用データを出しません。
               </p>
             </div>
 
@@ -546,6 +901,162 @@
 
             <button type="button" id="add-custom-panel-btn" class="btn-outline">＋ カスタムパーツを追加</button>
             <input type="hidden" name="custom_panels_json" id="custom-panels-json-input" value="[]">
+
+            <div class="field-box" style="margin-top:14px;">
+              <label class="checkbox-row">
+                <input type="checkbox" name="generate_accessory_stl" id="field-generate-accessory-stl" disabled>
+                <span><strong>この輪郭から3Dプリンター用データも作る</strong></span>
+              </label>
+              <p class="hint" id="accessory-3d-availability" aria-live="polite" style="margin:6px 0 0;">
+                先にカスタムパーツを1つ以上追加すると選択できます。
+              </p>
+              <div id="accessory-3d-fields" class="hidden" style="margin-top:12px;">
+                <div class="form-grid">
+                  <label>厚み（mm）
+                    <input type="number" name="accessory_thickness_mm" value="3" min="0.8" max="30" step="0.1" disabled>
+                  </label>
+                  <label>造形範囲の幅（mm）
+                    <input type="number" name="accessory_bed_width_mm" value="220" min="50" max="1000" step="1" disabled>
+                  </label>
+                  <label>造形範囲の奥行（mm）
+                    <input type="number" name="accessory_bed_depth_mm" value="220" min="50" max="1000" step="1" disabled>
+                  </label>
+                  <label>身体に沿わせる曲率半径（mm・任意）
+                    <input type="number" name="accessory_curvature_radius_mm" min="20" max="2000" step="1"
+                           placeholder="空欄なら平板" disabled>
+                    <small>装着位置の内側半径を実測。小さいほど強く曲がります。</small>
+                  </label>
+                  <label>曲げ方向
+                    <select name="accessory_curve_axis" id="accessory-curve-axis" disabled>
+                      <option value="width" selected>横方向（胸当て・肩当て向け）</option>
+                      <option value="height">縦方向</option>
+                      <option value="both">横＋縦方向（二方向に沿う装甲向け）</option>
+                    </select>
+                  </label>
+                  <label>縦方向の曲率半径（mm・二方向のみ）
+                    <input type="number" name="accessory_curvature_radius_height_mm"
+                           id="accessory-curvature-radius-height"
+                           min="20" max="2000" step="1" placeholder="空欄なら横と同じ" disabled>
+                    <small>胸当てなどで縦横の曲がり方が違う場合に実測値を入れます。</small>
+                  </label>
+                  <label>市販の取付金具
+                    <select name="accessory_attachment_interface" id="accessory-attachment-interface" disabled>
+                      <option value="none" selected>指定しない</option>
+                      <option value="sew_on_clip">縫い付けクリップ（左右2穴）</option>
+                      <option value="brooch_pin">ブローチピン金具（左右2穴）</option>
+                      <option value="pivot_joint">可動軸・リベット（中央1穴）</option>
+                    </select>
+                    <small>金具自体は危険な強度推測で造形せず、現物金具の実測寸法で取付穴を作ります。</small>
+                  </label>
+                  <label>金具用の穴径（mm）
+                    <input type="number" name="accessory_attachment_hole_diameter_mm"
+                           id="accessory-attachment-hole-diameter" min="1" max="20" step="0.1"
+                           value="3" disabled>
+                  </label>
+                  <label>端から穴中心まで（mm）
+                    <input type="number" name="accessory_attachment_hole_inset_mm"
+                           id="accessory-attachment-hole-inset" min="2" max="100" step="0.1"
+                           value="10" disabled>
+                    <small>クリップ・ブローチピンの左右2穴で使います。</small>
+                  </label>
+                  <label>取り付け用の丸い貫通穴
+                    <select name="accessory_mounting_hole_pattern" id="accessory-mounting-hole-pattern" disabled>
+                      <option value="none" selected>穴を開けない</option>
+                      <option value="center">中央に1個</option>
+                      <option value="pair_width">左右に2個</option>
+                      <option value="pair_height">上下に2個</option>
+                    </select>
+                    <small>磁石ポケットや長穴ではなく、表から裏まで貫通する丸穴です。</small>
+                  </label>
+                  <label>穴の直径（mm）
+                    <input type="number" name="accessory_mounting_hole_diameter_mm"
+                           id="accessory-mounting-hole-diameter" min="1" max="30" step="0.1"
+                           value="4" disabled>
+                  </label>
+                  <label>端から穴中心まで（mm）
+                    <input type="number" name="accessory_mounting_hole_inset_mm"
+                           id="accessory-mounting-hole-inset" min="2" max="100" step="0.1"
+                           value="8" disabled>
+                    <small>左右2個・上下2個の場合だけ使います。</small>
+                  </label>
+                  <label>ベルト用の角丸貫通長穴
+                    <select name="accessory_mounting_slot_pattern" id="accessory-mounting-slot-pattern" disabled>
+                      <option value="none" selected>長穴を開けない</option>
+                      <option value="center">中央に1個</option>
+                      <option value="pair_width">左右に2個</option>
+                      <option value="pair_height">上下に2個</option>
+                    </select>
+                  </label>
+                  <label>長穴の長さ×幅（mm）
+                    <span style="display:flex;gap:6px;align-items:center;">
+                      <input type="number" name="accessory_mounting_slot_length_mm"
+                             id="accessory-mounting-slot-length" min="5" max="120" step="0.5"
+                             value="20" disabled aria-label="長穴の長さ">
+                      ×
+                      <input type="number" name="accessory_mounting_slot_width_mm"
+                             id="accessory-mounting-slot-width" min="2" max="40" step="0.5"
+                             value="5" disabled aria-label="長穴の幅">
+                    </span>
+                  </label>
+                  <label>長穴の向き
+                    <select name="accessory_mounting_slot_axis" id="accessory-mounting-slot-axis" disabled>
+                      <option value="width" selected>横向き</option>
+                      <option value="height">縦向き</option>
+                    </select>
+                  </label>
+                  <label>端から長穴中心まで（mm）
+                    <input type="number" name="accessory_mounting_slot_inset_mm"
+                           id="accessory-mounting-slot-inset" min="2" max="100" step="0.5"
+                           value="15" disabled>
+                    <small>左右2個・上下2個の場合だけ使います。</small>
+                  </label>
+                  <label>磁石を埋める丸いポケット
+                    <select name="accessory_magnet_pocket_pattern" id="accessory-magnet-pocket-pattern" disabled>
+                      <option value="none" selected>ポケットを作らない</option>
+                      <option value="center">中央に1個</option>
+                      <option value="pair_width">左右に2個</option>
+                      <option value="pair_height">上下に2個</option>
+                    </select>
+                    <small>裏まで貫通させず、指定した深さだけ上面から掘ります。</small>
+                  </label>
+                  <label>磁石の直径（mm）
+                    <input type="number" name="accessory_magnet_pocket_diameter_mm"
+                           id="accessory-magnet-pocket-diameter" min="3" max="50" step="0.1"
+                           value="10" disabled>
+                  </label>
+                  <label>磁石ポケットの深さ（mm）
+                    <input type="number" name="accessory_magnet_pocket_depth_mm"
+                           id="accessory-magnet-pocket-depth" min="0.5" max="29.4" step="0.1"
+                           value="2" disabled>
+                    <small>底が0.6mm以上残らない指定は出力前に止めます。</small>
+                  </label>
+                  <label>端から磁石中心まで（mm）
+                    <input type="number" name="accessory_magnet_pocket_inset_mm"
+                           id="accessory-magnet-pocket-inset" min="2" max="100" step="0.5"
+                           value="15" disabled>
+                    <small>左右2個・上下2個の場合だけ使います。</small>
+                  </label>
+                  <label>業者へ伝える素材希望
+                    <select name="accessory_material_profile" disabled>
+                      <option value="consult" selected>業者と相談する</option>
+                      <option value="pa12">軽さ・耐久性（PA12ナイロン候補）</option>
+                      <option value="tough_resin">細かさ・表面品質（高靭性レジン候補）</option>
+                      <option value="prototype">まず寸法確認（PLA/PETG試作候補）</option>
+                    </select>
+                  </label>
+                  <label>色・仕上げ希望（任意）
+                    <input type="text" name="accessory_finish_note" value="業者と相談" maxlength="120"
+                           placeholder="例：つや消し黒、塗装前提" disabled>
+                  </label>
+                </div>
+                <p class="hint hint-warn" style="margin:8px 0 0;">
+                  曲面は入力した実測半径だけを使い、画像から推測しません。
+                  丸い貫通穴、ベルト用長穴、非貫通の磁石ポケットも選択したときだけ付きます。
+                  クリップ・ピン・可動部は画像だけでは判断できないため付きません。
+                  出力後にスライサーで向き・サポート・材料設定を確認し、最初は小さく試作してください。
+                </p>
+              </div>
+            </div>
           </details>
 
           <details class="optional-section">
@@ -673,6 +1184,18 @@
                 裏地の型紙も作る
               </label>
             </div>
+            <fieldset id="lining-scope-fields" disabled style="margin-top:10px;">
+              <legend>裏地を付ける部位（未選択なら総裏）</legend>
+              <div class="checkbox-row">
+                <label><input type="checkbox" name="lining_scope" value="front_bodice"> 前身頃</label>
+                <label><input type="checkbox" name="lining_scope" value="back_bodice"> 後ろ身頃</label>
+                <label><input type="checkbox" name="lining_scope" value="sleeve"> 袖</label>
+                <label><input type="checkbox" name="lining_scope" value="skirt"> スカート</label>
+                <label><input type="checkbox" name="lining_scope" value="front_pants"> パンツ前だけ</label>
+                <label><input type="checkbox" name="lining_scope" value="back_pants"> パンツ後ろ</label>
+              </div>
+              <p class="hint">例：パンツ前だけ、身頃だけ、袖なしの部分裏をそのまま指定できます。</p>
+            </fieldset>
             <p class="hint" style="margin:8px 0 0;">
               身頃・袖・スカート・パンツの裏地を、表地と<strong>同じ出来上がり線</strong>で引きます。
               違うのは2か所だけです。
@@ -847,7 +1370,16 @@
              Enterで押したときのフォーカスの戻し先(round47)も、
              押した後のスクロール(round46)もそのまま効く。 #}
           <div class="action-bar">
+          <div class="generation-summary" id="generation-summary" aria-live="polite">
+            <span>生成内容</span>
+            <strong id="generation-summary-text">入力内容を確認しています</strong>
+          </div>
+          <p id="form-readiness" class="form-readiness" aria-live="polite"></p>
           <button type="submit" class="primary">型紙を生成する</button>
+          <div class="session-draft-row">
+            <span id="session-draft-status">入力はこのタブ内だけに自動保存されます（画像を除く）</span>
+            <button type="button" id="session-draft-clear">最初から入力</button>
+          </div>
           <p class="hint usage-note">
             本日の生成回数:
             <span id="usage-note-text">
@@ -877,12 +1409,13 @@
            文書の先頭に戻る。tabindex="-1" を付けて、ここを
            「押したあとの行き先」にする(見出し自体はTab順に入らない)。 #}
         <h2 id="result-heading" tabindex="-1">生成結果</h2>
+        <p id="result-project-name" class="result-project-name hidden"></p>
         <!-- round34: 生成前は、ここが1440px幅で画面のほぼ半分を占める
              空白だった。採寸ミスが最大の失敗要因なので、その空白に
              「どこを測るか」の図を置く(_measure_figure.html)。 -->
         <div id="result-placeholder">
           <p class="muted-text" style="margin:0 0 14px;">
-            採寸値とパーツを選んで「型紙を生成する」を押すと、ここに結果が出ます。
+            左で作り方と必要な項目を選び、生成するとここに型紙が出ます。
           </p>
           {% include "_measure_figure.html" %}
         </div>
@@ -922,10 +1455,26 @@
 
           <div class="download-row">
             <a id="download-pdf" href="#" class="btn-solid">A4分割PDFをダウンロード</a>
+            <a id="download-spec-pdf" href="#" class="btn-outline">製作仕様書PDF</a>
             <a id="download-svg" href="#" target="_blank" class="btn-outline">SVGを開く</a>
             <a id="download-dxf" href="#" class="btn-outline">DXF（裁断機・CAD向け）</a>
             <!-- round39: プロジェクター投影用(実寸1枚もの)。A4分割とは別物。 -->
             <a id="download-projector" href="#" class="btn-outline">プロジェクター投影用PDF</a>
+            <a id="download-stl" href="#" class="btn-solid hidden">STL（3Dプリンター用）</a>
+            <a id="download-vendor-zip" href="#" class="btn-solid hidden">業者入稿用ZIP</a>
+          </div>
+          <div id="accessory-3d-result" class="field-box note-info hidden" style="margin-top:10px;">
+            <p class="hint note-title">3D小物データを作成しました</p>
+            <p class="hint" id="accessory-3d-summary" style="margin:0;"></p>
+            <ul class="hint" id="accessory-3d-warnings" style="margin:6px 0 0; padding-left:1.2em;"></ul>
+          </div>
+          <div id="production-status" class="field-box hidden" style="margin-top:10px;" aria-live="polite">
+            <p class="hint note-title" id="production-status-title"></p>
+            <p class="hint" id="production-status-detail" style="margin:0;"></p>
+            <ul class="hint" id="production-status-pending" style="margin:6px 0 0; padding-left:1.2em;"></ul>
+            <button type="button" id="continue-to-production" class="btn-solid production-next hidden">
+              未確認項目を補正して製作用データへ
+            </button>
           </div>
 
           {# round53: 印刷する枚数。コンビニで印刷する人にはこれが値段と
@@ -968,6 +1517,70 @@
           <div class="preview-frame">
             <img id="preview-img" alt="生成された型紙のプレビュー">
           </div>
+
+          <section id="outfit-preview-3d" class="outfit-preview-3d hidden"
+                   aria-labelledby="outfit-preview-title">
+            <div class="outfit-preview-head">
+              <div>
+                <span class="eyebrow">完成バランス確認</span>
+                <h3 id="outfit-preview-title">服と小物を合わせた360°イメージ</h3>
+              </div>
+              <span class="concept-badge">完成コーデ確認</span>
+            </div>
+            <div id="outfit-webgl-view" class="outfit-webgl-view hidden"
+                 role="img" aria-label="服と小物を装着した影付き3Dアバター"></div>
+            <canvas id="outfit-preview-canvas" tabindex="0"
+                    aria-label="生成した服と小物の完成イメージ。左右ドラッグで回転、ホイールで拡大縮小、矢印キーで向きを変更できます。"></canvas>
+            <div class="outfit-avatar-controls">
+              <div>
+                <strong>アバター</strong>
+                <span>標準アニメ調モデル、または手持ちのVRM/GLB</span>
+              </div>
+              <label class="outfit-avatar-file">VRM/GLBを読み込む
+                <input type="file" id="outfit-avatar-file" accept=".vrm,.glb,model/gltf-binary">
+              </label>
+              <button type="button" id="outfit-avatar-reset" class="hidden">標準モデルに戻す</button>
+              <span id="outfit-avatar-status" role="status" aria-live="polite">ファイルは端末内だけで処理され、サーバーへ送信されません。</span>
+            </div>
+            <div class="outfit-preview-controls" aria-label="3Dイメージの向き">
+              <button type="button" data-outfit-view="left">左側面</button>
+              <button type="button" data-outfit-view="front">正面</button>
+              <button type="button" data-outfit-view="back">背面</button>
+              <button type="button" data-outfit-view="right">右側面</button>
+              <button type="button" id="outfit-auto-rotate" aria-pressed="false">自動回転</button>
+            </div>
+            <div class="outfit-preview-display" aria-label="表示する要素">
+              <button type="button" id="outfit-show-garment" class="is-on" aria-pressed="true">服を表示</button>
+              <button type="button" id="outfit-show-accessories" class="is-on" aria-pressed="true">小物を表示</button>
+              <button type="button" id="outfit-show-mannequin" class="is-on" aria-pressed="true">アバターを表示</button>
+              <button type="button" id="outfit-reset-view">表示をリセット</button>
+            </div>
+            <div class="outfit-color-controls" aria-label="完成イメージの配色">
+              <span>配色</span>
+              <label>服 <input type="color" id="outfit-garment-color" value="#4f46e5"></label>
+              <label>小物 <input type="color" id="outfit-accessory-color" value="#16a34a"></label>
+            </div>
+            <div class="outfit-preview-actions" aria-label="完成イメージの保存と拡大">
+              <button type="button" id="outfit-expand-preview" aria-pressed="false">大きく表示</button>
+              <button type="button" id="outfit-save-image">この角度をPNG保存</button>
+              <button type="button" id="outfit-save-four-views">正面・背面・左右を1枚に保存</button>
+              <span id="outfit-save-status" role="status" aria-live="polite"></span>
+            </div>
+            <p id="outfit-preview-summary" class="hint outfit-preview-summary"></p>
+            <div id="outfit-accessory-list" class="outfit-accessory-list hidden"
+                 aria-label="小物の取付位置と表示サイズ"></div>
+            <div class="outfit-preview-legend" aria-hidden="true">
+              <span><i class="legend-mannequin"></i>アバター</span>
+              <span><i class="legend-garment"></i>服</span>
+              <span><i class="legend-accessory"></i>小物・造形パーツ</span>
+            </div>
+            <p class="outfit-preview-caveat">
+              この3Dは、服と全小物を同じアバターに装着し、丈・重なり・取付位置を確認するための完成イメージです。
+              配色と、小物の取付位置・大きさ・上下左右のずれは生成後に変更でき、現在の角度または4面図をPNGで保存できます。
+              VRM/GLBの外見品質は読み込んだモデルに依存します。衣装は構成確認用の立体であり、布の落ち方、重力、縫い縮みを再現するクロスシミュレーションではありません。
+              裁断寸法はPDF・DXF、3Dプリント寸法はSTL・3MFを正として確認してください。
+            </p>
+          </section>
 
           <div id="rotation-warning" class="field-box note-warn hidden">
             <p class="hint" style="margin:0;">
@@ -1100,6 +1713,12 @@
             </p>
             <ul id="compatibility-warning-list"></ul>
           </div>
+          <details id="production-quality-result" class="field-box details-info hidden" open>
+            <summary>裁断前の品質確認</summary>
+            <p id="production-quality-summary" class="hint" style="margin:8px 0;"></p>
+            <ul id="production-quality-blockers" class="hint" style="padding-left:1.2em;"></ul>
+            <div id="production-quality-checklist"></div>
+          </details>
 
           <div class="field-box">
             <h3 style="margin:0 0 10px;">生成されたパーツ一覧</h3>
@@ -1215,6 +1834,7 @@
 
   {% include "_footer.html" %}
 
+  <script type="module" src="{{ url_for('static', filename='outfit3d.js') }}"></script>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

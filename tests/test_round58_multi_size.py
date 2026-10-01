@@ -102,6 +102,10 @@ def test_every_entry_point_accepts_the_same_settings():
         "skip_export",   # テスト用に書き出しを省く内部向けの口
         "fabric_width_candidates",
         "design",        # イラストが絵から作るもの(利用者は入力しない)
+        # 画像の自動読取結果を確定値で上書きする入力と、その画像へ紐づく
+        # 追加輪郭。手動・サイズ展開は最初から garment_spec を直接受け取るため、
+        # 同じ意味の入口を別名で増やさない。
+        "corrections", "extra_part_requests",
     }
     settings = (manual | illustration | multi) - SHAPE
     for name, got in (("イラスト", illustration), ("サイズ展開", multi),
@@ -450,6 +454,9 @@ def test_every_setting_shows_up_in_the_restored_summary():
         # round76: ドロップショルダー。落ちると肩の形が黙って
         # セットインスリーブに戻る。
         "shoulder_drop_cm": (5.0, "ドロップショルダー"),
+        # 採寸指定原型も、成人女子の既定原型へ黙って戻っていないことが
+        # 利用者に分かるよう、復元内容へ明記する。
+        "measured_block": ({"bust": 88.0}, "採寸指定"),
     }
     # 設定として扱わないもの(出来上がりに出ない/内部の都合)。
     NOT_A_SETTING = {"allow_rotation", "hem_seam_allowance_cm",
@@ -589,7 +596,7 @@ def test_the_b2b_api_reads_the_same_fields_as_the_browser_form():
     tree = ast.parse(open("app.py", encoding="utf-8").read())
     handlers = {node.name: node for node in ast.walk(tree)
                 if isinstance(node, ast.FunctionDef)
-                and node.name in ("api_generate", "api_v1_generate")}
+                and node.name in ("_api_generate_impl", "api_v1_generate")}
     assert len(handlers) == 2, sorted(handlers)
 
     def form_fields(node):
@@ -613,13 +620,55 @@ def test_the_b2b_api_reads_the_same_fields_as_the_browser_form():
                 pass
         return names
 
-    browser = form_fields(handlers["api_generate"])
+    browser = form_fields(handlers["_api_generate_impl"])
     api = form_fields(handlers["api_v1_generate"])
     # 画面だけのもの(このAPIが対応しないと明記しているモード・入力)。
     ONLY_BROWSER = {
         "mode",                    # イラスト/サイズ展開はこのAPIの対象外
-        "sizes", "illustration", "illustration_back",
+        "sizes", "illustration", "illustration_back", "illustration_side",
+        "illustration_detail", "illustration_stage", "illustration_neckline",
+        "illustration_back_neckline", "illustration_sleeve_style",
+        "illustration_skirt_style", "illustration_pants_style",
+        "illustration_collar_style", "illustration_cuffs_style",
+        "illustration_waistband_style", "illustration_hood",
+        "illustration_closure", "illustration_closure_length_cm",
+        "illustration_closure_count", "illustration_closure_spacing_cm",
+        "illustration_closure_overlap_cm",
+        "illustration_front_zip", "illustration_princess_line",
+        "illustration_layer_count", "illustration_layer_lengths_cm",
+        "illustration_symmetry",
+        "illustration_internal_support", "illustration_movement",
+        "illustration_petticoat_style", "illustration_petticoat_tier_count",
+        "illustration_petticoat_length_cm",
+        "illustration_petticoat_fullness_ratio",
+        "illustration_petticoat_hoop_diameters_cm",
+        "illustration_gather_ratio", "illustration_pleat_count",
+        "illustration_pleat_depth_cm",
+        "illustration_slit_position", "illustration_slit_length_cm",
+        "illustration_motif_position", "illustration_motif_width_cm",
+        "illustration_motif_height_cm",
+        "illustration_construction_note",
         "custom_panels_json",      # 自由形状パーツも対象外
+        # 自由形状パーツを元にするブラウザ専用の3D小物出力。
+        "generate_accessory_stl", "accessory_thickness_mm",
+        "accessory_bed_width_mm", "accessory_bed_depth_mm",
+        "accessory_curvature_radius_mm", "accessory_curve_axis",
+        "accessory_mounting_hole_pattern", "accessory_mounting_hole_diameter_mm",
+        "accessory_mounting_hole_inset_mm",
+        "accessory_mounting_slot_pattern", "accessory_mounting_slot_length_mm",
+        "accessory_mounting_slot_width_mm", "accessory_mounting_slot_axis",
+        "accessory_mounting_slot_inset_mm",
+        "accessory_magnet_pocket_pattern", "accessory_magnet_pocket_diameter_mm",
+        "accessory_magnet_pocket_depth_mm", "accessory_magnet_pocket_inset_mm",
+        "accessory_material_profile", "accessory_finish_note",
+        # 画像解析・自由輪郭・3D小物だけで意味を持つ入力。B2B APIは
+        # 手動選択モードを対象にするため、APIの契約外。
+        "accessory_attachment_hole_diameter_mm",
+        "accessory_attachment_hole_inset_mm", "accessory_attachment_interface",
+        "accessory_curvature_radius_height_mm",
+        "illustration_interfacing_inset_cm", "illustration_interfacing_targets",
+        "illustration_motif_image",
+        "costume_project",         # 画面用の衣装プリセット
         "csrf_token",              # Cookie認証ではないので要らない
     }
     missing = sorted(browser - api - ONLY_BROWSER)

@@ -88,6 +88,17 @@ LINED_PART_TYPES = frozenset({
     "front_pants", "back_pants",
 })
 
+LINING_SCOPE_PART_TYPES = {
+    "front_bodice": frozenset({"front_bodice", "front_bodice_center",
+                                "front_bodice_side", "front_bodice_zip_panel"}),
+    "back_bodice": frozenset({"back_bodice", "back_bodice_center",
+                               "back_bodice_side"}),
+    "sleeve": frozenset({"sleeve"}),
+    "skirt": frozenset({"skirt"}),
+    "front_pants": frozenset({"front_pants"}),
+    "back_pants": frozenset({"back_pants"}),
+}
+
 #: 背中心のきせを入れるパーツ種。資料の記述は「後ろ身頃の背中心」に限られる
 #: ので、後ろ身頃だけに入れる(前身頃・袖・スカートには入れない)。
 #: 背中心が輪郭の**内側**を通る左右一体のパーツに限る——
@@ -283,7 +294,8 @@ def lining_part(outer: FinalizedPart, *,
     # だから打ち直さず、表地の合印をそのまま引き継ぐ。
     notches = [(tuple(a), tuple(b)) for a, b in outer.notches]
 
-    if outer.part_type in CB_PLEAT_PART_TYPES:
+    if (outer.part_type in CB_PLEAT_PART_TYPES
+            and "後中心" not in outer.label_suffix):
         cx = _center_x(stitch)
         half = CB_PLEAT_FABRIC_CM / 2.0
         stitch = spread_at_center(stitch, cx, half)
@@ -318,12 +330,50 @@ def lining_part(outer: FinalizedPart, *,
     return replace(part, notches=notches)
 
 
+#: 部分裏の対象部位の、画面に出す日本語名。
+LINING_SCOPE_LABELS = {
+    "front_bodice": "前身頃", "back_bodice": "後ろ身頃", "sleeve": "袖",
+    "skirt": "スカート", "front_pants": "パンツ(前)", "back_pants": "パンツ(後ろ)",
+}
+
+
+def missing_lining_scopes(parts: list[FinalizedPart],
+                          scope: list[str] | tuple[str, ...] | None
+                          ) -> list[str]:
+    """指定された部位のうち、**この型紙に無い**ものの日本語名(round77)。
+
+    【v125で何が起きていたか】部位の綴りしか確かめていなかったので、
+    身頃だけの型紙に「スカートに裏地」を指定すると、裏地も注記も警告も
+    **何も出なかった**。利用者は「裏地を付ける」を選んだのに、
+    黙って無視されたことに気付けない。
+    """
+    if not scope:
+        return []
+    present = {part.part_type for part in parts}
+    missing = []
+    for key in scope:
+        types = LINING_SCOPE_PART_TYPES.get(key)
+        if types and not (types & present):
+            missing.append(LINING_SCOPE_LABELS.get(key, key))
+    return missing
+
+
 def build_lining_parts(parts: list[FinalizedPart], *,
-                       hem_seam_allowance_cm: float | None = None
+                       hem_seam_allowance_cm: float | None = None,
+                       scope: list[str] | tuple[str, ...] | None = None,
                        ) -> list[FinalizedPart]:
-    """表地のパーツ一式から、裏地のパーツ一式を作る（順序は表地と同じ）。"""
+    """表地から総裏または明示された部位だけの部分裏を作る。"""
+    selected_types: frozenset[str] | None = None
+    if scope:
+        unknown = sorted(set(scope) - set(LINING_SCOPE_PART_TYPES))
+        if unknown:
+            raise ValueError("裏地の対象部位が不正です: " + "・".join(unknown))
+        selected_types = frozenset(
+            part_type for key in scope for part_type in LINING_SCOPE_PART_TYPES[key])
     out: list[FinalizedPart] = []
     for part in parts:
+        if selected_types is not None and part.part_type not in selected_types:
+            continue
         lining = lining_part(part, hem_seam_allowance_cm=hem_seam_allowance_cm)
         if lining is not None:
             out.append(replace(lining, cut_quantity=part.cut_quantity,
@@ -492,7 +542,8 @@ def lining_notes(parts: list[FinalizedPart], outer_hem_cm: float) -> list[str]:
             # 文でもあり、そこには番号が無い。
             "裾を折り返して始末するなら、「縫い代」の設定で裾だけ別に"
             "3〜4cm程度を指定してから引き直してください。")
-    if any(p.part_type in CB_PLEAT_PART_TYPES for p in parts):
+    if any(p.part_type in CB_PLEAT_PART_TYPES
+           and "後中心" not in p.label_suffix for p in parts):
         notes.append(
             f"後ろ身頃の裏地は、背中心に{CB_PLEAT_FABRIC_CM:.0f}cm足してあります。"
             f"縫う前に深さ{CB_PLEAT_DEPTH_CM:.0f}cmのひだにたたむと、"

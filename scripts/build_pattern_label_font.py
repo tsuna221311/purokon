@@ -44,6 +44,7 @@ engine/assets/PATTERN_LABEL_FONT_LICENSE.txt に同梱している。
 from __future__ import annotations
 import subprocess
 import sys
+import os
 from pathlib import Path
 
 # 実際にengine/pdf_export.pyがA4分割PDFへ描画する文字だけを対象にした
@@ -228,7 +229,9 @@ def _static_text_chars() -> set:
                 return set("".join(ast.literal_eval(node.value)))
     raise RuntimeError("engine/pdf_export.py に PDF_STATIC_TEXTS が見つかりません")
 
-SOURCE_FONT = Path("/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf")
+SOURCE_FONT = Path(os.environ.get(
+    "PATTERNFORGE_IPA_FONT",
+    "/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf"))
 OUTPUT_FONT = Path(__file__).resolve().parent.parent / "engine" / "assets" / "pattern_label_ja_subset.ttf"
 
 
@@ -250,27 +253,33 @@ def main() -> None:
     if not SOURCE_FONT.exists():
         print(
             f"元フォントが見つかりません: {SOURCE_FONT}\n"
-            "Debian/Ubuntuなら `apt-get install fonts-ipafont-gothic` でインストールしてください。",
+            "Debian/Ubuntuなら `apt-get install fonts-ipafont-gothic` を使うか、"
+            "環境変数 PATTERNFORGE_IPA_FONT に ipag.ttf の場所を指定してください。",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    text_file = Path("/tmp/pattern_label_font_chars.txt")
-    text_file.write_text(_build_char_set(), encoding="utf-8")
-
     OUTPUT_FONT.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [
-            sys.executable, "-m", "fontTools.subset",
-            str(SOURCE_FONT),
-            f"--text-file={text_file}",
-            f"--output-file={OUTPUT_FONT}",
-            "--layout-features=",
-            "--no-hinting",
-            "--drop-tables+=DSIG",
-        ],
-        check=True,
-    )
+    # Windowsの一部環境では`TemporaryDirectory`が作るmode 0700のフォルダを
+    # 同じプロセスからも開けないことがある。書き込み可能と確認済みの
+    # 出力先へ一時ファイルを置き、必ず後片付けする。
+    text_file = OUTPUT_FONT.with_suffix(".chars.tmp")
+    try:
+        text_file.write_text(_build_char_set(), encoding="utf-8")
+        subprocess.run(
+            [
+                sys.executable, "-m", "fontTools.subset",
+                str(SOURCE_FONT),
+                f"--text-file={text_file}",
+                f"--output-file={OUTPUT_FONT}",
+                "--layout-features=",
+                "--no-hinting",
+                "--drop-tables+=DSIG",
+            ],
+            check=True,
+        )
+    finally:
+        text_file.unlink(missing_ok=True)
     print(f"書き出し完了: {OUTPUT_FONT} ({OUTPUT_FONT.stat().st_size} bytes)")
 
 

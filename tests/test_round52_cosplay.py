@@ -223,7 +223,8 @@ def test_the_typed_length_wins_over_the_illustration(client):
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
 
-    data = dict(BASE, mode="illustration", length_skirt="70")
+    data = dict(BASE, mode="illustration", illustration_stage="draft",
+                length_skirt="70")
     data["illustration"] = (io.BytesIO(buffer.getvalue()), "front.png")
     response = client.post("/api/generate", data=data,
                            content_type="multipart/form-data")

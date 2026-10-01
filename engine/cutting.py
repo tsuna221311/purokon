@@ -57,8 +57,20 @@ def interfacing_note(part_type: str) -> str:
     return "接着芯あり" if part_type in INTERFACED_PART_TYPES else ""
 
 
+def part_needs_interfacing(part) -> bool:
+    """既定の部位または利用者が明示した個別パーツに接着芯が要るか。"""
+    return bool(getattr(part, "interfacing_instruction", "")) or \
+        needs_interfacing(part.part_type)
+
+
+def part_interfacing_note(part) -> str:
+    return getattr(part, "interfacing_instruction", "") or \
+        interfacing_note(part.part_type)
+
+
 def cutting_note(part_type: str, cut_quantity: int = 1,
-                  cut_on_fold: bool = False) -> str:
+                  cut_on_fold: bool = False,
+                  interfacing_instruction: str = "") -> str:
     """パーツに書き添える裁ち方の指示。
 
     >>> cutting_note("front_bodice")
@@ -70,7 +82,7 @@ def cutting_note(part_type: str, cut_quantity: int = 1,
     """
     parts = [f"{FABRIC_LABEL}{max(1, int(cut_quantity))}枚"]
     parts.append("わ裁ち" if cut_on_fold else "わ裁ち不要")
-    note = interfacing_note(part_type)
+    note = interfacing_instruction or interfacing_note(part_type)
     if note:
         parts.append(note)
     return " ".join(parts)

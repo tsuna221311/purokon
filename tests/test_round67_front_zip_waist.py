@@ -239,23 +239,22 @@ def test_the_advice_still_suggests_princess_when_it_is_possible(waist_ease):
 def test_the_pipeline_knows_when_princess_is_unavailable():
     """呼び出し側が、前開きかどうかを見て渡していること。"""
     import inspect
-    source = inspect.getsource(P.PatternForgePipeline._build_from_spec)
+    source = inspect.getsource(P.PatternForgePipeline._build_from_spec_impl)
     assert "princess_available=" in source
     assert "front_bodice_zip_panel" in source
 
 
 # --- 5. 画面で同時に押せない ------------------------------------------------
 
-def test_the_screen_blocks_the_impossible_combination():
-    """前開きと切り替え線を、画面で同時に押せなくしていること。"""
+def test_the_screen_allows_the_supported_combination():
+    """片身分割に対応したので、前開きと切り替え線を同時に選べる。"""
     assert 'id="opt-front-zip"' in INDEX
     assert 'id="opt-princess-line"' in INDEX
-    assert 'id="zip-princess-conflict"' in INDEX
-    assert "syncZipPrincessConflict" in APP_JS
-    assert "optPrincess.disabled" in APP_JS
-    assert "optFrontZip.disabled" in APP_JS
+    assert 'id="zip-princess-conflict"' not in INDEX
+    assert "syncZipPrincessConflict" not in APP_JS
 
 
+@pytest.mark.skip(reason="前開きプリンセス対応により非互換の理由表示は廃止")
 def test_the_reason_is_not_a_collapsible_hint():
     """理由に class="hint" を付けないこと。
 
@@ -271,6 +270,7 @@ def test_the_reason_is_not_a_collapsible_hint():
     assert "conflict-note" in open_tag, open_tag
 
 
+@pytest.mark.skip(reason="前開きプリンセス対応によりチェックボックを無効化しない")
 def test_the_blocked_checkbox_says_why_to_a_screen_reader():
     """押せない方に、押せない理由を結び付けていること。"""
     assert 'setAttribute("aria-describedby", "zip-princess-conflict")' in APP_JS

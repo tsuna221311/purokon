@@ -52,6 +52,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 
 @dataclass(frozen=True)
@@ -256,6 +257,82 @@ CHILD = Block(
 
 BLOCKS: dict[str, Block] = {b.key: b for b in (ADULT_FEMALE, CHILD)}
 DEFAULT_BLOCK_KEY = ADULT_FEMALE.key
+MEASURED_BLOCK_KEY = "measured"
+
+MEASURED_BLOCK_FIELDS = {
+    "back_width_cm": (8.0, 40.0, "背幅（後ろ中心〜袖ぐり・片側）"),
+    "chest_width_cm": (8.0, 40.0, "胸幅（前中心〜袖ぐり・片側）"),
+    "neck_half_cm": (3.0, 15.0, "前ネック幅（中心〜首付け根・片側）"),
+    "armhole_depth_cm": (10.0, 40.0, "袖ぐり深さ"),
+    "shoulder_slope_front_deg": (0.0, 45.0, "前肩傾斜"),
+    "shoulder_slope_back_deg": (0.0, 45.0, "後ろ肩傾斜"),
+    "standard_ease_cm": (0.0, 30.0, "身頃の標準ゆとり（総回り）"),
+    "bust_dart_angle_deg": (0.0, 45.0, "胸ぐせダーツ角度"),
+}
+
+
+def validate_measured_block(values: dict | None) -> dict[str, float]:
+    """専用原型の実測値を検証する。欠けた値を既定式で補わない。"""
+    values = dict(values or {})
+    unknown = sorted(set(values) - set(MEASURED_BLOCK_FIELDS))
+    if unknown:
+        raise ValueError(f"採寸指定原型に未対応の項目があります: {unknown}")
+    missing = [label for key, (_lo, _hi, label) in MEASURED_BLOCK_FIELDS.items()
+               if values.get(key) in (None, "")]
+    if missing:
+        raise ValueError("採寸指定原型には全項目の実測値が必要です: " + "／".join(missing))
+    result: dict[str, float] = {}
+    for key, (lower, upper, label) in MEASURED_BLOCK_FIELDS.items():
+        try:
+            number = float(values[key])
+        except (TypeError, ValueError):
+            raise ValueError(f"{label}は数値で指定してください。") from None
+        if not math.isfinite(number) or not lower <= number <= upper:
+            unit = "度" if key.endswith("_deg") else "cm"
+            raise ValueError(
+                f"{label}は{lower:g}〜{upper:g}{unit}の範囲で指定してください。")
+        result[key] = number
+    return result
+
+
+def build_measured_block(values: dict | None) -> Block:
+    """既存原型または実測から転記した値を、そのまま使う1回限りの原型。"""
+    data = validate_measured_block(values)
+    return Block(
+        key=MEASURED_BLOCK_KEY,
+        label="採寸指定（専用原型）",
+        source_name="利用者が実測または既存原型から転記した値",
+        source_url="",
+        height_range_cm=(50.0, 220.0),
+        back_width=Formula(None, data["back_width_cm"]),
+        chest_width=Formula(None, data["chest_width_cm"]),
+        neck_half=Formula(None, data["neck_half_cm"]),
+        bust_dart_angle=Formula(None, data["bust_dart_angle_deg"]),
+        standard_ease=Formula(None, data["standard_ease_cm"]),
+        armhole_depth=Formula(None, data["armhole_depth_cm"]),
+        shoulder_slope_front_deg=data["shoulder_slope_front_deg"],
+        shoulder_slope_back_deg=data["shoulder_slope_back_deg"],
+        draws_bust_point=data["bust_dart_angle_deg"] > 0,
+        min_scale=0.25,
+    )
+
+
+def grade_measured_block(values: dict | None, base_measurements,
+                         target_measurements) -> dict[str, float]:
+    """専用原型を、同じ利用者指定のサイズ採寸比で安全に展開する。
+
+    幅方向は肩幅、袖ぐり深さはバストの比率だけを使う。角度とゆとりは
+    サイズ間で固定し、根拠のない角度・ゆとりの刻みを作らない。
+    """
+    data = validate_measured_block(values)
+    shoulder_ratio = target_measurements.shoulder_width / base_measurements.shoulder_width
+    bust_ratio = target_measurements.bust / base_measurements.bust
+    graded = dict(data)
+    for key in ("back_width_cm", "chest_width_cm", "neck_half_cm"):
+        graded[key] = data[key] * shoulder_ratio
+    graded["armhole_depth_cm"] = data["armhole_depth_cm"] * bust_ratio
+    # shoulder_slope_*、standard_ease、bust_dart_angleは設計値なので固定する。
+    return validate_measured_block(graded)
 
 
 def get_block(key: str | None) -> Block:
@@ -301,6 +378,8 @@ def block_notes(block: Block, bust_cm: float, height_cm: float) -> list[str]:
     """
     if block.key == DEFAULT_BLOCK_KEY:
         return []
+    source = (f"。出典: {block.source_name} {block.source_url}"
+              if block.source_url else f"。値の出どころ: {block.source_name}")
     notes = [
         f"原型「{block.label}」で引きました。"
         f"背幅={block.back_width.text()}cm・胸幅={block.chest_width.text()}cm・"
@@ -309,7 +388,7 @@ def block_notes(block: Block, bust_cm: float, height_cm: float) -> list[str]:
         f"ゆとり={block.ease_cm(bust_cm):.1f}cm"
         + (f"・袖ぐり深さ={block.armhole_depth.text()}cm"
            if block.armhole_depth is not None else "")
-        + f"。出典: {block.source_name} {block.source_url}",
+        + source,
     ]
     if not block.draws_bust_point:
         notes.append(
@@ -323,11 +402,12 @@ def block_notes(block: Block, bust_cm: float, height_cm: float) -> list[str]:
 #: 黙って「無い」ままにすると、利用者は探し続けることになる。
 #: 何が足りないのかまで書いておけば、資料を持っている人が持ってこられる。
 MENS_BLOCK_ABSENT_NOTE = (
-    "男性の原型はまだありません。背幅・胸幅・袖ぐり深さ・肩傾斜の式が"
+    "男性用を自動推定する原型式はまだありません。背幅・胸幅・袖ぐり深さ・肩傾斜の式が"
     "数字で書かれた資料が、無料で読める範囲では見つからなかったためです"
     "(見つかったのは実物大の型紙の販売ページと、教科書のスキャンを"
     "無断掲載したPDFだけでした)。「男性は胸ぐせダーツが要らない」ところまでは"
     "分かりますが、残りの式が分からないまま半分だけ作って「男性原型」と"
     "名乗ると、根拠のない寸法が型紙に載ります。"
-    "式が数字で書かれた出典が1つあれば入れられます。"
+    "式が数字で書かれた出典が1つあれば追加できます。現在は、実測または手持ちの"
+    "男性原型から8項目を転記する「採寸指定（専用原型）」を選べます。"
 )

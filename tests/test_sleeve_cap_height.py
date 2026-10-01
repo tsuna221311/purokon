@@ -47,7 +47,10 @@ def _armhole_per_arm(parts) -> float:
     for part_type in ("front_bodice", "back_bodice"):
         value = armhole_length(SimpleNamespace(
             part_type=part_type, variation=parts[part_type].variation,
-            stitch_line=segments_to_polyline(parts[part_type].segments)))
+            stitch_line=segments_to_polyline(parts[part_type].segments),
+            underarm_y_cm=parts[part_type].underarm_y_cm,
+            reference_lines=([("BL", [(0.0, parts[part_type].bust_line_y_cm)])]
+                             if parts[part_type].bust_line_y_cm is not None else [])))
         assert value is not None
         total += value
     return total / 2.0

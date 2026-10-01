@@ -7,6 +7,7 @@ PatternForgePipeline.generate_from_selection()まで通してSVG/PDF等が
 """
 
 import pytest
+from PIL import Image, ImageDraw
 
 from engine.custom_panel import calibrate_points_to_cm
 from engine.measurements import Measurements
@@ -15,6 +16,7 @@ from engine.pipeline import (
     PatternForgePipeline,
     build_custom_panel_requests,
     build_garment_spec,
+    merge_custom_panel_requests,
 )
 
 STANDARD = Measurements(bust=84, waist=68, hip=92, height=160, sleeve_length=54, shoulder_width=37)
@@ -115,3 +117,103 @@ def test_custom_panel_mirrored_pair_generates_both_shapes(tmp_path):
     assert len(result.finalized_parts) == 2
     variations = {p.variation for p in result.finalized_parts}
     assert variations == {"肩当て", "肩当て(反転)"}
+
+
+def test_confirmed_flat_pattern_replaces_standard_part_at_exact_real_size(tmp_path):
+    pipeline = PatternForgePipeline(output_dir=str(tmp_path))
+    original_spec = build_garment_spec(sleeve_style=None, skirt_style=None)
+    original = pipeline.generate_from_selection(
+        original_spec, STANDARD, skip_export=True)
+    original_front = next(
+        p for p in original.finalized_parts if p.part_type == "front_bodice")
+    points = list(original_front.stitch_line)
+    if points[0] == points[-1]:
+        points.pop()
+
+    base = build_garment_spec(sleeve_style=None, skirt_style=None)
+    replacement = build_custom_panel_requests(
+        "実寸前身頃", points, replacement_part_type="front_bodice",
+        seam_fit_confirmed=True)
+    base.parts = merge_custom_panel_requests(base.parts, replacement)
+    assert sum(r.part_type == "front_bodice" for r in base.parts) == 1
+    assert next(r for r in base.parts if r.part_type == "front_bodice").custom_segments
+
+    result = pipeline.generate_from_selection(base, STANDARD, skip_export=True)
+    front = next(p for p in result.finalized_parts if p.part_type == "front_bodice")
+    assert front.variation == "実寸前身頃"
+    # 実寸輪郭へ採寸倍率を二重に掛けず、元の縫い線寸法を維持する。
+    assert front.width_cm == pytest.approx(original_front.width_cm, abs=0.05)
+    assert result.compatibility_warnings() == []
+
+
+def test_replacement_with_mismatched_seams_stops_before_export(tmp_path):
+    base = build_garment_spec(sleeve_style="straight", skirt_style=None)
+    bad = build_custom_panel_requests(
+        "合わない袖", _cape_points_cm(), mirror=True,
+        replacement_part_type="sleeve", seam_fit_confirmed=True)
+    base.parts = merge_custom_panel_requests(base.parts, bad)
+    with pytest.raises(ValueError, match="裁断用PDF・SVG・DXFは出力していません"):
+        PatternForgePipeline(output_dir=str(tmp_path)).generate_from_selection(
+            base, STANDARD)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_replacement_requires_confirmation_and_exact_piece_count():
+    with pytest.raises(ValueError, match="縫い線の長さを確認"):
+        build_custom_panel_requests(
+            "袖", _cape_points_cm(), replacement_part_type="sleeve")
+
+    base = build_garment_spec(sleeve_style="straight", skirt_style=None)
+    one_sleeve = build_custom_panel_requests(
+        "左袖", _cape_points_cm(), replacement_part_type="sleeve",
+        seam_fit_confirmed=True)
+    with pytest.raises(ValueError, match="2枚必要"):
+        merge_custom_panel_requests(base.parts, one_sleeve)
+
+
+def test_mirrored_replacement_supplies_both_sleeves_without_standard_sleeves():
+    base = build_garment_spec(sleeve_style="straight", skirt_style=None)
+    sleeves = build_custom_panel_requests(
+        "確認済み袖", _cape_points_cm(), mirror=True,
+        replacement_part_type="sleeve", seam_fit_confirmed=True)
+    base.parts = merge_custom_panel_requests(base.parts, sleeves)
+    sleeve_requests = [r for r in base.parts if r.part_type == "sleeve"]
+    assert len(sleeve_requests) == 2
+    assert all(r.custom_segments is not None for r in sleeve_requests)
+
+
+def test_illustration_route_replaces_detected_sleeves_too(tmp_path):
+    pipeline = PatternForgePipeline(output_dir=str(tmp_path))
+    standard = pipeline.generate_from_selection(
+        build_garment_spec(sleeve_style="straight", skirt_style="flare"),
+        STANDARD, skip_export=True)
+    sleeve = next(p for p in standard.finalized_parts if p.part_type == "sleeve")
+    points = list(sleeve.stitch_line)
+    if points[0] == points[-1]:
+        points.pop()
+    requests = build_custom_panel_requests(
+        "画像確認済み袖", points, mirror=True,
+        replacement_part_type="sleeve", seam_fit_confirmed=True)
+    corrections = {
+        "neckline": "round_neck", "back_neckline": "round_neck",
+        "sleeve_style": "straight", "skirt_style": "flare",
+        "pants_style": None, "collar_style": None, "cuffs_style": None,
+        "waistband_style": None, "hood": False, "closure": "none",
+        "symmetry": "symmetric", "internal_support": "none",
+        "movement": "standard",
+    }
+    image = Image.new("RGB", (400, 600), "white")
+    draw = ImageDraw.Draw(image)
+    draw.polygon(
+        [(140, 60), (260, 60), (300, 180), (270, 350),
+         (330, 560), (70, 560), (130, 350), (100, 180)],
+        fill=(60, 80, 130))
+    result = pipeline.generate_from_illustration(
+        image, STANDARD,
+        corrections=corrections, extra_part_requests=requests,
+        include_empty_tiles=False)
+    sleeves = [p for p in result.finalized_parts if p.part_type == "sleeve"]
+    assert len(sleeves) == 2
+    assert {p.variation for p in sleeves} == {
+        "画像確認済み袖", "画像確認済み袖(反転)"}
+    assert result.compatibility_warnings() == []

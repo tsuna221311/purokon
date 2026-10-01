@@ -757,6 +757,9 @@ def side_seam_length(part) -> float | None:
     想定外の形状(候補が0本、または左右どちらとも判定できない等)の場合は
     Noneを返し、呼び出し側で安全側に倒す(警告を出さない)。
     """
+    override = getattr(part, "compatibility_measurements", {}).get("side_seam_length")
+    if override is not None:
+        return float(override)
     points = _closed_points(part.stitch_line)
     if len(points) < 3:
         return None
@@ -813,6 +816,10 @@ def side_seam_length(part) -> float | None:
 
 def waist_opening_length(part) -> float:
     """スカート/パンツのウエストライン(上端)の開き寸法(ダーツ考慮後)を求める。"""
+    override = getattr(part, "compatibility_measurements", {}).get(
+        "waist_opening_length")
+    if override is not None:
+        return float(override)
     points = _closed_points(part.stitch_line)
     if len(points) < 3:
         return 0.0
@@ -857,6 +864,9 @@ def shoulder_seam_length(part) -> float | None:
     front_bodice_zip_panelには対応しない(`armhole_length`と同じ理由で、
     輪郭の先頭点が肩先である保証が無いため)。想定外の形状ではNoneを返す。
     """
+    override = getattr(part, "compatibility_measurements", {}).get("shoulder_seam_length")
+    if override is not None:
+        return float(override)
     if part.part_type not in {"front_bodice", "back_bodice"}:
         return None
     points = _closed_points(part.stitch_line)
@@ -901,6 +911,9 @@ def armhole_length(part) -> float | None:
     無いため。モジュールdocstring参照)。想定外の形状(脇線に到達しないまま
     輪郭を一周した等)ではNoneを返し、呼び出し側で安全側に倒す。
     """
+    override = getattr(part, "compatibility_measurements", {}).get("armhole_length")
+    if override is not None:
+        return float(override)
     if part.part_type not in {"front_bodice", "back_bodice"}:
         return None
     points = _closed_points(part.stitch_line)
@@ -989,6 +1002,9 @@ def neckline_length(part) -> float | None:
     round14までこの計測が無かったため、衿(collar)は首ぐりとまったく無関係に
     バスト比で拡大縮小されていた(モジュールdocstringの「できないこと」参照)。
     """
+    override = getattr(part, "compatibility_measurements", {}).get("neckline_length")
+    if override is not None:
+        return float(override)
     if part.part_type not in {"front_bodice", "back_bodice"}:
         return None
     if any(token in part.variation for token in NECKLINE_UNMEASURABLE_VARIATIONS):

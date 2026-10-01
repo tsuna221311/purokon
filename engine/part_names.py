@@ -46,6 +46,8 @@ PART_TYPE_LABELS_JA: dict[str, str] = {
     "cuffs": "カフス",
     "hood": "フード",
     "waistband": "ウエストバンド",
+    "petticoat_tier": "パニエ段",
+    "petticoat_waistband": "パニエウエストベルト",
     "custom_panel": "カスタムパーツ",
 }
 
@@ -99,6 +101,9 @@ VARIATION_LABELS_JA: dict[str, str] = {
     # ウエストバンド
     "elastic": "ゴム仕様",
     "contour": "コンター（体に沿う形）",
+    # パニエ
+    "soft": "柔らかい段フリル式",
+    "hoop": "ワイヤー式",
 }
 
 

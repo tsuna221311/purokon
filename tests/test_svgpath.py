@@ -56,3 +56,45 @@ def test_segments_to_polyline_flattens_curves():
     assert points[0] == (0.0, 0.0)
     assert points[-1] == (10.0, 0.0)
     assert len(points) == 1 + 4  # 始点 + 4分割点
+
+
+def _point_to_polyline_distance(point, polyline):
+    from math import hypot
+    best = float("inf")
+    for start, end in zip(polyline, polyline[1:]):
+        dx, dy = end[0] - start[0], end[1] - start[1]
+        length2 = dx * dx + dy * dy
+        if length2 == 0:
+            candidate = hypot(point[0] - start[0], point[1] - start[1])
+        else:
+            t = max(0.0, min(1.0,
+                ((point[0] - start[0]) * dx
+                 + (point[1] - start[1]) * dy) / length2))
+            projection = (start[0] + dx * t, start[1] + dy * t)
+            candidate = hypot(point[0] - projection[0],
+                              point[1] - projection[1])
+        best = min(best, candidate)
+    return best
+
+
+def test_default_curve_flattening_stays_within_point_one_millimetre():
+    """最終型紙の曲線と折れ線のずれが0.1mm以内であること。"""
+    segs = parse_path("M 0 0 C 0 30, 40 30, 40 0")
+    adaptive = segments_to_polyline(segs)
+    reference = segments_to_polyline(segs, curve_steps=4000)
+    maximum = max(_point_to_polyline_distance(point, adaptive)
+                  for point in reference)
+    assert maximum <= 0.01
+    # この大きく曲がる40cm曲線は、旧固定12分割より細かくなる。
+    assert len(adaptive) > 13
+
+
+def test_adaptive_curve_resolution_scales_with_the_physical_curve():
+    small = parse_path("M 0 0 C 0 3, 4 3, 4 0")
+    large = parse_path("M 0 0 C 0 30, 40 30, 40 0")
+    assert len(segments_to_polyline(large)) > len(segments_to_polyline(small))
+
+
+def test_explicit_fixed_curve_steps_remain_backward_compatible():
+    segs = parse_path("M 0 0 C 0 30, 40 30, 40 0")
+    assert len(segments_to_polyline(segs, curve_steps=7)) == 8
