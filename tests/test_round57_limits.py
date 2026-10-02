@@ -44,6 +44,23 @@ FORM = {"bust": "84", "waist": "68", "hip": "92", "height": "160",
         "sleeve_length": "54", "shoulder_width": "37", "mode": "manual",
         "neckline": "round_neck", "sleeve_style": "straight", "skirt_style": "flare"}
 
+ILLUSTRATION_CONFIRMATIONS = {
+    "illustration_stage": "production",
+    "illustration_neckline": "round_neck",
+    "illustration_back_neckline": "round_neck",
+    "illustration_sleeve_style": "straight",
+    "illustration_skirt_style": "flare",
+    "illustration_pants_style": "none",
+    "illustration_collar_style": "none",
+    "illustration_cuffs_style": "none",
+    "illustration_waistband_style": "none",
+    "illustration_hood": "no",
+    "illustration_closure": "none",
+    "illustration_symmetry": "symmetric",
+    "illustration_internal_support": "none",
+    "illustration_movement": "standard",
+}
+
 
 def _build(tmp_path, **kwargs):
     spec = build_garment_spec(neckline="round_neck", sleeve_style="straight",
@@ -298,7 +315,8 @@ def test_an_illustration_job_can_be_regenerated(client):
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
 
-    data = dict(FORM, mode="illustration", lining="on")
+    data = dict(FORM, **ILLUSTRATION_CONFIRMATIONS,
+                mode="illustration", lining="on")
     data["illustration"] = (io.BytesIO(buffer.getvalue()), "front.png")
     first = client.post("/api/generate", data=data, content_type="multipart/form-data")
     assert first.status_code == 200, first.get_json().get("error")
@@ -339,7 +357,7 @@ def test_the_regenerated_illustration_pattern_matches_the_original(client):
     draw.polygon([(240, 560), (460, 560), (520, 860), (180, 860)], fill=(90, 110, 160))
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
-    data = dict(FORM, mode="illustration")
+    data = dict(FORM, **ILLUSTRATION_CONFIRMATIONS, mode="illustration")
     data["illustration"] = (io.BytesIO(buffer.getvalue()), "front.png")
     first = client.post("/api/generate", data=data,
                         content_type="multipart/form-data").get_json()

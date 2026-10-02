@@ -9,6 +9,14 @@ import pytest
 import store as store_module
 
 
+def _multiprocessing_queue_or_skip():
+    """名前付きパイプを禁じるWindowsサンドボックスでは明示的に省略する。"""
+    try:
+        return multiprocessing.Queue()
+    except PermissionError:
+        pytest.skip("この実行環境ではプロセス間通信用パイプを作成できません")
+
+
 # multiprocessing.Process のターゲットにするため、モジュールトップレベルに
 # 置く(pickle化できる必要があるため、クロージャ/ネストした関数は使えない)。
 # 実際にgunicorn -w 4(本物の複数OSプロセス)を起動してcurlで再現・確認した
@@ -360,7 +368,7 @@ def test_usage_counter_never_exceeds_limit_under_true_multiprocess_concurrency(t
     store_module.Store(db_path)  # スキーマを先に作っておく
 
     limit = 5
-    queue = multiprocessing.Queue()
+    queue = _multiprocessing_queue_or_skip()
     procs = [
         multiprocessing.Process(
             target=_mp_usage_attempt,
@@ -446,7 +454,7 @@ def test_check_rate_limit_never_exceeds_limit_under_true_multiprocess_concurrenc
     store_module.Store(db_path)  # スキーマを先に作っておく
 
     max_requests = 5
-    queue = multiprocessing.Queue()
+    queue = _multiprocessing_queue_or_skip()
     procs = [
         multiprocessing.Process(
             target=_mp_rate_limit_attempt,
@@ -567,7 +575,7 @@ def test_account_lockout_never_exceeds_effective_threshold_under_true_multiproce
         db.record_login_failure(email)
         queue.put(True)
 
-    queue = multiprocessing.Queue()
+    queue = _multiprocessing_queue_or_skip()
     procs = [
         multiprocessing.Process(target=_mp_record_failure, args=(db_path, "victim@example.com", queue))
         for _ in range(20)
@@ -600,7 +608,7 @@ def test_measurement_profile_limit_never_exceeded_under_true_multiprocess_concur
     for i in range(4):  # 上限(5件)のちょうど1件手前まで埋めておく
         db.create_measurement_profile(user_id, f"pre{i}", 84, 68, 92, 160, 54, 37)
 
-    queue = multiprocessing.Queue()
+    queue = _multiprocessing_queue_or_skip()
     procs = [
         multiprocessing.Process(
             target=_mp_profile_attempt, args=(db_path, user_id, f"race{i}", queue),
@@ -646,7 +654,7 @@ def test_apply_billing_event_ordering_holds_under_true_multiprocess_concurrency(
 
     t1, t2 = 600.0, 900.0  # t1: 古い(past_due相当), t2: 新しい(active相当)
     barrier = multiprocessing.Barrier(2)
-    queue = multiprocessing.Queue()
+    queue = _multiprocessing_queue_or_skip()
     procs = [
         multiprocessing.Process(
             target=_mp_apply_billing_event, args=(db_path, user_id, t1, "free", barrier, queue),
@@ -760,7 +768,7 @@ def test_try_create_email_token_with_cooldown_only_one_winner_under_true_multipr
 
     n = 12
     barrier = multiprocessing.Barrier(n)
-    queue = multiprocessing.Queue()
+    queue = _multiprocessing_queue_or_skip()
     procs = [
         multiprocessing.Process(
             target=_mp_email_token_attempt, args=(db_path, user_id, "reset", 60, 3600, barrier, queue),

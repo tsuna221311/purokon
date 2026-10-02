@@ -152,7 +152,8 @@ def _run_js(snippet: str) -> dict:
     # 閉じ印のコメントが始まる `/*` の手前までを取る。
     block = APP_JS[APP_JS.index("*/", start) + 2:end].rsplit("/*", 1)[0]
     program = block + "\n" + textwrap.dedent(snippet)
-    proc = subprocess.run([node, "-e", program], capture_output=True, text=True)
+    proc = subprocess.run([node, "-e", program], capture_output=True,
+                          text=True, encoding="utf-8")
     assert proc.returncode == 0, f"Nodeでの実行に失敗:\n{proc.stderr}"
     return json.loads(proc.stdout.strip().splitlines()[-1])
 

@@ -459,6 +459,7 @@ def render_layout_svg(result: NestingResult, output_path: str) -> str:
         for a, b in grain["arrows"]:
             content.add(dwg.line(start=a, end=b, stroke="blue", stroke_width=0.06))
         min_x, min_y, max_x, max_y = placed.bbox()
+        label_x, label_y = placed.placed_label_point()
         label = placed.part.display_name
         if placed.rotated:
             # A4分割PDF側(render_a4_pdf)の同じ意味の注記と全く同じ文言に揃える。
@@ -469,14 +470,14 @@ def render_layout_svg(result: NestingResult, output_path: str) -> str:
             # が保証しているのはPDF側で実際に使う文字だけだったため)、フォントを
             # 埋め込んでもこの3文字だけ文字化けする、という2つの問題があった。
             label += "(90度回転・布目確認)"
-        content.add(dwg.text(label, insert=((min_x + max_x) / 2, (min_y + max_y) / 2),
+        content.add(dwg.text(label, insert=(label_x, label_y),
                               text_anchor="middle", font_size="0.9", fill="#333",
                               style=f"font-family:{_SVG_LABEL_FONT_FAMILY}"))
         # round31: 裁ち方の指示。PDF側とまったく同じ文言を使う
         # (同じ部材の注記がPDFとSVGで違う表現になると、どちらが正しいのか
         #  読み手に分からなくなる。round11の「布目確認」で実際に起きた)。
         content.add(dwg.text(placed.part.cutting_note,
-                              insert=((min_x + max_x) / 2, (min_y + max_y) / 2 + 1.1),
+                              insert=(label_x, label_y + 1.1),
                               text_anchor="middle", font_size="0.7", fill="#555",
                               style=f"font-family:{_SVG_LABEL_FONT_FAMILY}"))
 
@@ -824,7 +825,7 @@ def _draw_overview_page(c, result: NestingResult, rows: int, cols: int,
         c.drawPath(path, stroke=1, fill=1)
 
         min_x, min_y, max_x, max_y = placed.bbox()
-        cx_cm, cy_cm = (min_x + max_x) / 2, (min_y + max_y) / 2
+        cx_cm, cy_cm = placed.placed_label_point()
         # round60: 枡の番号は各枡の左上に描く(下記)。パーツの名前が
         # ちょうどその高さに来ると、名前が番号の白地で分断される
         # (実測: 「スカート（フレア） 前」が「カート」「レア）」に割れた)。
@@ -1403,7 +1404,7 @@ def _draw_fabric_section(c, result: NestingResult,
                 # 隣接タイルどちらにも描かれず抜け漏れることがあるため、
                 # ちょうど境界上ならこのタイル側([x0,x1)半開区間)に含める。
                 min_x, min_y, max_x, max_y = placed.bbox()
-                cx_pt, cy_pt = (min_x + max_x) / 2, (min_y + max_y) / 2
+                cx_pt, cy_pt = placed.placed_label_point()
                 if (tile_x0 <= cx_pt < tile_x1 or (col == cols - 1 and cx_pt == tile_x1)) and \
                    (tile_y0 <= cy_pt < tile_y1 or (row == rows - 1 and cy_pt == tile_y1)):
                     label_text = placed.part.display_name
@@ -1747,8 +1748,7 @@ def render_projector_pdf(result: NestingResult, output_path: str,
         # パーツ名(大きく)
         x0_cm, y0_cm, x1_cm, y1_cm = placed.bbox()
         label = placed.part.display_name
-        cx = (x0_cm + x1_cm) / 2.0
-        cy = (y0_cm + y1_cm) / 2.0
+        cx, cy = placed.placed_label_point()
         text, size = _fit_label_to_width(
             label, (x1_cm - x0_cm) * CM, base_size=PROJECTOR_LABEL_FONT_SIZE)
         c.setFillColorRGB(0.1, 0.1, 0.1)
@@ -1809,6 +1809,7 @@ _BUNDLE_NAME_SUFFIX = {
     "pdf": "",
     "dxf": "",
     "projector": "_projector",
+    "spec_pdf": "_specification",
     # round55: 生地を分けたときの2種類目以降(engine/fabric_groups.py)。
     # 接尾辞を書いておかないと `_fabric2_pdf` のような読みにくい名前になる
     # (衝突はround49の検査が止めるが、名前は直らない)。

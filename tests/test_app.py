@@ -23,6 +23,7 @@ def _valid_form():
         "sleeve_length": "54", "shoulder_width": "37",
         "mode": "manual", "neckline": "round_neck",
         "sleeve_style": "straight", "skirt_style": "flare",
+        "illustration_stage": "draft",
     }
 
 
@@ -231,12 +232,16 @@ def test_generate_rejects_invalid_measurement(client):
     assert response.get_json()["ok"] is False
 
 
-def test_generate_rejects_unsupported_combo(client):
+def test_generate_supports_turtle_neck_with_front_zip(client):
     form = _valid_form()
     form["neckline"] = "turtle_neck"
     form["front_zip"] = "on"
     response = client.post("/api/generate", data=form)
-    assert response.status_code == 400
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["ok"] is True
+    assert any(part["part_type"] == "front_bodice_zip_panel"
+               for part in data["parts"])
 
 
 def test_generate_supports_front_zip_with_split_front_panel(client):
@@ -368,16 +373,15 @@ def test_generate_supports_sweetheart_neckline_and_bell_sleeve(client):
     assert response.get_json()["ok"] is True
 
 
-def test_generate_rejects_turtleneck_zip_combo(client):
-    # round9で前開き対応ネックラインをround_neck/v_neckの2種から
-    # square_neck/boat_neck/sweetheartを含む5種へ拡大したが、turtle_neckは
-    # 台襟の構造上そのままでは対応できないため、引き続き明確な400になる
-    # はず(engine/pipeline.py ZIP_COMPATIBLE_NECKLINESのコメント参照)。
+def test_generate_supports_turtleneck_zip_with_separate_stand_collar(client):
     form = _valid_form()
     form["neckline"] = "turtle_neck"
     form["front_zip"] = "on"
     response = client.post("/api/generate", data=form)
-    assert response.status_code == 400
+    assert response.status_code == 200, response.get_json().get("error")
+    types = [part["part_type"] for part in response.get_json()["parts"]]
+    assert "front_bodice_zip_panel" in types
+    assert "collar" in types
 
 
 @pytest.mark.parametrize("neckline", ["square_neck", "boat_neck", "sweetheart"])
@@ -527,7 +531,7 @@ def test_generate_illustration_mode_accepts_multiple_images(client, monkeypatch)
     assert response.status_code == 200
     data = response.get_json()
     assert data["ok"] is True
-    assert any("2枚" in note for note in data["measurement_warnings"]), data["measurement_warnings"]
+    assert any("2枚" in note for note in data["design_notes"]), data["design_notes"]
 
 
 def test_generate_illustration_mode_rejects_too_many_images(client, monkeypatch):

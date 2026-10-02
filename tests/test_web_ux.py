@@ -58,18 +58,16 @@ def test_multi_size_works_with_the_default_custom_panel_field(client):
     assert sorted(data["sizes"]) == ["M", "S"]
 
 
-def test_multi_size_still_refuses_a_real_custom_panel(client):
-    """本物のカスタムパーツが入っていれば、従来どおり明確に断ること。
-
-    (上の修正で「空でも通す」ようにしたので、**本当に併用したとき**に
-     黙って無視されないことを対で確かめる。)
-    """
+def test_multi_size_grades_a_real_custom_panel(client):
+    """本物のカスタムパーツも、サイズ展開で黙って無視しないこと。"""
     panel = ('[{"label":"マント","points":[[0,0],[10,0],[10,10]],'
              '"ref_point_a":[0,0],"ref_point_b":[10,0],"reference_cm":40}]')
     form = _valid_form(mode="multi_size", sizes=["M"], custom_panels_json=panel)
     data = client.post("/api/generate", data=form).get_json()
-    assert data["ok"] is False
-    assert "サイズ展開モード" in data["error"]
+    assert data["ok"] is True, data.get("error")
+    assert "M" in data["results"]
+    assert any(part["part_type"] == "custom_panel"
+               for part in data["results"]["M"]["parts"])
 
 
 def test_a_broken_custom_panels_json_still_reports_its_own_error(client):

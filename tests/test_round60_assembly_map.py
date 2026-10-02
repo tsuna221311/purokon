@@ -33,6 +33,14 @@ import subprocess
 import xml.etree.ElementTree as ET
 
 import pytest
+import pypdf
+
+
+def _pdf_text(path, first_page_only=False):
+    pages = pypdf.PdfReader(path).pages
+    if first_page_only:
+        pages = pages[:1]
+    return "\n".join(page.extract_text() or "" for page in pages)
 
 from engine.measurements import Measurements
 from engine.pdf_export import printed_tile_cells
@@ -221,8 +229,7 @@ def test_the_sheet_corner_is_written_in_japanese(printed):
     全ページ日本語の中で、ここだけ `seam allowance: 1.0cm` だった。
     """
     _result, pdf_path, _out = printed
-    text = subprocess.run(["pdftotext", pdf_path, "-"],
-                          capture_output=True, text=True, check=True).stdout
+    text = _pdf_text(pdf_path)
     assert "seam allowance" not in text, "英語の縫い代表示が残っています"
     assert "縫い代 1.0cm" in text, text[:300]
 
@@ -234,8 +241,7 @@ def test_the_hem_allowance_is_also_japanese(tmp_path):
                               skirt_style="flare")
     result = pipeline.generate_from_selection(
         spec, MEAS, seam_allowance_cm=1.0, hem_seam_allowance_cm=3.0)
-    text = subprocess.run(["pdftotext", result.output_files["pdf"], "-"],
-                          capture_output=True, text=True, check=True).stdout
+    text = _pdf_text(result.output_files["pdf"])
     assert "hem:" not in text
     assert "縫い代 1.0cm（裾 3.0cm）" in text, text[:300]
 
@@ -246,8 +252,7 @@ def test_the_wording_matches_the_legend(printed):
     同じことを別の言葉で書くと、どちらが本当か分からなくなる。
     """
     _result, pdf_path, _out = printed
-    text = subprocess.run(["pdftotext", "-f", "1", "-l", "1", pdf_path, "-"],
-                          capture_output=True, text=True, check=True).stdout
+    text = _pdf_text(pdf_path, first_page_only=True)
     assert "裁断線の内側" in text and "1.0cm" in text
 
 

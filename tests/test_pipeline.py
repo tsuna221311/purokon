@@ -41,9 +41,15 @@ def test_build_garment_spec_defaults():
     assert "skirt" in part_types
 
 
-def test_build_garment_spec_rejects_turtleneck_zip_combo():
-    with pytest.raises(ValueError):
-        build_garment_spec(neckline="turtle_neck", front_zip=True)
+def test_build_garment_spec_models_turtleneck_zip_as_separate_stand_collar():
+    spec = build_garment_spec(neckline="turtle_neck", front_zip=True)
+    front = next(p for p in spec.parts if p.part_type == "front_bodice_zip_panel")
+    back = next(p for p in spec.parts if p.part_type == "back_bodice")
+    collar = next(p for p in spec.parts if p.part_type == "collar")
+    assert front.variation == "round_neck"
+    assert back.variation == "round_neck_zip"
+    assert collar.variation == ""
+    assert spec.construction["front_zip_turtle"] is True
 
 
 @pytest.mark.parametrize("neckline", ["square_neck", "boat_neck", "sweetheart"])

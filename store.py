@@ -296,6 +296,7 @@ class Store:
                 # spec_jsonはNoneのままになる(再生成不可。README/このファイルの
                 # get_job_regeneration_specのdocstring参照)。
                 ("spec_json", "ALTER TABLE jobs ADD COLUMN spec_json TEXT"),
+                ("project_name", "ALTER TABLE jobs ADD COLUMN project_name TEXT"),
             ]
             for column_name, ddl in job_migrations:
                 if column_name not in job_columns:
@@ -688,12 +689,14 @@ class Store:
     # -- jobs ------------------------------------------------------------
 
     def record_job(self, job_id: str, owner_key: str, part_count: int | None = None,
-                    waste_ratio: float | None = None, spec_json: str | None = None) -> None:
+                    waste_ratio: float | None = None, spec_json: str | None = None,
+                    project_name: str | None = None) -> None:
         with closing(self._connect()) as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO jobs(job_id, owner_key, created_at, part_count, waste_ratio, spec_json) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (job_id, owner_key, time.time(), part_count, waste_ratio, spec_json),
+                "INSERT OR REPLACE INTO jobs(job_id, owner_key, created_at, part_count, waste_ratio, spec_json, project_name) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (job_id, owner_key, time.time(), part_count, waste_ratio, spec_json,
+                 project_name),
             )
             conn.commit()
 
@@ -711,7 +714,7 @@ class Store:
         """
         with closing(self._connect()) as conn:
             rows = conn.execute(
-                "SELECT job_id, created_at, part_count, waste_ratio, spec_json FROM jobs "
+                "SELECT job_id, created_at, part_count, waste_ratio, spec_json, project_name FROM jobs "
                 "WHERE owner_key=? ORDER BY created_at DESC LIMIT ?",
                 (owner_key, limit),
             ).fetchall()
@@ -719,8 +722,9 @@ class Store:
             {
                 "job_id": job_id, "created_at": created_at, "part_count": part_count,
                 "waste_ratio": waste_ratio, "can_regenerate": spec_json is not None,
+                "project_name": project_name,
             }
-            for job_id, created_at, part_count, waste_ratio, spec_json in rows
+            for job_id, created_at, part_count, waste_ratio, spec_json, project_name in rows
         ]
 
     def get_job_regeneration_spec(self, job_id: str, owner_key: str) -> dict | None:

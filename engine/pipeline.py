@@ -22,6 +22,7 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field, replace
+from math import pi
 from types import SimpleNamespace
 
 from PIL import Image
@@ -30,7 +31,7 @@ from .compatibility import (
     COLLAR_EASE_CM, CUFFS_EASE_CM, CompatibilityWarning, SLEEVE_CAP_DESIGN_GATHER_CM,
     SLEEVE_CAP_EASE_CM, WAISTBAND_CLOSURE_EASE_CM, armhole_length, sleeve_cap_ease_cm,
     check_seam_compatibility, hem_or_wrist_opening_length, neckline_length,
-    shoulder_seam_length, shoulder_seams_match, unchecked_seams,
+    shoulder_seam_length, shoulder_seams_match, side_seam_length, unchecked_seams,
     waist_opening_length,
 )
 from .darts import (
@@ -40,13 +41,17 @@ from .darts import (
 from .custom_panel import (
     CUSTOM_PANEL_PART_TYPE,
     MAX_CUSTOM_PANEL_QUANTITY,
+    REPLACEABLE_PART_TYPES,
     mirror_points_x,
     points_to_segments,
 )
+from .construction_features import INTERFACING_TARGETS, apply_construction_features
+from .specification import export_specification_pdf
 from .measurements import (
     Measurements,
     STANDARD_SIZE_GRADE_CM,
     STANDARD_SIZE_ORDER,
+    STANDARD_SIZE_STEPS,
     detect_dart_count_inconsistencies,
     grading_relative_change_notes,
     graded_measurements,
@@ -64,7 +69,7 @@ from .skin_tone import read_colours
 from .illustration_fit import (
     DesignProportions, SleeveReading, choose_skirt_variation, choose_sleeve_variation,
     combine_proportions, measure_neckline, measure_proportions, measure_sleeves,
-    skirt_length_cm,
+    skirt_length_cm, SKIRT_LENGTH_RANGE_CM,
 )
 from .nesting import DEFAULT_FABRIC_WIDTHS_CM, NestingResult, best_fabric_width
 from .notches import (
@@ -83,6 +88,7 @@ from .part_classifier import (
     ClassificationResult,
     get_default_classifier,
 )
+from .classification_evidence import resolve_classification_evidence
 from .part_names import part_type_label
 from .bodice_fit import bust_point_from_cf_cm
 from .part_specs import (
@@ -96,11 +102,11 @@ from .alteration import (ALTERABLE_PART_TYPES, apply_alterations,
                           notes_for as alteration_notes,
                           validate as validate_alterations)
 from .blocks import (ADULT_FEMALE, Block, block_notes, block_warnings,
-                      get_block)
+                     build_measured_block, grade_measured_block, get_block)
 from .fabric import ShoppingList, build_shopping_list
 from .fabric_groups import (DEFAULT_FABRIC_NAME, split_parts as split_fabric_groups)
 from .lining import (build_lining_parts, lining_hem_allowance_cm, lining_notes,
-                      yardage_reference_note)
+                     missing_lining_scopes, yardage_reference_note)
 from .stash import StashVerdict, evaluate_stash
 from .pdf_export import (export_multi_size_bundle, export_pattern, get_paper,
                           render_combined_pdf, unprintable_characters)
@@ -109,12 +115,13 @@ from .scaling import (
     scale_band_to_seam_length, scale_sleeve_to_cap_length, scale_template,
 )
 from .seam import DEFAULT_SEAM_ALLOWANCE_CM, FinalizedPart, finalize_part
+from .production_quality import production_quality_report
 from .segmentation import get_default_segmenter
 from .svgpath import bounding_box, segments_to_polyline
 from .templates_db import TemplateDB
 
 NECKLINES = {"round_neck", "v_neck", "turtle_neck", "square_neck", "boat_neck", "sweetheart"}
-# 前開きファスナー用のネックラインテンプレート(_zip)を実際に用意して
+# 前開きファスナー用の身頃テンプレート(_zip)を実際に用意して
 # いるのはこの5種(round9でsquare_neck/boat_neck/sweetheartを追加、
 # それ以前はround_neck/v_neckのみだった)。turtle_neckのみ対象外のまま
 # 残している: タートルネックは台襟(スタンドカラー状の立ち上がり)がネック
@@ -156,7 +163,7 @@ PANTS_STYLES = {"", "wide", "tapered", "shorts", "flare", "cropped"}
 # round21: イラスト1枚ごとに「前から見た絵か、後ろから見た絵か」を渡せる
 # ようにした。""(空文字列)は「指定なし」で、round20までと同じ扱い
 # (=前として読む)。指定しなければ従来どおり動く。
-ILLUSTRATION_VIEWS = {"", "front", "back"}
+ILLUSTRATION_VIEWS = {"", "front", "back", "side", "detail"}
 # contour(体に沿うコンター)はround9で追加。
 WAISTBAND_STYLES = {"", "wide", "elastic", "contour"}
 
@@ -199,12 +206,25 @@ class PartRequest:
     # round9で追加: 「定型に当てはまらない自由形状パーツ」(engine/custom_panel.py
     # 参照)用。Noneなら従来通りTemplateDBからpart_type/variationで検索する。
     # 値がある場合はTemplateDBを検索せず、この座標をそのまま(既にcm換算・
-    # 校正済みとして)使う。part_typeは常に"custom_panel"、variationは
+    # 校正済みとして)使う。通常のpart_typeは"custom_panel"。既定型紙を
+    # 置換する場合だけ縫い合わせ検査のため対象のpart_typeを使う。variationは
     # 利用者が付けた自由記述のラベル(型紙上の表示名)として使う。
     custom_segments: list[tuple[str, list[float]]] | None = None
     #: round57: 生地幅に収まらないときに、縦に分けてよいか。
     #: カスタムパーツだけで使う(定型のパーツは種類ごとに決まっている)。
     allow_split: bool = False
+    #: 重ね衣装など、同じpart_typeでもこの要求だけに使う丈。
+    design_length_cm: float | None = None
+    #: 重ねスカートの層番号。前後ラベルと組み合わせて印字する。
+    layer_number: int | None = None
+    #: 自由輪郭が既定テンプレートの置換である場合の対象。custom_segmentsが
+    #: ある要求にだけ使う。part_typeも同じ値にして下流の縫い合わせ検査へ渡す。
+    replacement_part_type: str | None = None
+    seam_fit_confirmed: bool = False
+    #: 自由輪郭だけに使う、号数1段階当たりの外接幅・高さの増減量(cm)。
+    #: 0は「小物として実寸固定」であり、未対応という意味ではない。
+    grade_width_cm: float = 0.0
+    grade_height_cm: float = 0.0
 
 
 @dataclass
@@ -216,6 +236,9 @@ class GarmentSpec:
     #: ウエストの絞りはダーツではなくその縫い目が担う
     #: (engine/princess.py)。
     princess_line: bool = False
+    #: 画像確認で確定した、型紙へ描く仕立て線（プリーツ、スリット、
+    #: 開閉位置、ボーン等）。手動生成では空で従来と同じ。
+    construction: dict[str, object] = field(default_factory=dict)
 
     def total_pieces(self) -> int:
         return sum(p.quantity for p in self.parts)
@@ -243,14 +266,19 @@ def build_garment_spec(neckline: str = "round_neck",
     if neckline not in NECKLINES:
         raise ValueError(f"neckline は {sorted(NECKLINES)} のいずれかを指定してください: {neckline!r}")
 
-    bodice_variation = neckline
+    # タートルの前開きは、立ち上がりと身頃を一体のまま中央で切らない。
+    # ラウンド首の前開き身頃＋前で開く独立スタンド衿に分けることで、
+    # ファスナー端と衿端が実在する縫製構造になる。
+    front_zip_turtle = front_zip and neckline == "turtle_neck"
+    effective_neckline = "round_neck" if front_zip_turtle else neckline
+    bodice_variation = effective_neckline
     if front_zip:
-        if neckline not in ZIP_COMPATIBLE_NECKLINES:
+        if effective_neckline not in ZIP_COMPATIBLE_NECKLINES:
             raise ValueError(
                 f"{neckline} + 前開きファスナーの組み合わせのテンプレートは未対応です"
                 f"（前開き対応ネックラインは {sorted(ZIP_COMPATIBLE_NECKLINES)} のみ）。"
             )
-        bodice_variation = f"{neckline}_zip"
+        bodice_variation = f"{effective_neckline}_zip"
 
     if include_cuffs and not sleeve_style:
         # 以前はここが if sleeve_style: ブロックの内側にネストされたチェックだった
@@ -267,9 +295,11 @@ def build_garment_spec(neckline: str = "round_neck",
         # (開閉するのは中心"前"のみ)なので、従来通りbodice_variationの
         # 通常の1枚構成のまま。
         parts = [
-            PartRequest("front_bodice_zip_panel", neckline, 2),
+            PartRequest("front_bodice_zip_panel", effective_neckline, 2),
             PartRequest("back_bodice", bodice_variation, 1),
         ]
+        if front_zip_turtle:
+            parts.append(PartRequest("collar", "", 1))
     else:
         parts = [
             PartRequest("front_bodice", bodice_variation, 1),
@@ -321,18 +351,20 @@ def build_garment_spec(neckline: str = "round_neck",
             raise ValueError(f"waistband_style は {sorted(WAISTBAND_STYLES)} のいずれかを指定してください: {waistband_style!r}")
         parts.append(PartRequest("waistband", waistband_style, 1))
 
-    if princess_line and front_zip:
-        # 前開きの片側パネルは左右非対称で、中心前が輪郭の縁にある。
-        # 切り替え線の分割はその形を前提にしていないので、黙って
-        # 片方を無視せず、はっきり断る。
-        raise ValueError(
-            "前開きファスナーと切り替え線(プリンセスライン)は同時に指定できません。")
-    return GarmentSpec(parts=parts, princess_line=princess_line)
+    construction = ({"front_zip_turtle": True} if front_zip_turtle else {})
+    if front_zip and princess_line:
+        construction["front_zip_princess"] = True
+    return GarmentSpec(parts=parts, princess_line=princess_line,
+                       construction=construction)
 
 
 def build_custom_panel_requests(label: str, points_cm: list[tuple[float, float]],
                                  quantity: int = 1, mirror: bool = False,
-                                 allow_split: bool = False) -> list[PartRequest]:
+                                 allow_split: bool = False,
+                                 replacement_part_type: str | None = None,
+                                 seam_fit_confirmed: bool = False,
+                                 grade_width_cm: float = 0.0,
+                                 grade_height_cm: float = 0.0) -> list[PartRequest]:
     """校正済み(cm単位)の輪郭から、custom_panel用のPartRequestを組み立てる。
 
     round9で追加した「定型に当てはまらない自由形状パーツ」機能
@@ -345,15 +377,103 @@ def build_custom_panel_requests(label: str, points_cm: list[tuple[float, float]]
     決め打ちのラベルにしないのは、このパーツが本当に左右の関係にあるとは
     限らない=利用者次第のため)。
     """
+    if replacement_part_type is not None and replacement_part_type not in REPLACEABLE_PART_TYPES:
+        raise ValueError("置き換える標準パーツの指定が不正です。")
+    if replacement_part_type is not None and not seam_fit_confirmed:
+        raise ValueError(
+            "標準パーツを置き換えるには、平面型紙の輪郭であることと、"
+            "接続する縫い線の長さを確認してください。")
+    output_type = replacement_part_type or CUSTOM_PANEL_PART_TYPE
     segments = points_to_segments(points_cm)
-    requests = [PartRequest(CUSTOM_PANEL_PART_TYPE, label, quantity=quantity,
-                             custom_segments=segments, allow_split=allow_split)]
+    requests = [PartRequest(
+        output_type, label, quantity=quantity, custom_segments=segments,
+        allow_split=allow_split, replacement_part_type=replacement_part_type,
+        seam_fit_confirmed=seam_fit_confirmed,
+        grade_width_cm=grade_width_cm, grade_height_cm=grade_height_cm)]
     if mirror:
         mirrored_segments = points_to_segments(mirror_points_x(points_cm))
-        requests.append(PartRequest(CUSTOM_PANEL_PART_TYPE, f"{label}(反転)",
-                                     quantity=quantity, custom_segments=mirrored_segments,
-                                     allow_split=allow_split))
+        requests.append(PartRequest(
+            output_type, f"{label}(反転)", quantity=quantity,
+            custom_segments=mirrored_segments, allow_split=allow_split,
+            replacement_part_type=replacement_part_type,
+            seam_fit_confirmed=seam_fit_confirmed,
+            grade_width_cm=grade_width_cm, grade_height_cm=grade_height_cm))
     return requests
+
+
+def _grade_custom_segments(request: PartRequest, size: str) -> PartRequest:
+    """明示された幅・高さ刻みだけで自由輪郭を号数展開する。"""
+    if request.custom_segments is None:
+        return request
+    step = STANDARD_SIZE_STEPS[size]
+    if step == 0 or (request.grade_width_cm == 0 and request.grade_height_cm == 0):
+        return request
+    coords = [(args[i], args[i + 1])
+              for _command, args in request.custom_segments
+              for i in range(0, len(args) - 1, 2)]
+    if not coords:
+        return request
+    min_x = min(x for x, _y in coords)
+    max_x = max(x for x, _y in coords)
+    min_y = min(y for _x, y in coords)
+    max_y = max(y for _x, y in coords)
+    width, height = max_x - min_x, max_y - min_y
+    target_width = width + request.grade_width_cm * step
+    target_height = height + request.grade_height_cm * step
+    if target_width < 2.0 or target_height < 2.0:
+        raise ValueError(
+            f"カスタムパーツ「{request.variation}」の{size}サイズが"
+            f"{target_width:.1f}×{target_height:.1f}cmになります。"
+            "幅・高さは2cm以上になる刻み幅を指定してください。")
+    sx, sy = target_width / width, target_height / height
+    transformed = []
+    for command, args in request.custom_segments:
+        values = list(args)
+        for i in range(0, len(values) - 1, 2):
+            values[i] = min_x + (values[i] - min_x) * sx
+            values[i + 1] = min_y + (values[i + 1] - min_y) * sy
+        transformed.append((command, values))
+    return replace(request, custom_segments=transformed)
+
+
+def _grade_custom_requests(spec: GarmentSpec, size: str) -> GarmentSpec:
+    """サイズ別に自由輪郭を複製する。元の基準サイズ仕様は変更しない。"""
+    return replace(spec, parts=[_grade_custom_segments(part, size) for part in spec.parts])
+
+
+def merge_custom_panel_requests(base_requests: list[PartRequest],
+                                custom_requests: list[PartRequest],
+                                *, princess_line: bool = False
+                                ) -> list[PartRequest]:
+    """追加輪郭を足し、明示置換は対象の既定パーツと枚数単位で入れ替える。"""
+    replacements = {
+        request.replacement_part_type for request in custom_requests
+        if request.replacement_part_type is not None
+    }
+    if not replacements:
+        return [*base_requests, *custom_requests]
+    if princess_line and replacements & {"front_bodice", "back_bodice"}:
+        raise ValueError(
+            "自由輪郭による身頃置換とプリンセスライン分割は同時に使えません。"
+            "分割済みの各パネルを追加パーツとして入力してください。")
+    for part_type in sorted(replacements):
+        expected = sum(max(1, request.quantity) for request in base_requests
+                       if request.part_type == part_type
+                       and request.custom_segments is None)
+        supplied = sum(max(1, request.quantity) for request in custom_requests
+                       if request.replacement_part_type == part_type)
+        if expected == 0:
+            raise ValueError(
+                f"置換対象「{part_type}」が標準パーツ構成にありません。"
+                "先に本体パーツ側で対象を追加してください。")
+        if supplied != expected:
+            raise ValueError(
+                f"置換対象「{part_type}」は{expected}枚必要ですが、"
+                f"確認済みの自由輪郭は{supplied}枚です。左右を推測して補わず、"
+                "必要枚数ぶんを入力するか、左右対称なら反転パーツを有効にしてください。")
+    kept = [request for request in base_requests
+            if request.part_type not in replacements or request.custom_segments is not None]
+    return [*kept, *custom_requests]
 
 
 @dataclass
@@ -409,6 +529,9 @@ class PipelineResult:
     nesting: NestingResult
     output_files: dict[str, str]
     classification_log: list[ClassificationResult] = field(default_factory=list)
+    #: 複数画像・複数領域の判定をpart_typeごとに統合した根拠。
+    #: classification_log（生ログ）とは分け、画面とAPIが採用理由を読めるようにする。
+    classification_evidence: list[dict[str, object]] = field(default_factory=list)
     elapsed_seconds: float = 0.0
     measurement_warnings: list[str] = field(default_factory=list)
     #: round32で追加: 「こう作りました」という**説明**。警告ではない。
@@ -491,6 +614,7 @@ class PipelineResult:
             "ai_contribution": self.ai_contribution_note(),
             # round50: バッジの表示に使う。文を解釈させない(上記docstring参照)。
             "ai_engine": self.ai_engine(),
+            "classification_evidence": list(self.classification_evidence),
             "darts_applied": sum(p.dart_count for p in self.finalized_parts),
             # round65: **どのパーツに何本入ったか**。round64まで画面が
             # 受け取っていたのは合計(`darts_applied`)だけで、
@@ -544,6 +668,9 @@ class PipelineResult:
             # どこにも書いていなかった、という不足への対応。
             "assembly_steps": [s.as_dict() for s in self.assembly_steps()],
             "compatibility_warnings": [w.as_dict() for w in self.compatibility_warnings()],
+            # デジタル上の合格と、実物の仮縫い承認を分離する。画像と寸法だけで
+            # 生地物性や動作時のつれまで「問題なし」と表示しない。
+            "production_quality": production_quality_report(self),
             "naive_used_length_cm": round(naive_length, 1),
             "naive_waste_ratio": round(self.naive_baseline_waste_ratio(naive_length), 4),
             "parts": [
@@ -1323,8 +1450,7 @@ def _waist_slack_message(finished: float, measurements: Measurements,
         remedy = ("ゆとりを「ぴったり」寄りに変えるか、"
                   "身頃を短くしてウエストで切り替え、スカートと組み合わせるか、")
         stretch_remedy = ("ウエストの位置をはっきり出したい場合は、"
-                          "ウエストベルトで押さえてください"
-                          "(前開きファスナーと切り替え線は同時に指定できません)。")
+                          "ウエストベルトで押さえてください。")
     advice = ("生地が伸びるぶんは実際には体に沿いますが、" + stretch_remedy
               if ease.waist_cm < 0 else
               "ウエストをぴったりさせたい場合は、" + remedy
@@ -1404,7 +1530,7 @@ def _split_oversized_part(base_part, scaled, request, measurements,
     # ふつうの作り方だが、EVAフォームの装甲プレートに縫い目を入れるのは
     # 別の話である。**どちらなのかは作る人にしか分からない**ので、
     # 勝手に分けず、パーツごとの指定に従う。
-    if request.part_type == CUSTOM_PANEL_PART_TYPE:
+    if request.custom_segments is not None:
         if not getattr(request, "allow_split", False):
             return None
     elif request.part_type not in SPLITTABLE_PART_TYPES:
@@ -1464,6 +1590,8 @@ def _chest_width_notes(scaled_parts: list, measurements: Measurements) -> list[s
     """
     worst = 0.0
     parts: list[str] = []
+    wider = False
+    actuals: list[str] = []
     for p in scaled_parts:
         if not getattr(p, "chest_width_limited", False):
             continue
@@ -1471,16 +1599,28 @@ def _chest_width_notes(scaled_parts: list, measurements: Measurements) -> list[s
         actual = getattr(p, "chest_width_cm_actual", None)
         if target is None or actual is None:
             continue
-        gap = target - actual
+        gap = abs(target - actual)
         if gap <= CHEST_WIDTH_NOTE_THRESHOLD_CM:
             continue
         if gap > worst:
             worst = gap
+            wider = actual > target
         name = "胸幅" if p.part_type != "back_bodice" else "背幅"
         if name not in parts:
             parts.append(name)
+            actuals.append(f"{name}{actual:.1f}cm")
     if not parts:
         return []
+    if wider:
+        return [
+            f"{'・'.join(parts)}(中心から袖ぐりまでの幅)を指定の寸法まで"
+            f"狭められませんでした。実際には{'・'.join(actuals)}で"
+            f"引いています(指定より最大約{worst:.1f}cm広い)。"
+            f"バスト{measurements.bust:g}cmから決まる身頃の幅の中では、"
+            "袖ぐりをこれ以上えぐれないためです。"
+            "指定どおりの幅にするなら、バストのゆとりを減らすか、"
+            "胸幅・背幅の指定を見直してください。"
+        ]
     return [
         f"バスト{measurements.bust:g}cmに対して肩幅"
         f"{measurements.shoulder_width:g}cmが狭いため、"
@@ -1734,8 +1874,8 @@ def _princess_notes(stats: dict[str, dict], failures: set[str]) -> list[str]:
 
     * 実際に何cm摘んだか。ダーツと違って上限が無いので、ここが大きいほど
       「ダーツでは無理だった量」を示す。
-    * 中央側と脇側の縁の長さの差。実物の型紙では長い方をいせ込むか線を
-      引き直して合わせるが、ここではその処理をしていないので開示する。
+    * 中央側と脇側はトゥルーイング済み。極端な形で設計点を保ったまま
+      合わせられないときだけ、`_princess_warnings`で長さ差を開示する。
     * 引けなかったパーツがあれば、その事実(黙ってダーツ入りに戻さない)。
     """
     notes: list[str] = []
@@ -1760,11 +1900,17 @@ def _princess_warnings(stats: dict[str, dict], failures: set[str]) -> list[str]:
     warnings: list[str] = []
     if stats:
         gaps = [v.get("edge_gap_cm", 0.0) for v in stats.values()]
-        if max(gaps, default=0.0) >= 0.3:
+        if max(gaps, default=0.0) > 0.1:
             warnings.append(
                 f"切り替え線の中央側と脇側で、縁の長さが最大{max(gaps):.1f}cm"
-                "違います。縫うときは長い方を少しいせ込んで合わせてください"
-                "(型紙側での調整はしていません)。")
+                "違います。設計点を保つトゥルーイングでは解消できないため、"
+                "紙で縫い線を重ねて確認し、長い側を再製図してください。")
+        unresolved = [v.get("unresolved_intake_cm", 0.0) for v in stats.values()]
+        if max(unresolved, default=0.0) > 0.2:
+            warnings.append(
+                f"前開きの切り替え線は生成しましたが、この体型では縫い線が"
+                f"交差するため、ウエストの絞り最大{max(unresolved):.1f}cmは"
+                "入れていません。仮縫いで脇側パネルを補正してください。")
     for part_type in sorted(failures):
         warnings.append(
             f"{part_type_label(part_type)}には切り替え線を引けませんでした"
@@ -1900,11 +2046,11 @@ class PatternForgePipeline:
     # `_build_from_spec` を上から読めば、何がどの順で起きるかが分かる。
     # ------------------------------------------------------------------
 
-    def _finalize_every_part(self, garment_spec, measurements, precomputed,
-                              scaled_by_type, fit, ease, effective_seam_cm,
-                              effective_hem_cm, fabric_width_candidates,
-                              allow_rotation, one_way_fabric,
-                              design_length_overrides, block):
+    def _finalize_every_part_impl(self, garment_spec, measurements, precomputed,
+                                   scaled_by_type, fit, ease, effective_seam_cm,
+                                   effective_hem_cm, fabric_width_candidates,
+                                   allow_rotation, one_way_fabric,
+                                   design_length_overrides, block):
         """変形したパーツに、合印・ダーツ・縫い代を入れて確定させる。
 
         生地の幅に収まらないパーツは、ここで何枚かに分ける。
@@ -1937,6 +2083,15 @@ class PatternForgePipeline:
 
                 if labels and quantity > 1:
                     label_suffix = labels[i % len(labels)]
+                    # 画像確認で重ねスカートを指定した場合は、前後だけでは
+                    # 3層以上の同名パーツを区別できない。裁断・縫製時に
+                    # 取り違えないよう層番号も印字する。
+                    if request.part_type == "skirt" and request.layer_number:
+                        layer_number = request.layer_number
+                        label_suffix = f"{label_suffix}・第{layer_number}層"
+                    elif request.part_type == "skirt" and quantity > len(labels):
+                        layer_number = i // len(labels) + 1
+                        label_suffix = f"{label_suffix}・第{layer_number}層"
                 elif request.part_type == CUSTOM_PANEL_PART_TYPE and quantity > 1:
                     # round9で追加: custom_panelはpart_type単位でグローバルに
                     # 決まる左右/前後ラベル(PAIR_LABELS)を持たない(利用者が
@@ -1958,7 +2113,7 @@ class PatternForgePipeline:
                 # round30: 切り替え線(プリンセスライン)で身頃を2枚に分ける。
                 # 分けた側はダーツを持たないので、ダイヤモンドダーツの計算へ
                 # 進まずここで確定させる。
-                if (garment_spec.princess_line
+                if (request.custom_segments is None and garment_spec.princess_line
                         and request.part_type in PRINCESS_PART_TYPES):
                     split = split_bodice(request.part_type, scaled,
                                           measurements, fit)
@@ -1968,24 +2123,40 @@ class PatternForgePipeline:
                         # 出来上がりのウエスト周は、分けた3枚の
                         # 「ウエストの高さでの幅」の合計そのもの
                         # (縫い代を含まない縫い線どうしで測る)。
+                        zip_princess = request.part_type == "front_bodice_zip_panel"
                         for seg, count in ((center_segments, 1),
-                                            (side_segments, 2)):
+                                           (side_segments, 1 if zip_princess else 2)):
                             span = _x_span_at_y(
                                 _closed_points_from_segments(seg),
                                 scaled.waist_y_cm)
                             if span is not None:
-                                princess_waist_total += (span[1] - span[0]) * count
+                                width = (span[1] - span[0]) * count
+                                if zip_princess and seg is center_segments:
+                                    width -= stats.get("facing_width_cm", 0.0) * count
+                                princess_waist_total += width
                         center_type, side_type = PRINCESS_PANEL_TYPES[
                             request.part_type]
+                        original_side_length = side_seam_length(SimpleNamespace(
+                            part_type=request.part_type,
+                            stitch_line=segments_to_polyline(scaled.segments),
+                            underarm_y_cm=scaled.underarm_y_cm,
+                            reference_lines=(), compatibility_measurements={}))
+                        if (original_side_length is not None
+                                and request.part_type != "front_bodice_zip_panel"):
+                            original_side_length /= 2.0
                         # round76: 分けた3枚にも、下げた脇の下を引き継ぐ
                         # (ドロップショルダーの`ScaledPart.underarm_y_cm`)。
                         # 渡さないと、脇パーツの脇線が深い袖ぐりを飲み込む
                         # ——実測: ドロップ8cmで70.5cmのところ32.7cm。
                         # 3枚まとめて1か所で渡す(片方にだけ渡す書き方だと、
                         # 抜けても落ちるテストを作れない形になる)。
-                        for panel_type, segs, suffixes, with_center in (
-                                (center_type, center_segments, ("中央",), True),
-                                (side_type, side_segments, ("左", "右"), False)):
+                        panel_rows = (
+                            ((center_type, center_segments, (label_suffix,), True),
+                             (side_type, side_segments, (label_suffix,), False))
+                            if zip_princess else
+                            ((center_type, center_segments, ("中央",), True),
+                             (side_type, side_segments, ("左", "右"), False)))
+                        for panel_type, segs, suffixes, with_center in panel_rows:
                             for suffix in suffixes:
                                 finalized_parts.append(finalize_part(
                                     panel_type, request.variation, segs,
@@ -1996,7 +2167,14 @@ class PatternForgePipeline:
                                     seam_allowance_cm=effective_seam_cm,
                                     hem_seam_allowance_cm=effective_hem_cm,
                                     underarm_y_cm=scaled.underarm_y_cm,
-                                    label_suffix=suffix))
+                                    label_suffix=suffix,
+                                    notch_points=stats.get(
+                                        "center_notch_points" if with_center
+                                        else "side_notch_points"),
+                                    compatibility_measurements=(
+                                        {"side_seam_length": original_side_length}
+                                        if panel_type == side_type
+                                        and original_side_length is not None else None)))
                         continue
                     princess_failures.add(request.part_type)
 
@@ -2070,12 +2248,18 @@ class PatternForgePipeline:
                     # 説明が2回並ぶ。あとでまとめて1件にする。
                     split_records.setdefault(len(panels), []).append(
                         base_part.display_name)
+        finalized_parts = apply_construction_features(
+            finalized_parts, getattr(garment_spec, "construction", None))
         return (scaled_parts, finalized_parts, princess_stats, princess_failures,
                 princess_waist_total, split_records, split_panels)
 
-    def _scale_every_part(self, garment_spec, measurements, segments_by_idx,
-                           fit, block, alterations, design_lengths,
-                           shoulder_drop_cm=None):
+    def _finalize_every_part(self, *args, **kwargs):
+        """合印・ダーツ・縫い代を加える確定処理へ引き渡す。"""
+        return self._finalize_every_part_impl(*args, **kwargs)
+
+    def _scale_every_part_impl(self, garment_spec, measurements, segments_by_idx,
+                                fit, block, alterations, design_lengths,
+                                shoulder_drop_cm=None):
         """テンプレートを採寸に合わせて変形する(3回に分けて回す)。
 
         【なぜ3回に分けるか】パーツによっては「相手の出来上がり寸法」に
@@ -2109,7 +2293,7 @@ class PatternForgePipeline:
         fallback_notes: list[str] = []
 
         for req_idx, request in enumerate(garment_spec.parts):
-            if request.part_type in _DEFERRED_TYPES:
+            if request.part_type in _DEFERRED_TYPES and request.custom_segments is None:
                 continue
             quantity = max(1, request.quantity)
             for i in range(quantity):
@@ -2117,20 +2301,31 @@ class PatternForgePipeline:
                 # テンプレートSVGが持つ基準点(data-fit-x)を一緒に渡す
                 # (engine/bodice_fit.py参照)。持たないパーツでは空リストに
                 # なり、従来通りの一律スケーリングになる。
-                scaled = scale_template(
-                    request.part_type, request.variation,
-                    segments_by_idx[req_idx], measurements,
-                    fit_anchors=self.template_db.get_fit_anchors(
-                        request.part_type, request.variation),
-                    fit_anchors_y=self.template_db.get_fit_anchors_y(
-                        request.part_type, request.variation),
-                    design_length_cm=design_lengths.get(request.part_type),
-                    fit=fit,
-                    # round30: 切り替え線で分割する身頃はダーツを入れない。
-                    # ウエストの絞りは切り替えの縫い目が担う(engine/princess.py)。
-                    dartless=(garment_spec.princess_line
-                              and request.part_type in PRINCESS_PART_TYPES),
-                    block=block)
+                if request.custom_segments is not None:
+                    # この輪郭は、利用者が平面型紙として実寸校正済みである。
+                    # 採寸倍率・ダーツ・丈補正を二重適用せず1.0倍で読み、
+                    # 置換先の種類だけ戻して下流の縫い合わせ検査へ参加させる。
+                    scaled = scale_template(
+                        CUSTOM_PANEL_PART_TYPE, request.variation,
+                        segments_by_idx[req_idx], measurements, fit=fit, block=block)
+                    scaled = replace(scaled, part_type=request.part_type)
+                else:
+                    scaled = scale_template(
+                        request.part_type, request.variation,
+                        segments_by_idx[req_idx], measurements,
+                        fit_anchors=self.template_db.get_fit_anchors(
+                            request.part_type, request.variation),
+                        fit_anchors_y=self.template_db.get_fit_anchors_y(
+                            request.part_type, request.variation),
+                        design_length_cm=(request.design_length_cm
+                                          if request.design_length_cm is not None
+                                          else design_lengths.get(request.part_type)),
+                        fit=fit,
+                        # round30: 切り替え線で分割する身頃はダーツを入れない。
+                        # ウエストの絞りは切り替えの縫い目が担う(engine/princess.py)。
+                        dartless=(garment_spec.princess_line
+                                  and request.part_type in PRINCESS_PART_TYPES),
+                        block=block)
                 # round40: 着てみて合わなかったときの補正。実測した余り/不足を
                 # cmで受け取り、基準点(肩先・首の付け根・脇の下・ウエスト)を
                 # 使って輪郭を動かす。ここで当てるのは**変形後・縫い代前**——
@@ -2143,7 +2338,7 @@ class PatternForgePipeline:
                 # バスト50・ヒップ170・身長210の前身頃。変形の途中で当てた
                 # ものをヒップの開きが引き継いで壊れていた)。
                 part_alterations = dict(alterations or {})
-                if request.part_type in ALTERABLE_PART_TYPES:
+                if request.custom_segments is None and request.part_type in ALTERABLE_PART_TYPES:
                     slope_fix = shoulder_slope_correction_cm(
                         scaled.segments, request.part_type,
                         list(scaled.fit_anchors_scaled),
@@ -2153,7 +2348,8 @@ class PatternForgePipeline:
                     if slope_fix:
                         part_alterations["shoulder_slope"] = (
                             part_alterations.get("shoulder_slope", 0.0) + slope_fix)
-                if part_alterations and request.part_type in ALTERABLE_PART_TYPES:
+                if (request.custom_segments is None and part_alterations
+                        and request.part_type in ALTERABLE_PART_TYPES):
                     # 基準点は**変形後の座標**を使う(`fit_anchors_scaled`)。
                     # テンプレート座標のまま使うと、変形でずれたぶん的を外す
                     # (実測: ウエストの補正が-2.0cmではなく-1.44cmしか効かな
@@ -2170,8 +2366,9 @@ class PatternForgePipeline:
                 # いちばん最後**に当てる——補正(round40/43)は肩先を動かす
                 # 操作なので、先にドロップを当てると補正が動いた肩先を
                 # 基準にしてしまう。
-                scaled = _with_drop_shoulder(
-                    scaled, request.part_type, shoulder_drop_cm, drop_run)
+                if request.custom_segments is None:
+                    scaled = _with_drop_shoulder(
+                        scaled, request.part_type, shoulder_drop_cm, drop_run)
                 precomputed[(req_idx, i)] = scaled
                 scaled_by_type.setdefault(request.part_type, []).append(scaled)
 
@@ -2186,7 +2383,8 @@ class PatternForgePipeline:
             shoulder_drop_cm=shoulder_drop_cm)
 
         for req_idx, request in enumerate(garment_spec.parts):
-            if request.part_type not in SLEEVE_STAGE_PART_TYPES:
+            if (request.part_type not in SLEEVE_STAGE_PART_TYPES
+                    or request.custom_segments is not None):
                 continue
             quantity = max(1, request.quantity)
             armhole_per_arm = None
@@ -2266,6 +2464,10 @@ class PatternForgePipeline:
         return (precomputed, scaled_by_type, hood_plans,
                 drop_run, fallback_notes)
 
+    def _scale_every_part(self, *args, **kwargs):
+        """採寸変形の3段階処理を実装本体へ委譲する。"""
+        return self._scale_every_part_impl(*args, **kwargs)
+
     def _scale_band_parts(self, garment_spec, measurements, segments_by_idx,
                            fit, block, precomputed, scaled_by_type,
                            fallback_notes):
@@ -2276,7 +2478,7 @@ class PatternForgePipeline:
         (`_scale_every_part`のdocstringの「3回に分ける理由」)。
         """
         for req_idx, request in enumerate(garment_spec.parts):
-            if request.part_type not in BAND_PART_TYPES:
+            if request.part_type not in BAND_PART_TYPES or request.custom_segments is not None:
                 continue
             quantity = max(1, request.quantity)
             if request.part_type == "waistband":
@@ -2352,7 +2554,8 @@ class PatternForgePipeline:
             out.append(scaled)
         return out
 
-    def _prepare_settings(self, measurements, block_key, alterations, fit,
+    def _prepare_settings(self, measurements, block_key, measured_block,
+                           alterations, fit,
                            design_length_overrides, design,
                            worn_over_bust_cm=None, worn_over_has_sleeves=True,
                            shoulder_drop_cm=None):
@@ -2369,7 +2572,12 @@ class PatternForgePipeline:
         # round42: どの原型(ブロック)の式で身頃を引くか(engine/blocks.py)。
         # 知らないキーはここでエラーになる——黙って既定に落とすと、
         # 子どもを選んだつもりで大人の型紙が出る。
-        block = get_block(block_key)
+        if measured_block is not None:
+            if block_key not in (None, "", "measured"):
+                raise ValueError("採寸指定原型と別の原型は同時に指定できません。")
+            block = build_measured_block(measured_block)
+        else:
+            block = get_block(block_key)
         # round40: 着てみて合わなかったときの補正(engine/alteration.py)。
         # 知らない項目・範囲外はここで弾く(黙って丸めない)。
         alterations = validate_alterations(alterations or {})
@@ -2594,7 +2802,7 @@ class PatternForgePipeline:
 
     def _draw_lining(self, finalized_parts, lining, effective_seam_cm,
                       effective_hem_cm, fabric_width_candidates,
-                      allow_rotation, one_way_fabric):
+                      allow_rotation, one_way_fabric, scope=None):
         """裏地の型紙を引いて、裏地だけで並べ直す。
 
         Returns:
@@ -2606,27 +2814,37 @@ class PatternForgePipeline:
         lining_parts_list: list[FinalizedPart] = []
         lining_nesting = None
         lining_note_list: list[str] = []
+        scope_notes: list[str] = []
         # 裾の縫い代を別指定しなかった場合、表地の裾は全辺と同じ幅で裁って
         # いる。裏地の「表地より2cm短く」はその幅からの引き算になる
         # (Noneのまま渡すと、注記が「表地のNone cmから」になる)。
         outer_hem_cm = (effective_seam_cm if effective_hem_cm is None
                          else effective_hem_cm)
         if lining:
+            missing = missing_lining_scopes(finalized_parts, scope)
+            if missing:
+                scope_notes.append(
+                    f"裏地の対象に選ばれた{'・'.join(missing)}は、"
+                    "この型紙にありません。その部位の裏地は引いていません。")
+                lining_note_list.extend(scope_notes)
             lining_parts_list = build_lining_parts(
-                finalized_parts, hem_seam_allowance_cm=outer_hem_cm)
+                finalized_parts, hem_seam_allowance_cm=outer_hem_cm,
+                scope=scope)
             if lining_parts_list:
                 lining_nesting = best_fabric_width(
                     lining_parts_list, candidates=fabric_width_candidates,
                     allow_rotation=allow_rotation, one_way_fabric=one_way_fabric)
-                lining_note_list = lining_notes(lining_parts_list, outer_hem_cm)
+                lining_note_list = lining_note_list + lining_notes(
+                    lining_parts_list, outer_hem_cm)
                 cross = yardage_reference_note(
                     lining_parts_list, lining_nesting.used_length_cm,
                     lining_nesting.fabric_width_cm)
                 if cross:
                     lining_note_list.append(cross)
-        return lining_parts_list, lining_nesting, lining_note_list, outer_hem_cm
+        return (lining_parts_list, lining_nesting, lining_note_list,
+                outer_hem_cm, scope_notes)
 
-    def _build_from_spec(self, garment_spec: GarmentSpec, measurements: Measurements,
+    def _build_from_spec_impl(self, garment_spec: GarmentSpec, measurements: Measurements,
                           fabric_width_candidates: tuple[float, ...],
                           allow_rotation: bool = False,
                           seam_allowance_cm: float | None = None,
@@ -2641,6 +2859,7 @@ class PatternForgePipeline:
                           alterations: dict[str, float] | None = None,
                           lining: bool = False,
                           block_key: str | None = None,
+                          measured_block: dict[str, float] | None = None,
                           fabric_group_assignments: dict[str, str] | None = None,
                           include_empty_tiles: bool = False,
                           paper: str | None = None,
@@ -2678,7 +2897,7 @@ class PatternForgePipeline:
         start = time.time()
         (block, alterations, ease, design_lengths,
          design_notes) = self._prepare_settings(
-            measurements, block_key, alterations, fit,
+            measurements, block_key, measured_block, alterations, fit,
             design_length_overrides, design,
             worn_over_bust_cm=worn_over_bust_cm,
             worn_over_has_sleeves=worn_over_has_sleeves,
@@ -2824,14 +3043,42 @@ class PatternForgePipeline:
         split_notes = [split_note(labels, count, effective_seam_cm)
                        for count, labels in sorted(split_records.items())]
 
+        # 自由輪郭で標準パーツを置き換えた場合、利用者の確認チェックだけを
+        # 信じて裁断データを出さない。実際の輪郭から測った袖山・袖ぐり、
+        # 肩、脇、首ぐり等が合わない、または測定不能なら、PDF/SVG/DXFを
+        # 書き出す前に停止する。画像の外形を誤って型紙として入れた事故も
+        # ここで止められる。
+        replacement_types = sorted({
+            request.replacement_part_type for request in garment_spec.parts
+            if request.replacement_part_type
+        })
+        if replacement_types:
+            seam_warnings = check_seam_compatibility(finalized_parts)
+            unchecked = unchecked_seams(finalized_parts)
+            if seam_warnings or unchecked:
+                details = [warning.message for warning in seam_warnings]
+                details.extend(unchecked)
+                raise ValueError(
+                    "自由輪郭で置き換えた型紙の縫い合わせを自動検査できませんでした。"
+                    "裁断用PDF・SVG・DXFは出力していません。置換対象: "
+                    + "・".join(replacement_types) + "。"
+                    + "／".join(details[:4]))
+
+        effective_fabric_assignments = dict(fabric_group_assignments or {})
+        if garment_spec.construction.get("internal_support") == "petticoat":
+            # パニエは表地と別素材（チュール等）で作る。指定が無くても本体と
+            # 同じ生地へ混ぜて必要量を計算しない。
+            effective_fabric_assignments.setdefault("petticoat", "パニエ用生地")
         (paper_obj, fabric_split, multi_fabric,
          nesting_parts, nesting) = self._nest_on_fabric(
-            finalized_parts, fabric_group_assignments, paper,
+            finalized_parts, effective_fabric_assignments, paper,
             fabric_width_candidates, allow_rotation, one_way_fabric)
         (lining_parts_list, lining_nesting,
-         lining_note_list, outer_hem_cm) = self._draw_lining(
+         lining_note_list, outer_hem_cm, lining_scope_notes) = self._draw_lining(
             finalized_parts, lining, effective_seam_cm, effective_hem_cm,
-            fabric_width_candidates, allow_rotation, one_way_fabric)
+            fabric_width_candidates, allow_rotation, one_way_fabric,
+            garment_spec.construction.get("lining_scope"))
+        design_notes.extend(lining_scope_notes)
         # round38: 買い物メモ。生地幅ごとの必要量は「内部で計算していたのに
         # 捨てていた」数字で、近所の店に置いている幅が違う人には、
         # おすすめの1つだけ見せても役に立たない。
@@ -2845,6 +3092,36 @@ class PatternForgePipeline:
             lining_parts=lining_parts_list,
             front_opening_cm=front_opening_cm,
             front_opening_bottom=_front_opening_bottom(finalized_parts))
+        closure = str(garment_spec.construction.get("closure") or "")
+        closure_length = garment_spec.construction.get("closure_length_cm")
+        if closure in {"back_zip", "side_zip"} and closure_length:
+            position = "後中心" if closure == "back_zip" else "脇"
+            shopping_list.notes.append(
+                f"{position}ファスナーが1本要ります。型紙で確定した開き寸法は"
+                f"{float(closure_length):.1f}cmです。短いものは使えないため、"
+                "この寸法以上の長さを選び、必要に応じて上側で詰めてください。")
+        if closure in {"hooks", "snaps"}:
+            count = garment_spec.construction.get("closure_count")
+            spacing = garment_spec.construction.get("closure_spacing_cm")
+            if count and spacing:
+                item = "縫い付けホック" if closure == "hooks" else "スナップボタン"
+                shopping_list.notes.append(
+                    f"{item}が{int(count)}組要ります。取付中心間隔は"
+                    f"{float(spacing):g}cmです。予備を1組用意してください。")
+        if garment_spec.construction.get("internal_support") == "petticoat":
+            tiers = int(garment_spec.construction.get("petticoat_tier_count") or 0)
+            style = garment_spec.construction.get("petticoat_style")
+            shopping_list.notes.append(
+                f"パニエ用ウエストゴムが1本要ります（仕上がり"
+                f"{float(garment_spec.construction.get('petticoat_waist_cm') or 0):g}cm）。")
+            if style == "hoop":
+                diameters = garment_spec.construction.get(
+                    "petticoat_hoop_diameters_cm") or []
+                lengths = [pi * float(value) for value in diameters]
+                shopping_list.notes.append(
+                    f"パニエワイヤーが{tiers}本要ります。切断前の輪長目安は"
+                    + "・".join(f"{value:.1f}cm" for value in lengths)
+                    + "です。接続代は使用するコネクター仕様分を別途足してください。")
         job_id = uuid.uuid4().hex[:12]
         # round33: 縫う順番をPDFにも入れる。縫うときに見ているのは布と紙で
         # あってブラウザではないので、型紙と一緒に必ず届くようにする。
@@ -2855,6 +3132,11 @@ class PatternForgePipeline:
             sleeve_cap_ease_cm=_sleeve_cap_ease_for(finalized_parts),
             front_zip=any(p.part_type == "front_bodice_zip_panel"
                           for p in finalized_parts),
+            closure=closure,
+            closure_length_cm=(float(closure_length) if closure_length else None),
+            closure_count=garment_spec.construction.get("closure_count"),
+            closure_spacing_cm=garment_spec.construction.get("closure_spacing_cm"),
+            closure_overlap_cm=garment_spec.construction.get("closure_overlap_cm"),
             split_panels=split_panels,
             lining_parts=lining_parts_list)
         outputs = self._export_files(
@@ -2886,7 +3168,7 @@ class PatternForgePipeline:
         princess_waist_cm = (princess_waist_total
                               if garment_spec.princess_line and princess_stats
                               else None)
-        return PipelineResult(
+        result = PipelineResult(
             job_id=job_id, garment_spec=garment_spec, measurements=measurements,
             scaled_parts=scaled_parts, finalized_parts=finalized_parts, nesting=nesting,
             output_files=outputs, elapsed_seconds=time.time() - start,
@@ -2899,9 +3181,7 @@ class PatternForgePipeline:
                                        finalized_parts, scaled_parts,
                                        measurements, ease,
                                        finished_override_cm=princess_waist_cm,
-                                       princess_available=not any(
-                                           p.part_type == "front_bodice_zip_panel"
-                                           for p in finalized_parts))
+                                       princess_available=True)
                                    + _princess_warnings(princess_stats,
                                                          princess_failures)
                                    + _unprintable_label_warnings(finalized_parts)
@@ -2921,6 +3201,16 @@ class PatternForgePipeline:
             paper_name=paper_obj.name,
             resolved_design_lengths=dict(design_lengths),
         )
+        if not skip_export:
+            specification_path = os.path.join(
+                self.output_dir, f"{job_id}_specification.pdf")
+            export_specification_pdf(result, specification_path)
+            result.output_files["spec_pdf"] = specification_path
+        return result
+
+    def _build_from_spec(self, *args, **kwargs) -> PipelineResult:
+        """1着分の生成工程を、段階別の実装本体へ引き渡す。"""
+        return self._build_from_spec_impl(*args, **kwargs)
 
     def generate_from_selection(self, garment_spec: GarmentSpec, measurements: Measurements,
                                  fabric_width_candidates: tuple[float, ...] = DEFAULT_FABRIC_WIDTHS_CM,
@@ -2936,6 +3226,7 @@ class PatternForgePipeline:
                                  alterations: dict[str, float] | None = None,
                                  lining: bool = False,
                                  block_key: str | None = None,
+                                 measured_block: dict[str, float] | None = None,
                                  fabric_group_assignments: dict[str, str] | None = None,
                                  include_empty_tiles: bool = False,
                                  paper: str | None = None,
@@ -2966,6 +3257,7 @@ class PatternForgePipeline:
                                       alterations=alterations,
                                       lining=lining,
                                       block_key=block_key,
+                                      measured_block=measured_block,
                                       fabric_group_assignments=fabric_group_assignments,
                                       include_empty_tiles=include_empty_tiles,
                                       paper=paper,
@@ -2983,8 +3275,10 @@ class PatternForgePipeline:
                             allow_rotation: bool = False,
                             one_way_fabric: bool = False,
                             fit: str | None = None,
+                            block_key: str | None = None,
                             seam_allowance_cm: float | None = None,
                             hem_seam_allowance_cm: float | None = None,
+                            measured_block: dict[str, float] | None = None,
                             fabric_group_assignments: dict[str, str] | None = None,
                             fabric_group_name: str | None = None,
                             ) -> StashVerdict:
@@ -3006,8 +3300,10 @@ class PatternForgePipeline:
             merged = dict(allow_rotation=allow_rotation,
                            one_way_fabric=one_way_fabric,
                            fit=fit,
+                           block_key=block_key,
                            seam_allowance_cm=seam_allowance_cm,
                            hem_seam_allowance_cm=hem_seam_allowance_cm,
+                           measured_block=measured_block,
                            fabric_group_assignments=fabric_group_assignments)
             merged.update(kwargs)
             built = self.generate_from_selection(garment_spec, measurements, **merged)
@@ -3075,9 +3371,12 @@ class PatternForgePipeline:
                                     alterations: dict[str, float] | None = None,
                                     lining: bool = False,
                                     block_key: str | None = None,
+                                    measured_block: dict[str, float] | None = None,
                                     worn_over_bust_cm: float | None = None,
                                     worn_over_has_sleeves: bool = True,
                                     shoulder_drop_cm: float | None = None,
+                                    corrections: dict[str, object] | None = None,
+                                    extra_part_requests: list[PartRequest] | None = None,
                                     ) -> PipelineResult:
         """STEP①〜⑥: イラストからパーツ構成とデザイン上の比率を推定して生成する。
 
@@ -3113,6 +3412,12 @@ class PatternForgePipeline:
         ネックラインに戻したうえで**その理由を注記として開示する**。
         判定は`engine/compatibility.shoulder_seams_match`に集約しており、
         生成後のチェッカー(チェック7)とまったく同じ許容誤差を使う。
+
+        `side` と `detail` はパーツ判定の補助にだけ使い、丈・裾幅・袖丈・
+        襟ぐりの比率測定には混ぜない。装飾の拡大写真を全身写真と同じように
+        測ると、丈や幅の中央値を壊すためである。`corrections` を指定すると、
+        自動判定が難しい襟ぐり・袖・スカート・前開き・切替線だけを利用者の
+        確認値で上書きできる。
 
         正直な限界: 「どちらが前か」は利用者の指定でのみ決まる。絵を見て
         前後を判定してはいない(後ろ姿かどうかをシルエットから見分ける
@@ -3167,7 +3472,9 @@ class PatternForgePipeline:
         back_necklines: list[str] = []     # 後ろの絵から
         for one, view in zip(images, view_list):
             regions = segmenter.segment(one)
-            if callable(mask_source):
+            # 側面・拡大資料は構成パーツを拾う助けにはなるが、正面投影の
+            # 寸法比率としては使えない。分類だけ行い、形状測定から除外する。
+            if callable(mask_source) and view in ("", "front", "back"):
                 mask = mask_source(one)
                 # round72: 絵の色から、肌と服を見分ける。人物が着ている絵で
                 # 袖を読むのと、腕に邪魔されずにスカートの裾を見つけるのに使う。
@@ -3203,6 +3510,24 @@ class PatternForgePipeline:
                 if result.part_type == "front_bodice":
                     _add("back_bodice", result.variation, 1)
 
+        # 複数画像の結果を「最初に見つかったもの」で決めない。全領域の票と
+        # 信頼度を集計し、同じ判定集合なら画像順を変えても同じ構成にする。
+        evidence = resolve_classification_evidence(classifications)
+        if evidence:
+            requests = []
+            seen_types: set[str] = set()
+            for decision in evidence:
+                if decision.part_type in seen_types:
+                    continue
+                seen_types.add(decision.part_type)
+                quantity = 2 if decision.part_type in PAIR_LABELS else 1
+                requests.append(PartRequest(
+                    decision.part_type, decision.variation, quantity))
+            if "front_bodice" in seen_types and "back_bodice" not in seen_types:
+                front = next(item for item in evidence
+                             if item.part_type == "front_bodice")
+                requests.append(PartRequest("back_bodice", front.variation, 1))
+
         if not requests:
             raise ValueError(
                 "イラストからパーツ種を判定できませんでした。"
@@ -3217,8 +3542,8 @@ class PatternForgePipeline:
         # round21: 前の絵と後ろの絵で別々に多数決を採り、前身頃と後身頃に
         # それぞれ適用する。後ろの絵が無ければ後身頃は前と同じになる
         # (=round20までとまったく同じ動き)。
-        n_front_images = sum(1 for v in view_list if v != "back")
-        n_back_images = len(view_list) - n_front_images
+        n_front_images = sum(1 for v in view_list if v in ("", "front"))
+        n_back_images = sum(1 for v in view_list if v == "back")
 
         def _majority(votes: list[str]) -> tuple[str, int] | None:
             if not votes:
@@ -3244,9 +3569,57 @@ class PatternForgePipeline:
                 )
                 back_choice = None
 
-        front_variation = front_choice[0] if front_choice else None
-        back_variation = (back_choice[0] if back_choice
-                          else front_variation)
+        corrections = dict(corrections or {})
+        allowed_corrections = {
+            "neckline", "back_neckline", "sleeve_style", "skirt_style",
+            "pants_style", "collar_style", "cuffs_style", "waistband_style",
+            "hood",
+            "front_zip", "princess_line", "closure", "symmetry",
+            "closure_length_cm", "closure_count", "closure_spacing_cm",
+            "closure_overlap_cm",
+            "layer_count", "layer_lengths_cm", "internal_support", "movement",
+            "petticoat_style", "petticoat_tier_count", "petticoat_length_cm",
+            "petticoat_fullness_ratio", "petticoat_hoop_diameters_cm",
+            "petticoat_waist_cm", "petticoat_seam_allowance_cm",
+            "interfacing_targets", "interfacing_inset_cm",
+            "gather_ratio", "pleat_count", "pleat_depth_cm",
+            "slit_position", "slit_length_cm",
+            "motif_position", "motif_width_cm", "motif_height_cm",
+            "motif_outline_normalized",
+            "construction_note", "unconfirmed_fields", "draft_mode",
+        }
+        unknown_corrections = sorted(set(corrections) - allowed_corrections)
+        if unknown_corrections:
+            raise ValueError(f"画像補正に未対応の項目があります: {unknown_corrections}")
+        if "draft_mode" in corrections and corrections["draft_mode"] is not True:
+            raise ValueError("draft_modeはラフ確認時のtrueだけを指定できます。")
+        if "unconfirmed_fields" in corrections:
+            pending = corrections["unconfirmed_fields"]
+            if (not isinstance(pending, list) or len(pending) > 20
+                    or any(not isinstance(item, str) or not item.strip()
+                           or len(item) > 200 for item in pending)):
+                raise ValueError("未確認項目の形式が不正です。")
+
+        corrected_front = corrections.get("neckline")
+        corrected_back = corrections.get("back_neckline")
+        if corrected_front is not None and corrected_front not in NECKLINES:
+            raise ValueError(f"前襟ぐりの補正値は {sorted(NECKLINES)} から選んでください。")
+        if corrected_back is not None and corrected_back not in NECKLINES:
+            raise ValueError(f"後ろ襟ぐりの補正値は {sorted(NECKLINES)} から選んでください。")
+
+        front_variation = (corrected_front or
+                           (front_choice[0] if front_choice else None))
+        back_variation = (corrected_back or
+                          (back_choice[0] if back_choice else front_variation))
+        if (front_variation and back_variation
+                and front_variation != back_variation
+                and not shoulder_seams_match(
+                    self._template_shoulder_cm("front_bodice", front_variation),
+                    self._template_shoulder_cm("back_bodice", back_variation))):
+            raise ValueError(
+                f"確認入力の前襟ぐり {front_variation} と後ろ襟ぐり {back_variation} は"
+                "肩線の長さが合わず、そのまま縫い合わせられません。"
+                "前後いずれかの襟ぐりを変更してください。")
 
         if front_variation or back_variation:
             def _substitute(r: PartRequest) -> PartRequest:
@@ -3270,6 +3643,11 @@ class PatternForgePipeline:
                 1 if front_choice else 0,
                 f"後ろの絵から読み取った後身頃の襟ぐりの形: {back_choice[0]}{source}")
 
+        if corrected_front:
+            neckline_notes.append(f"確認入力で前襟ぐりを {corrected_front} に補正しました。")
+        if corrected_back:
+            neckline_notes.append(f"確認入力で後ろ襟ぐりを {corrected_back} に補正しました。")
+
         # round17: シルエットから「丈」と「裾の広がり」を測り、型紙へ反映する。
         # round16まではイラストが(part_type, variation)の選択にしか使われて
         # おらず、まったく違うデザインでも寸法が1mmも変わらなかった
@@ -3292,7 +3670,518 @@ class PatternForgePipeline:
             requests, note = sleeve_note
             neckline_notes.append(note)
 
-        spec = GarmentSpec(parts=requests)
+        if "sleeve_style" in corrections:
+            sleeve_style = corrections["sleeve_style"]
+            if sleeve_style is not None and sleeve_style not in SLEEVE_STYLES:
+                raise ValueError(f"袖の補正値は {sorted(SLEEVE_STYLES)} または「なし」から選んでください。")
+            requests = [r for r in requests if r.part_type not in ("sleeve", "cuffs")]
+            if sleeve_style is not None:
+                requests.append(PartRequest("sleeve", str(sleeve_style), 2))
+            neckline_notes.append(
+                f"確認入力で袖を {'なし' if sleeve_style is None else sleeve_style} に補正しました。")
+
+        if "skirt_style" in corrections:
+            skirt_style = corrections["skirt_style"]
+            if skirt_style is not None and skirt_style not in SKIRT_STYLES:
+                raise ValueError(f"スカートの補正値は {sorted(SKIRT_STYLES)} または「なし」から選んでください。")
+            requests = [r for r in requests if r.part_type != "skirt"]
+            if skirt_style is not None:
+                requests.append(PartRequest("skirt", str(skirt_style), 2))
+            neckline_notes.append(
+                f"確認入力でスカートを {'なし' if skirt_style is None else skirt_style} に補正しました。")
+
+        if "pants_style" in corrections:
+            pants_style = corrections["pants_style"]
+            if pants_style is not None and pants_style not in PANTS_STYLES:
+                raise ValueError(f"パンツの補正値は {sorted(PANTS_STYLES)} または「なし」から選んでください。")
+            requests = [r for r in requests
+                        if r.part_type not in ("front_pants", "back_pants")]
+            if pants_style is not None:
+                requests.extend([
+                    PartRequest("front_pants", str(pants_style), 2),
+                    PartRequest("back_pants", str(pants_style), 2),
+                ])
+            neckline_notes.append(
+                f"確認入力でパンツを {'なし' if pants_style is None else (pants_style or '標準')} に補正しました。")
+
+        if "collar_style" in corrections:
+            collar_style = corrections["collar_style"]
+            if collar_style is not None and collar_style not in COLLAR_STYLES:
+                raise ValueError(f"衿の補正値は {sorted(COLLAR_STYLES)} または「なし」から選んでください。")
+            requests = [r for r in requests if r.part_type != "collar"]
+            if collar_style is not None:
+                if (front_variation or "") == "turtle_neck":
+                    raise ValueError("タートルネックには別パーツの衿を追加できません。")
+                requests.append(PartRequest("collar", str(collar_style), 1))
+            neckline_notes.append(
+                f"確認入力で衿を {'なし' if collar_style is None else (collar_style or '標準')} に補正しました。")
+
+        if "cuffs_style" in corrections:
+            cuffs_style = corrections["cuffs_style"]
+            if cuffs_style is not None and cuffs_style not in CUFFS_STYLES:
+                raise ValueError(f"カフスの補正値は {sorted(CUFFS_STYLES)} または「なし」から選んでください。")
+            requests = [r for r in requests if r.part_type != "cuffs"]
+            if cuffs_style is not None:
+                if not any(r.part_type == "sleeve" for r in requests):
+                    raise ValueError("カフス補正は、袖を「なし」以外にした場合のみ使えます。")
+                requests.append(PartRequest("cuffs", str(cuffs_style), 2))
+            neckline_notes.append(
+                f"確認入力でカフスを {'なし' if cuffs_style is None else (cuffs_style or '標準')} に補正しました。")
+
+        if "waistband_style" in corrections:
+            waistband_style = corrections["waistband_style"]
+            if waistband_style is not None and waistband_style not in WAISTBAND_STYLES:
+                raise ValueError(f"ウエストベルトの補正値は {sorted(WAISTBAND_STYLES)} または「なし」から選んでください。")
+            requests = [r for r in requests if r.part_type != "waistband"]
+            if waistband_style is not None:
+                if not any(r.part_type in ("skirt", "front_pants", "back_pants")
+                           for r in requests):
+                    raise ValueError("ウエストベルト補正にはスカートまたはパンツが必要です。")
+                requests.append(PartRequest("waistband", str(waistband_style), 1))
+            neckline_notes.append(
+                f"確認入力でウエストベルトを {'なし' if waistband_style is None else (waistband_style or '標準')} に補正しました。")
+
+        if "hood" in corrections:
+            include_hood = bool(corrections["hood"])
+            requests = [r for r in requests if r.part_type != "hood"]
+            if include_hood:
+                requests.append(PartRequest("hood", "", 1))
+            neckline_notes.append(
+                f"確認入力でフードを{'追加' if include_hood else 'なしに'}しました。")
+
+        closure = str(corrections.get("closure") or "auto")
+        allowed_closures = {"auto", "none", "front_zip", "back_zip", "side_zip",
+                            "hooks", "snaps"}
+        if closure not in allowed_closures:
+            raise ValueError(f"開閉方法は {sorted(allowed_closures)} から選んでください。")
+        closure_length = corrections.get("closure_length_cm")
+        if closure_length not in (None, ""):
+            try:
+                closure_length = float(closure_length)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("ファスナーの開き長は1〜100cmの数値で指定してください。") from exc
+            if not 1.0 <= closure_length <= 100.0:
+                raise ValueError("ファスナーの開き長は1〜100cmの範囲で指定してください。")
+            corrections["closure_length_cm"] = closure_length
+        if (closure in {"back_zip", "side_zip"} and closure_length is None
+                and not corrections.get("draft_mode")):
+            raise ValueError("後ろ・脇ファスナーには開きの長さ(cm)を指定してください。")
+        closure_count = corrections.get("closure_count")
+        closure_spacing = corrections.get("closure_spacing_cm")
+        closure_overlap = corrections.get("closure_overlap_cm")
+        if closure_count not in (None, ""):
+            try:
+                closure_count = int(closure_count)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("ホック／スナップの個数は2〜30の整数で指定してください。") from exc
+            if not 2 <= closure_count <= 30:
+                raise ValueError("ホック／スナップの個数は2〜30で指定してください。")
+            corrections["closure_count"] = closure_count
+        if closure_spacing not in (None, ""):
+            try:
+                closure_spacing = float(closure_spacing)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("ホック／スナップの間隔は1〜20cmで指定してください。") from exc
+            if not 1.0 <= closure_spacing <= 20.0:
+                raise ValueError("ホック／スナップの間隔は1〜20cmで指定してください。")
+            corrections["closure_spacing_cm"] = closure_spacing
+        if closure_overlap not in (None, ""):
+            try:
+                closure_overlap = float(closure_overlap)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("スナップの重なり量は1〜10cmで指定してください。") from exc
+            if not 1.0 <= closure_overlap <= 10.0:
+                raise ValueError("スナップの重なり量は1〜10cmで指定してください。")
+            corrections["closure_overlap_cm"] = closure_overlap
+        missing_discrete = (closure in {"hooks", "snaps"}
+                            and (closure_count is None or closure_spacing is None
+                                 or (closure == "snaps" and closure_overlap is None)))
+        if missing_discrete and not corrections.get("draft_mode"):
+            raise ValueError(
+                "ホック／スナップには個数と間隔、スナップには重なり量も指定してください。")
+        front_zip = bool(corrections.get("front_zip", False)) or closure == "front_zip"
+        princess_line = bool(corrections.get("princess_line", False))
+        if front_zip:
+            neckline = front_variation or next(
+                (r.variation for r in requests if r.part_type == "front_bodice"),
+                "round_neck")
+            if neckline not in ZIP_COMPATIBLE_NECKLINES:
+                raise ValueError(
+                    f"{neckline} は前開きファスナー補正に未対応です。"
+                    f"対応する襟ぐりは {sorted(ZIP_COMPATIBLE_NECKLINES)} です。")
+            replaced = False
+            updated_requests: list[PartRequest] = []
+            for item in requests:
+                if item.part_type == "front_bodice":
+                    if not replaced:
+                        updated_requests.append(
+                            PartRequest("front_bodice_zip_panel", neckline, 2))
+                        replaced = True
+                    continue
+                updated_requests.append(item)
+            if not replaced:
+                raise ValueError("前身頃を判定できなかったため、前開きファスナー補正を適用できません。")
+            requests = updated_requests
+            neckline_notes.append("確認入力で前中心をファスナー開きに補正しました。")
+        elif closure in {"back_zip", "side_zip", "hooks", "snaps"}:
+            closure_label = {
+                "back_zip": "後ろファスナー", "side_zip": "脇ファスナー",
+                "hooks": "ホック", "snaps": "スナップ",
+            }[closure]
+            if closure in {"hooks", "snaps"}:
+                if missing_discrete:
+                    neckline_notes.append(
+                        f"{closure_label}はラフ確認だけに記録しました。個数・間隔"
+                        + ("・重なり量" if closure == "snaps" else "")
+                        + "を確定するまで裁断しないでください。")
+                else:
+                    detail = (f"{closure_count}個・間隔{closure_spacing:g}cm"
+                              + (f"・重なり{closure_overlap:g}cm"
+                                 if closure == "snaps" else ""))
+                    neckline_notes.append(
+                        f"確認入力の{closure_label}を{detail}で後中心へ配置し、"
+                        "左右分割と縫い代へ反映しました。")
+            elif closure_length is not None:
+                neckline_notes.append(
+                    f"確認入力の開閉方法は{closure_label}、開き長は"
+                    f"{closure_length:g}cmです。型紙へ開き止まりと縫い代を反映しました。")
+            else:
+                neckline_notes.append(
+                    f"{closure_label}はラフ確認だけに記録しました。開き長を確定するまで"
+                    "裁断しないでください。")
+        elif closure == "none":
+            neckline_notes.append("確認入力で開閉部品なしに確定しました。着脱できる開口寸法を仮縫いで確認してください。")
+        if princess_line:
+            neckline_notes.append("確認入力で身頃をプリンセスラインに補正しました。")
+
+        layer_count = corrections.get("layer_count")
+        layer_lengths_raw = corrections.get("layer_lengths_cm")
+        layer_lengths: list[float] | None = None
+        if layer_lengths_raw is not None:
+            try:
+                layer_lengths = [float(value) for value in layer_lengths_raw]
+            except (TypeError, ValueError) as exc:
+                raise ValueError("層ごとの丈は数値の一覧で指定してください。") from exc
+        if layer_count is not None:
+            try:
+                layer_count = int(layer_count)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("重ね枚数は1〜5の整数で指定してください。") from exc
+            if not 1 <= layer_count <= 5:
+                raise ValueError("重ね枚数は1〜5の整数で指定してください。")
+        else:
+            layer_count = 1
+        if layer_lengths is not None:
+            if len(layer_lengths) != layer_count:
+                raise ValueError(
+                    f"層ごとの丈は重ね枚数{layer_count}件と同じ数だけ指定してください。")
+            lo, hi = SKIRT_LENGTH_RANGE_CM
+            if any(not lo <= value <= hi for value in layer_lengths):
+                raise ValueError(
+                    f"層ごとの丈は各{lo:g}〜{hi:g}cmで指定してください。")
+        if layer_count > 1 or layer_lengths:
+            layered = False
+            updated_requests = []
+            for item in requests:
+                if item.part_type != "skirt":
+                    updated_requests.append(item)
+                    continue
+                layered = True
+                for layer_number in range(1, layer_count + 1):
+                    updated_requests.append(replace(
+                        item, quantity=2, layer_number=layer_number,
+                        design_length_cm=(layer_lengths[layer_number - 1]
+                                          if layer_lengths else item.design_length_cm)))
+            requests = updated_requests
+            if layered:
+                if layer_lengths:
+                    lengths = "・".join(f"第{i + 1}層{value:g}cm"
+                                       for i, value in enumerate(layer_lengths))
+                    neckline_notes.append(
+                        f"重ねスカートを{layer_count}層に分け、{lengths}で出力しました。")
+                else:
+                    neckline_notes.append(
+                        f"確認入力に合わせ、同じスカート型紙を{layer_count}層分出力しました。"
+                        "丈差を付ける場合は層ごとの丈を入力してください。")
+            else:
+                neckline_notes.append(
+                    f"重ね構造は{layer_count}層ですが、スカートを判定できなかったため"
+                    "層ごとの輪郭はカスタムパーツで追加してください。")
+
+        symmetry = str(corrections.get("symmetry") or "auto")
+        if symmetry not in {"auto", "symmetric", "asymmetric"}:
+            raise ValueError("左右構造は自動判定・左右対称・左右非対称から選んでください。")
+        if symmetry == "asymmetric":
+            asymmetric_panels = [
+                request for request in (extra_part_requests or [])
+                if request.custom_segments
+            ]
+            distinct_shapes = {repr(request.custom_segments)
+                               for request in asymmetric_panels}
+            if len(distinct_shapes) < 2 and not corrections.get("draft_mode"):
+                raise ValueError(
+                    "左右非対称の製作用データには、左側と右側を別々にトレースした"
+                    "異なるカスタムパーツ輪郭が2件以上必要です。画像だけから片側を"
+                    "推測して反転せず、両側の輪郭と実寸基準を入力してください。")
+            neckline_notes.append(
+                "左右非対称として確認されました。左右を同一型紙の反転で裁たず、"
+                + ("左右別のカスタムパーツ輪郭を製作用データへ反映しました。"
+                   if len(distinct_shapes) >= 2 else
+                   "ラフ確認のため、左右別の輪郭を確定するまで裁断しないでください。"))
+
+        support_labels = {
+            "none": "芯材なし", "interfacing": "接着芯", "boning": "ボーン",
+            "petticoat": "パニエ", "armor_base": "造形物用の土台",
+        }
+        support = str(corrections.get("internal_support") or "auto")
+        if support not in {"auto", *support_labels}:
+            raise ValueError("内部構造の指定値が不正です。")
+        if support != "auto":
+            if support == "interfacing":
+                raw_targets = corrections.get("interfacing_targets")
+                if not isinstance(raw_targets, (list, tuple)) or not raw_targets:
+                    if not corrections.get("draft_mode"):
+                        raise ValueError(
+                            "接着芯を選んだ場合は、貼る部位を1つ以上指定してください。")
+                else:
+                    targets = [str(value) for value in raw_targets]
+                    unknown = sorted(set(targets) - set(INTERFACING_TARGETS))
+                    if unknown:
+                        raise ValueError(f"接着芯の貼り先が不正です: {unknown}")
+                    corrections["interfacing_targets"] = list(dict.fromkeys(targets))
+                try:
+                    inset = float(corrections.get("interfacing_inset_cm") or 0)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("接着芯の縁からの控えは0〜5cmで指定してください。") from exc
+                if not 0 <= inset <= 5:
+                    raise ValueError("接着芯の縁からの控えは0〜5cmで指定してください。")
+                corrections["interfacing_inset_cm"] = inset
+            if support == "petticoat":
+                petticoat_style = str(corrections.get("petticoat_style") or "")
+                try:
+                    petticoat_tiers = int(corrections.get("petticoat_tier_count") or 0)
+                    petticoat_length = float(corrections.get("petticoat_length_cm") or 0)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("パニエの段数と丈を数値で指定してください。") from exc
+                if petticoat_style not in {"soft", "hoop"}:
+                    raise ValueError("パニエ方式は柔らかい段フリル式かワイヤー式を選んでください。")
+                if not 1 <= petticoat_tiers <= 5 or not 20 <= petticoat_length <= 120:
+                    raise ValueError("パニエは1〜5段、丈20〜120cmで指定してください。")
+                corrections["petticoat_tier_count"] = petticoat_tiers
+                corrections["petticoat_length_cm"] = petticoat_length
+                if petticoat_style == "soft":
+                    try:
+                        fullness = float(corrections.get("petticoat_fullness_ratio") or 0)
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError("柔らかいパニエの段倍率を指定してください。") from exc
+                    if not 1.2 <= fullness <= 2.5:
+                        raise ValueError("柔らかいパニエの段倍率は1.2〜2.5倍で指定してください。")
+                    corrections["petticoat_fullness_ratio"] = fullness
+                else:
+                    raw_diameters = corrections.get("petticoat_hoop_diameters_cm")
+                    if not isinstance(raw_diameters, (list, tuple)):
+                        raise ValueError("ワイヤーパニエの輪直径をカンマ区切りで指定してください。")
+                    try:
+                        diameters = [float(value) for value in raw_diameters]
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError("ワイヤー輪直径は数値で指定してください。") from exc
+                    if len(diameters) != petticoat_tiers:
+                        raise ValueError("ワイヤー輪直径は段数と同じ数だけ指定してください。")
+                    if any(not 20 <= value <= 180 for value in diameters):
+                        raise ValueError("ワイヤー輪直径は各20〜180cmで指定してください。")
+                    if any(b <= a for a, b in zip(diameters, diameters[1:])):
+                        raise ValueError("ワイヤー輪直径は上段から下段へ大きくしてください。")
+                    corrections["petticoat_hoop_diameters_cm"] = diameters
+                corrections["petticoat_waist_cm"] = measurements.waist + 2.0
+                corrections["petticoat_seam_allowance_cm"] = (
+                    float(seam_allowance_cm) if seam_allowance_cm is not None else 1.0)
+            if (support == "armor_base" and not extra_part_requests
+                    and not corrections.get("draft_mode")):
+                raise ValueError(
+                    "造形物用の土台を製作用にするには、実寸校正したカスタムパーツ"
+                    "輪郭が必要です。画像上で土台の輪郭をトレースしてください。")
+            neckline_notes.append(
+                f"内部構造は{support_labels[support]}として確認されました。"
+                + ("選択した各パーツへ接着芯の実寸裁断線を配置しました。"
+                   if support == "interfacing" else
+                   "前後身頃それぞれへボーン3本の取付線を実寸で配置しました。"
+                   if support == "boning" else
+                   f"{petticoat_tiers}段・丈{petticoat_length:g}cmの専用パーツを追加しました。"
+                   if support == "petticoat" else
+                   "本体型紙とは別に、固定位置と肌当たりを仮縫いで確認してください。"))
+
+        movement_labels = {"standard": "通常動作", "dance": "ダンス",
+                           "action": "激しい演技"}
+        movement = str(corrections.get("movement") or "auto")
+        if movement not in {"auto", *movement_labels}:
+            raise ValueError("動きやすさの指定値が不正です。")
+        if movement != "auto":
+            if movement in {"dance", "action"}:
+                if fit == "fitted":
+                    raise ValueError(
+                        "ダンス／激しい演技と、体の線を出す『ぴったり』ゆとりは"
+                        "両立できません。ゆとりを標準またはゆったりへ変更してください。")
+                if fit in (None, "standard"):
+                    fit = "relaxed"
+                    neckline_notes.append(
+                        "動作指定に合わせ、身頃・ウエスト・ヒップ・袖のゆとりを"
+                        "『ゆったり（重ね着・動きの大きい衣装）』へ自動補正しました。")
+            neckline_notes.append(
+                f"用途は{movement_labels[movement]}です。袖ぐり・股ぐり・裾の可動域を"
+                "仮縫いで動作確認してください。")
+
+        gather_ratio = corrections.get("gather_ratio")
+        if gather_ratio is not None:
+            try:
+                gather_ratio = float(gather_ratio)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("ギャザー倍率は1.0〜3.0の数値で指定してください。") from exc
+            if not 1.0 <= gather_ratio <= 3.0:
+                raise ValueError("ギャザー倍率は1.0〜3.0の範囲で指定してください。")
+            neckline_notes.append(
+                f"ギャザー倍率は{gather_ratio:g}倍です。スカート型紙の裁ち幅を"
+                "実際に拡張し、ウエスト線へ寄せ上がり寸法を印しました。")
+
+        pleat_count = corrections.get("pleat_count")
+        pleat_depth = corrections.get("pleat_depth_cm")
+        if pleat_count is not None:
+            try:
+                pleat_count = int(pleat_count)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("プリーツ本数は0〜40の整数で指定してください。") from exc
+            if not 0 <= pleat_count <= 40:
+                raise ValueError("プリーツ本数は0〜40の整数で指定してください。")
+        if pleat_depth not in (None, ""):
+            try:
+                pleat_depth = float(pleat_depth)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("プリーツのひだ深さは0.5〜10cmで指定してください。") from exc
+            if not 0.5 <= pleat_depth <= 10.0:
+                raise ValueError("プリーツのひだ深さは0.5〜10cmで指定してください。")
+            corrections["pleat_depth_cm"] = pleat_depth
+        if pleat_count and pleat_depth is None and not corrections.get("draft_mode"):
+            raise ValueError("プリーツ本数を指定した場合は、ひだ深さ(cm)も指定してください。")
+        if pleat_count and pleat_depth is not None:
+            neckline_notes.append(
+                f"プリーツを全体{pleat_count}本、ひだ深さ{pleat_depth:g}cmで"
+                "配置し、折り込み分を型紙幅へ追加しました。")
+            if gather_ratio and gather_ratio > 1.0:
+                neckline_notes.append(
+                    "プリーツを畳んだ後の上端を、指定倍率までギャザーで寄せる"
+                    "併用構造にしました。")
+
+        slit_position = str(corrections.get("slit_position") or "none")
+        slit_labels = {"none": "なし", "front": "前", "back": "後ろ",
+                       "left": "左脇", "right": "右脇"}
+        if slit_position not in slit_labels:
+            raise ValueError("スリット位置の指定値が不正です。")
+        slit_length = corrections.get("slit_length_cm")
+        if slit_position != "none" or slit_length is not None:
+            try:
+                slit_length = float(slit_length or 0)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("スリット長は1〜100cmの数値で指定してください。") from exc
+            if slit_position == "none" or not 1.0 <= slit_length <= 100.0:
+                raise ValueError("スリットを入れる場合は位置と1〜100cmの長さを指定してください。")
+            neckline_notes.append(
+                f"{slit_labels[slit_position]}に{slit_length:g}cmのスリットを入れます。"
+                "型紙の縫い止まり位置へ印を追加し、開き部分は補強してください。")
+
+        motif_position = str(corrections.get("motif_position") or "none")
+        motif_positions = {"none", "chest_front", "chest_back", "skirt_front",
+                           "skirt_back", "sleeve"}
+        if motif_position not in motif_positions:
+            raise ValueError("装飾位置の指定値が不正です。")
+        motif_width = corrections.get("motif_width_cm")
+        motif_height = corrections.get("motif_height_cm")
+        motif_outline = corrections.get("motif_outline_normalized")
+        if motif_outline is not None and motif_position == "none":
+            raise ValueError("装飾画像を使う場合は配置先を選んでください。")
+        if motif_position != "none" or motif_width is not None or motif_height is not None:
+            try:
+                motif_width = float(motif_width or 0)
+                motif_height = float(motif_height or 0)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("装飾寸法は0.5〜100cmの数値で指定してください。") from exc
+            if (motif_position == "none" or not 0.5 <= motif_width <= 100
+                    or not 0.5 <= motif_height <= 100):
+                raise ValueError("装飾を配置する場合は位置と幅・高さ（各0.5〜100cm）を指定してください。")
+            detail = "画像から抽出した実際の外周" if motif_outline is not None else "矩形の配置枠"
+            neckline_notes.append(
+                f"装飾を{motif_position}へ{motif_width:g}×{motif_height:g}cmで配置しました。"
+                f"{detail}をプリント・刺繍・アップリケの外形基準として使ってください。")
+
+        construction_note = str(corrections.get("construction_note") or "").strip()
+        if construction_note:
+            if len(construction_note) > 500:
+                raise ValueError("仕立てメモは500文字以内で入力してください。")
+            neckline_notes.append(f"仕立て確認メモ: {construction_note}")
+
+        # 信頼度が近い別候補を、採用候補の陰に隠さない。確認欄で明示的に
+        # 上書きされていない対立は未確認として残し、裁断用出力を保留できる
+        # よう garment_spec.construction へ載せる。
+        correction_for_part = {
+            "front_bodice": "neckline", "back_bodice": "back_neckline",
+            "sleeve": "sleeve_style", "skirt": "skirt_style",
+            "front_pants": "pants_style", "back_pants": "pants_style",
+            "collar": "collar_style", "cuffs": "cuffs_style",
+            "waistband": "waistband_style",
+        }
+        evidence_pending: list[str] = []
+        for decision in evidence:
+            if not decision.conflicted:
+                continue
+            correction_key = correction_for_part.get(decision.part_type)
+            if correction_key and correction_key in corrections:
+                continue
+            alternatives = "、".join(
+                f"{item.variation or '標準'}（合計信頼度{item.confidence_sum:.2f}）"
+                for item in decision.alternatives[:2])
+            message = (
+                f"{decision.part_type}の形は{decision.variation or '標準'}を採用しましたが、"
+                f"近い別候補として{alternatives}も検出されています。"
+                "自動判定を確認・補正する欄で形を確定してください。")
+            evidence_pending.append(message)
+            neckline_notes.append("画像判定の対立: " + message)
+        if evidence_pending:
+            pending = list(corrections.get("unconfirmed_fields") or [])
+            corrections["unconfirmed_fields"] = list(dict.fromkeys(
+                pending + evidence_pending))
+
+        if extra_part_requests:
+            for request in extra_part_requests:
+                if not request.custom_segments:
+                    raise ValueError("画像モードへ追加できる自由形状パーツの指定が不正です。")
+            requests = merge_custom_panel_requests(
+                requests, list(extra_part_requests), princess_line=princess_line)
+            replaced = sorted({request.replacement_part_type
+                               for request in extra_part_requests
+                               if request.replacement_part_type})
+            neckline_notes.append(
+                f"確認済みの自由形状パーツを{len(extra_part_requests)}件反映しました。"
+                + (" 標準パーツの置換: " + "・".join(replaced) + "。"
+                   if replaced else ""))
+
+        construction = {
+            key: corrections[key]
+            for key in ("closure", "closure_length_cm", "closure_count",
+                        "closure_spacing_cm", "closure_overlap_cm", "symmetry",
+                        "layer_count", "layer_lengths_cm", "movement",
+                        "gather_ratio", "pleat_count", "pleat_depth_cm", "slit_position",
+                        "slit_length_cm", "internal_support", "motif_position",
+                        "petticoat_style", "petticoat_tier_count",
+                        "petticoat_length_cm", "petticoat_fullness_ratio",
+                        "petticoat_hoop_diameters_cm", "petticoat_waist_cm",
+                        "petticoat_seam_allowance_cm",
+                        "interfacing_targets", "interfacing_inset_cm",
+                        "motif_width_cm", "motif_height_cm",
+                        "motif_outline_normalized", "motif_regions_normalized",
+                        "construction_note",
+                        "lining_scope", "unconfirmed_fields", "draft_mode")
+            if key in corrections
+        }
+        spec = GarmentSpec(parts=requests, princess_line=princess_line,
+                           construction=construction)
         result = self._build_from_spec(spec, measurements, fabric_width_candidates,
                                         allow_rotation=allow_rotation,
                                         seam_allowance_cm=seam_allowance_cm,
@@ -3319,10 +4208,18 @@ class PatternForgePipeline:
                                         pattern_repeat_cm=pattern_repeat_cm,
                                         alterations=alterations,
                                         lining=lining,
-                                        block_key=block_key)
+                                        block_key=block_key,
+                                        measured_block=measured_block)
         if neckline_notes:
-            result.measurement_warnings = result.measurement_warnings + neckline_notes
+            # 画像から何を読み、どこを人の指定で上書きしたかは設計説明であり、
+            # 採寸異常ではない。警告へ混ぜると、確認済みの製作用データまで
+            # 「未確認」と判定されるため分離する。
+            result.design_notes = result.design_notes + neckline_notes
         result.classification_log = classifications
+        result.classification_evidence = [item.as_dict() for item in evidence]
+        # _build_from_spec時点より後で追加された画像判定の注記も仕様書へ反映する。
+        if "spec_pdf" in result.output_files:
+            export_specification_pdf(result, result.output_files["spec_pdf"])
         return result
 
     @staticmethod
@@ -3408,6 +4305,7 @@ class PatternForgePipeline:
                              alterations: dict[str, float] | None = None,
                              lining: bool = False,
                              block_key: str | None = None,
+                             measured_block: dict[str, float] | None = None,
                              include_empty_tiles: bool = False,
                              paper: str | None = None,
                              worn_over_bust_cm: float | None = None,
@@ -3454,8 +4352,12 @@ class PatternForgePipeline:
         results: dict[str, PipelineResult] = {}
         for size in sizes:
             measurements = graded_measurements(base_measurements, size, grade_cm=validated_grade_cm)
+            size_spec = _grade_custom_requests(garment_spec, size)
+            size_measured_block = (
+                grade_measured_block(measured_block, base_measurements, measurements)
+                if measured_block is not None else None)
             results[size] = self._build_from_spec(
-                garment_spec, measurements, fabric_width_candidates,
+                size_spec, measurements, fabric_width_candidates,
                 allow_rotation=allow_rotation,
                 seam_allowance_cm=seam_allowance_cm,
                 hem_seam_allowance_cm=hem_seam_allowance_cm,
@@ -3477,6 +4379,7 @@ class PatternForgePipeline:
                 alterations=alterations,
                 lining=lining,
                 block_key=block_key,
+                measured_block=size_measured_block,
                 include_empty_tiles=include_empty_tiles,
                 paper=paper,
                 worn_over_bust_cm=worn_over_bust_cm,

@@ -332,8 +332,8 @@ def test_the_pattern_has_no_sleeve_when_the_drawing_has_none(tmp_path):
     kinds = {p.part_type for p in result.finalized_parts}
     assert "sleeve" not in kinds
     assert "cuffs" not in kinds
-    assert any("ノースリーブ" in n for n in result.measurement_warnings), \
-        result.measurement_warnings
+    assert any("ノースリーブ" in n for n in result.design_notes), \
+        result.design_notes
 
 
 @pytest.mark.parametrize("drawn,expected", [

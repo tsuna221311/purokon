@@ -60,12 +60,13 @@ def _form(**extra):
     data = {
         "bust": "84", "waist": "68", "hip": "92", "height": "160",
         "sleeve_length": "54", "shoulder_width": "37", "mode": "illustration",
+        "illustration_stage": "draft",
     }
     data.update(extra)
     return data
 
 
-def _post(client, front=0, back=0):
+def _post(client, front=0, back=0, side=0, detail=0):
     data = _form()
     if front:
         data["illustration"] = [(io.BytesIO(_garment_png()), f"f{i}.png")
@@ -73,6 +74,12 @@ def _post(client, front=0, back=0):
     if back:
         data["illustration_back"] = [(io.BytesIO(_garment_png("high")), f"b{i}.png")
                                      for i in range(back)]
+    if side:
+        data["illustration_side"] = [(io.BytesIO(_garment_png()), f"s{i}.png")
+                                     for i in range(side)]
+    if detail:
+        data["illustration_detail"] = [(io.BytesIO(_garment_png()), f"d{i}.png")
+                                       for i in range(detail)]
     return client.post("/api/generate", data=data,
                        content_type="multipart/form-data")
 
@@ -108,12 +115,12 @@ def test_front_and_back_together_work(client):
     assert response.status_code == 200, response.get_json().get("error")
 
 
-def test_the_image_limit_counts_both_sides(client):
-    """上限は「前後あわせて」であること(案内文がそう書いている)。"""
+def test_the_image_limit_counts_all_reference_types(client):
+    """上限は正面・背面・側面・拡大を合計した枚数であること。"""
     limit = app_module.MAX_ILLUSTRATION_IMAGES
-    ok = _post(client, front=limit - 1, back=1)
+    ok = _post(client, front=1, back=1, side=1, detail=limit - 3)
     assert ok.status_code == 200, ok.get_json().get("error")
-    over = _post(client, front=limit - 1, back=2)
+    over = _post(client, front=1, back=1, side=1, detail=limit - 2)
     assert over.status_code == 400
     assert f"{limit}枚まで" in over.get_json()["error"]
 

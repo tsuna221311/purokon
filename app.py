@@ -115,8 +115,10 @@ import os
 import re
 import secrets
 import time
+import unicodedata
 import uuid
 from functools import lru_cache, wraps
+from pathlib import Path
 from threading import Lock, Thread
 
 
@@ -160,7 +162,7 @@ from flask import (
     Flask, Response, flash, g, jsonify, redirect, render_template, request, send_from_directory,
     session, url_for,
 )
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -172,12 +174,22 @@ from engine.custom_panel import (
     CustomPanelError,
     CustomPanelSpec,
     MAX_CUSTOM_PANELS_PER_REQUEST,
+    validate_replacement_part_type,
     calibrate_points_to_cm,
     resolve_reference_cm,
     validate_boolean,
     validate_label,
     validate_quantity,
+    validate_grade_increment,
 )
+from engine.accessory3d import (
+    export_accessories_stl, export_vendor_package, normalize_order_options,
+    validate_accessory_settings, validate_curvature_settings,
+    validate_compound_curvature_settings,
+    validate_attachment_interface, validate_magnet_pockets,
+    validate_mounting_holes, validate_mounting_slots,
+)
+from engine.specification import export_specification_pdf, production_readiness
 from engine.measurements import (Measurements, STANDARD_SIZE_GRADE_CM,
                                   _VALID_RANGES as MEASUREMENT_RANGES,
                                   validate_custom_grade_cm)
@@ -192,8 +204,9 @@ from engine.part_specs import (
     DEFAULT_FIT, FIT_PRESETS, STRETCH_PERCENT_RANGE, FitEase, custom_fit_ease,
     stretch_fit_ease,
 )
-from engine.blocks import (BLOCKS, DEFAULT_BLOCK_KEY, MENS_BLOCK_ABSENT_NOTE,
-                            get_block)
+from engine.blocks import (BLOCKS, DEFAULT_BLOCK_KEY, MEASURED_BLOCK_FIELDS,
+                           MEASURED_BLOCK_KEY, MENS_BLOCK_ABSENT_NOTE,
+                           validate_measured_block, get_block)
 from engine.alteration import (ALTERATION_KINDS, MAX_ALTERATION_CM,
                                 validate as validate_alterations)
 from engine.stash import MIN_STASH_LENGTH_CM as STASH_MIN_LENGTH_CM
@@ -213,6 +226,7 @@ from engine.pipeline import (
     STANDARD_SIZE_ORDER,
     build_custom_panel_requests,
     build_garment_spec,
+    merge_custom_panel_requests,
 )
 from engine.segmentation import SimpleSilhouetteSegmenter
 
@@ -287,6 +301,9 @@ _DOWNLOAD_FORMATS = {
     "pdf": "{job_id}.pdf",
     "dxf": "{job_id}.dxf",
     "zip": "{job_id}.zip",
+    "stl": "{job_id}.stl",
+    "vendor_zip": "{job_id}_vendor.zip",
+    "spec_pdf": "{job_id}_specification.pdf",
     # round39: プロジェクター投影用の実寸1枚もの。
     "projector": "{job_id}_projector.pdf",
     # round41: 裏地の型紙。
@@ -1211,6 +1228,21 @@ def _bool_field(form, name: str) -> bool:
     return form.get(name) in ("on", "true", "1", "True")
 
 
+MAX_PROJECT_NAME_LENGTH = 80
+
+
+def _parse_project_name(form) -> str | None:
+    """生成結果と履歴を見分けるための任意名を検証する。"""
+    value = unicodedata.normalize("NFKC", str(form.get("project_name", ""))).strip()
+    if not value:
+        return None
+    if len(value) > MAX_PROJECT_NAME_LENGTH:
+        raise ValueError(f"プロジェクト名は{MAX_PROJECT_NAME_LENGTH}文字以内で入力してください。")
+    if any(unicodedata.category(char) in {"Cc", "Cs"} for char in value):
+        raise ValueError("プロジェクト名に制御文字は使用できません。")
+    return value
+
+
 def _bool_field_default(form, name: str, default: bool) -> bool:
     """`_bool_field`と違い、フィールドが送られていない場合はdefaultを返す。
 
@@ -1539,7 +1571,9 @@ def _describe_restored_settings(kwargs: dict) -> str:
     # `test_every_setting_shows_up_in_the_restored_summary`で、
     # 設定が増えたときに書き忘れると落ちるようにしてある。
     block_key = kwargs.get("block_key")
-    if block_key:
+    if kwargs.get("measured_block"):
+        parts.append("原型「採寸指定（専用原型）」")
+    elif block_key:
         parts.append(f"原型「{get_block(block_key).label}」")
     shrink = kwargs.get("shrink_percent")
     if shrink:
@@ -1654,6 +1688,15 @@ def _parse_design_lengths(form) -> dict[str, float]:
         if pair:
             lengths[pair] = value
     return lengths
+
+
+def _parse_measured_block(form, block_key: str | None) -> dict[str, float] | None:
+    """採寸指定原型の8項目を読む。空欄を成人女子式で補わない。"""
+    if block_key != MEASURED_BLOCK_KEY:
+        return None
+    raw = {key: (form.get(f"block_{key}") or "").strip()
+           for key in MEASURED_BLOCK_FIELDS}
+    return validate_measured_block(raw)
 
 
 def _too_large_message() -> str:
@@ -1877,10 +1920,27 @@ def _parse_custom_panels(raw_json: str, measurements: Measurements) -> list[Cust
             # マントは中心で縫い合わせるのがふつうだが、EVAフォームの装甲に
             # 縫い目を入れるのは別の話なので、**作る人が決める**。
             allow_split = validate_boolean(raw.get("allow_split"), "allow_split")
+            replacement_part_type = validate_replacement_part_type(
+                raw.get("replacement_part_type"))
+            seam_fit_confirmed = validate_boolean(
+                raw.get("seam_fit_confirmed"), "seam_fit_confirmed")
+            grade_width_cm = validate_grade_increment(
+                raw.get("grade_width_cm"), "幅のサイズ刻み")
+            grade_height_cm = validate_grade_increment(
+                raw.get("grade_height_cm"), "高さのサイズ刻み")
+            if replacement_part_type and not seam_fit_confirmed:
+                raise CustomPanelError(
+                    "標準パーツを置き換えるには、この輪郭が着用画像の外形ではなく"
+                    "実寸の平面型紙であり、接続する縫い線を確認済みであることを"
+                    "確認してください。")
         except CustomPanelError as exc:
             raise ValueError(f"カスタムパーツ「{panel_label_for_error}」: {exc}") from exc
-        specs.append(CustomPanelSpec(label=label, points_cm=points_cm, quantity=quantity,
-                                      mirror=mirror, allow_split=allow_split))
+        specs.append(CustomPanelSpec(
+            label=label, points_cm=points_cm, quantity=quantity,
+            mirror=mirror, allow_split=allow_split,
+            replacement_part_type=replacement_part_type,
+            seam_fit_confirmed=seam_fit_confirmed if replacement_part_type else False,
+            grade_width_cm=grade_width_cm, grade_height_cm=grade_height_cm))
     return specs
 
 
@@ -1893,6 +1953,10 @@ def _custom_panel_specs_to_requests(specs: list[CustomPanelSpec]) -> list:
         requests.extend(build_custom_panel_requests(
             spec.label, spec.points_cm, quantity=spec.quantity, mirror=spec.mirror,
             allow_split=getattr(spec, "allow_split", False),
+            replacement_part_type=getattr(spec, "replacement_part_type", None),
+            seam_fit_confirmed=getattr(spec, "seam_fit_confirmed", False),
+            grade_width_cm=getattr(spec, "grade_width_cm", 0.0),
+            grade_height_cm=getattr(spec, "grade_height_cm", 0.0),
         ))
     return requests
 
@@ -1981,6 +2045,78 @@ def api_custom_panel_trace():
         }), 500
 
 
+def _normalize_motif_points(points) -> tuple[list[list[float]], tuple[float, float, float, float]]:
+    """画像座標の輪郭を0..1へ変換し、元の外接枠も返す。"""
+    if not points or len(points) < 3:
+        raise ValueError(
+            "装飾画像から外周を抽出できませんでした。透明背景PNG、または背景と"
+            "装飾の境界がはっきりした画像を使用してください。")
+    min_x = min(x for x, _y in points)
+    max_x = max(x for x, _y in points)
+    min_y = min(y for _x, y in points)
+    max_y = max(y for _x, y in points)
+    width, height = max_x - min_x, max_y - min_y
+    if width <= 1e-6 or height <= 1e-6:
+        raise ValueError("装飾画像の外周に幅または高さがありません。")
+    return ([[round((x - min_x) / width, 6),
+              round((y - min_y) / height, 6)] for x, y in points],
+            (min_x, min_y, max_x, max_y))
+
+
+def _trace_normalized_motif_data(uploaded) -> tuple[list[list[float]], list[dict]]:
+    """外周に加え、主要な色面を再生成可能な輪郭として抽出する。"""
+    image = _load_uploaded_image(uploaded)
+    points = SimpleSilhouetteSegmenter().auto_trace_outline(image)
+    outline, bounds = _normalize_motif_points(points)
+    rgba = image.convert("RGBA")
+    quantized = rgba.convert("RGB").quantize(colors=8)
+    palette = quantized.getpalette() or []
+    def _pixels(image):
+        getter = getattr(image, "get_flattened_data", None)
+        return list(getter() if getter is not None else image.getdata())
+
+    indexed = _pixels(quantized)
+    alpha = _pixels(rgba.getchannel("A"))
+    inside_image = Image.new("1", rgba.size, 0)
+    ImageDraw.Draw(inside_image).polygon(points, fill=1)
+    inside = _pixels(inside_image)
+    counts: dict[int, int] = {}
+    for index, opacity, is_inside in zip(indexed, alpha, inside):
+        if opacity >= 64 and is_inside:
+            counts[index] = counts.get(index, 0) + 1
+    minimum = max(8, int(sum(counts.values()) * 0.01))
+    regions: list[dict] = []
+    segmenter = SimpleSilhouetteSegmenter()
+    for colour_index, count in sorted(counts.items(), key=lambda item: -item[1]):
+        if count < minimum or len(regions) >= 6:
+            continue
+        mask = Image.new("RGB", rgba.size, "white")
+        mask.putdata([
+            (0, 0, 0) if idx == colour_index and opacity >= 64 and is_inside
+            else (255, 255, 255)
+            for idx, opacity, is_inside in zip(indexed, alpha, inside)
+        ])
+        region_points = segmenter.auto_trace_outline(mask)
+        if not region_points or len(region_points) < 3:
+            continue
+        min_x, min_y, max_x, max_y = bounds
+        width, height = max_x - min_x, max_y - min_y
+        normalized = [[round(max(0.0, min(1.0, (x - min_x) / width)), 6),
+                       round(max(0.0, min(1.0, (y - min_y) / height)), 6)]
+                      for x, y in region_points]
+        rgb = palette[colour_index * 3:colour_index * 3 + 3]
+        if len(rgb) != 3:
+            continue
+        regions.append({"color": "#" + "".join(f"{value:02X}" for value in rgb),
+                        "points": normalized})
+    return outline, regions
+
+
+def _trace_normalized_motif_outline(uploaded) -> list[list[float]]:
+    """後方互換用。装飾画像の外周だけを返す。"""
+    return _trace_normalized_motif_data(uploaded)[0]
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -1998,6 +2134,7 @@ def api_custom_panel_trace():
 class GenerationInputs:
     """画面から届いた値と、利用回数の確認結果。"""
     allow_rotation: object = None
+    accessory_3d: object = None
     alterations: object = None
     block_key: object = None
     custom_grade_cm: object = None
@@ -2010,22 +2147,174 @@ class GenerationInputs:
     garment_spec_kwargs: object = None
     hem_seam_allowance_cm: object = None
     illustration_views: object = None
+    illustration_corrections: object = None
+    illustration_stage: object = None
     image: object = None
     include_body_garment: object = None
     lining: object = None
     measurements: object = None
+    measured_block: object = None
     mode: object = None
     one_way_fabric: object = None
     owner_key: object = None
     pattern_repeat_cm: object = None
     per_fabric_stash: object = None
     plan_name: object = None
+    project_name: object = None
     seam_allowance_cm: object = None
     shrink_percent: object = None
     sizes: object = None
     spec: object = None
     stash: object = None
     used_today: object = None
+
+
+def _export_accessory_outputs(result, custom_panel_specs, settings):
+    """自由輪郭をSTLと業者入稿ZIPへ出し、生成結果へ登録する。"""
+    if not settings:
+        return None, None
+    custom_panel_specs = [
+        spec for spec in custom_panel_specs
+        if not getattr(spec, "replacement_part_type", None)
+    ]
+    if not custom_panel_specs:
+        raise ValueError(
+            "3D小物にできる追加パーツがありません。標準の服型紙を置き換える"
+            "輪郭は布用として扱います。3D出力する小物は別のカスタムパーツとして"
+            "追加してください。")
+    stl_path = os.path.join(OUTPUT_DIR, f"{result.job_id}.stl")
+    accessory_result = export_accessories_stl(
+        custom_panel_specs, stl_path,
+        thickness_mm=settings["thickness_mm"],
+        bed_width_mm=settings["bed_width_mm"],
+        bed_depth_mm=settings["bed_depth_mm"],
+        curvature_radius_mm=settings.get("curvature_radius_mm"),
+        curvature_radius_height_mm=settings.get("curvature_radius_height_mm"),
+        curve_axis=settings.get("curve_axis", "width"),
+        mounting_hole_pattern=settings.get("mounting_hole_pattern", "none"),
+        mounting_hole_diameter_mm=settings.get("mounting_hole_diameter_mm"),
+        mounting_hole_inset_mm=settings.get("mounting_hole_inset_mm"),
+        mounting_slot_pattern=settings.get("mounting_slot_pattern", "none"),
+        mounting_slot_length_mm=settings.get("mounting_slot_length_mm"),
+        mounting_slot_width_mm=settings.get("mounting_slot_width_mm"),
+        mounting_slot_axis=settings.get("mounting_slot_axis", "width"),
+        mounting_slot_inset_mm=settings.get("mounting_slot_inset_mm"),
+        magnet_pocket_pattern=settings.get("magnet_pocket_pattern", "none"),
+        magnet_pocket_diameter_mm=settings.get("magnet_pocket_diameter_mm"),
+        magnet_pocket_depth_mm=settings.get("magnet_pocket_depth_mm"),
+        magnet_pocket_inset_mm=settings.get("magnet_pocket_inset_mm"),
+        attachment_interface=settings.get("attachment_interface", "none"),
+    )
+    result.output_files["stl"] = stl_path
+    vendor_path = os.path.join(OUTPUT_DIR, f"{result.job_id}_vendor.zip")
+    vendor_result = export_vendor_package(
+        custom_panel_specs, vendor_path,
+        thickness_mm=settings["thickness_mm"],
+        bed_width_mm=settings["bed_width_mm"],
+        bed_depth_mm=settings["bed_depth_mm"],
+        material_profile=settings.get("material_profile", "consult"),
+        finish_note=settings.get("finish_note", "業者と相談"),
+        curvature_radius_mm=settings.get("curvature_radius_mm"),
+        curvature_radius_height_mm=settings.get("curvature_radius_height_mm"),
+        curve_axis=settings.get("curve_axis", "width"),
+        mounting_hole_pattern=settings.get("mounting_hole_pattern", "none"),
+        mounting_hole_diameter_mm=settings.get("mounting_hole_diameter_mm"),
+        mounting_hole_inset_mm=settings.get("mounting_hole_inset_mm"),
+        mounting_slot_pattern=settings.get("mounting_slot_pattern", "none"),
+        mounting_slot_length_mm=settings.get("mounting_slot_length_mm"),
+        mounting_slot_width_mm=settings.get("mounting_slot_width_mm"),
+        mounting_slot_axis=settings.get("mounting_slot_axis", "width"),
+        mounting_slot_inset_mm=settings.get("mounting_slot_inset_mm"),
+        magnet_pocket_pattern=settings.get("magnet_pocket_pattern", "none"),
+        magnet_pocket_diameter_mm=settings.get("magnet_pocket_diameter_mm"),
+        magnet_pocket_depth_mm=settings.get("magnet_pocket_depth_mm"),
+        magnet_pocket_inset_mm=settings.get("magnet_pocket_inset_mm"),
+        attachment_interface=settings.get("attachment_interface", "none"),
+    )
+    result.output_files["vendor_zip"] = vendor_path
+    result.garment_spec.construction["accessory_3d"] = {
+        "thickness_mm": settings["thickness_mm"],
+        "curvature_radius_mm": settings.get("curvature_radius_mm"),
+        "curvature_radius_height_mm": settings.get("curvature_radius_height_mm"),
+        "curve_axis": settings.get("curve_axis", "width"),
+        "mounting_hole_pattern": settings.get("mounting_hole_pattern", "none"),
+        "mounting_hole_diameter_mm": settings.get("mounting_hole_diameter_mm"),
+        "mounting_hole_inset_mm": settings.get("mounting_hole_inset_mm"),
+        "mounting_slot_pattern": settings.get("mounting_slot_pattern", "none"),
+        "mounting_slot_length_mm": settings.get("mounting_slot_length_mm"),
+        "mounting_slot_width_mm": settings.get("mounting_slot_width_mm"),
+        "mounting_slot_axis": settings.get("mounting_slot_axis", "width"),
+        "mounting_slot_inset_mm": settings.get("mounting_slot_inset_mm"),
+        "magnet_pocket_pattern": settings.get("magnet_pocket_pattern", "none"),
+        "magnet_pocket_diameter_mm": settings.get("magnet_pocket_diameter_mm"),
+        "magnet_pocket_depth_mm": settings.get("magnet_pocket_depth_mm"),
+        "magnet_pocket_inset_mm": settings.get("magnet_pocket_inset_mm"),
+        "attachment_interface": settings.get("attachment_interface", "none"),
+        "material_profile": settings.get("material_profile", "consult"),
+        "finish_note": settings.get("finish_note", "業者と相談"),
+    }
+    if "spec_pdf" in result.output_files:
+        export_specification_pdf(result, result.output_files["spec_pdf"])
+    return accessory_result, vendor_result
+
+
+def _mark_svg_as_draft(path: str) -> None:
+    """診断用SVGへ、裁断用ではないことを消せない見た目で重ねる。"""
+    try:
+        source = Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return
+    marker = """
+<g id="patternforge-draft-watermark" pointer-events="none">
+  <rect x="0" y="0" width="100%" height="100%" fill="#fff" fill-opacity="0.32"/>
+  <text x="50%" y="48%" text-anchor="middle" font-family="sans-serif"
+        font-size="48" font-weight="700" fill="#b00020" fill-opacity="0.72"
+        transform="rotate(-18)">DRAFT / NOT FOR CUTTING</text>
+  <text x="50%" y="54%" text-anchor="middle" font-family="sans-serif"
+        font-size="22" font-weight="700" fill="#b00020">未確認項目があります・裁断禁止</text>
+</g>
+"""
+    index = source.rfind("</svg>")
+    if index < 0 or "patternforge-draft-watermark" in source:
+        return
+    temp_path = path + ".draft.tmp"
+    try:
+        Path(temp_path).write_text(source[:index] + marker + source[index:],
+                                   encoding="utf-8")
+        os.replace(temp_path, path)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+def _withhold_unconfirmed_outputs(result) -> str | None:
+    """ラフ確認では裁断・CAD・投影データを配らず、透かし入りSVGだけ残す。"""
+    if not result.garment_spec.construction.get("draft_mode"):
+        return None
+    preview_path = result.output_files.get("svg")
+    if preview_path:
+        _mark_svg_as_draft(preview_path)
+    output_root = os.path.abspath(OUTPUT_DIR)
+    for key, path in list(result.output_files.items()):
+        if key in {"svg", "spec_pdf"}:
+            continue
+        absolute = os.path.abspath(path)
+        try:
+            inside_output = os.path.commonpath([output_root, absolute]) == output_root
+        except ValueError:
+            inside_output = False
+        if inside_output and os.path.isfile(absolute):
+            os.remove(absolute)
+        result.output_files.pop(key, None)
+    # SVGは結果画面の診断プレビュー専用。通常のダウンロード一覧には出さない。
+    result.output_files.pop("svg", None)
+    return preview_path
+
+
+def _production_status(result) -> dict:
+    ready, pending = production_readiness(result)
+    draft = bool(result.garment_spec.construction.get("draft_mode"))
+    return {"ready": bool(ready and not draft), "draft": draft, "pending": pending}
 
 
 def _respond_illustration(inputs: GenerationInputs):
@@ -2043,14 +2332,20 @@ def _respond_illustration(inputs: GenerationInputs):
     fit = inputs.fit
     hem_seam_allowance_cm = inputs.hem_seam_allowance_cm
     illustration_views = inputs.illustration_views
+    illustration_corrections = inputs.illustration_corrections
+    illustration_stage = inputs.illustration_stage
+    custom_panel_specs = inputs.custom_panel_specs or []
+    accessory_3d = inputs.accessory_3d
     image = inputs.image
     lining = inputs.lining
     measurements = inputs.measurements
+    measured_block = inputs.measured_block
     mode = inputs.mode
     one_way_fabric = inputs.one_way_fabric
     owner_key = inputs.owner_key
     pattern_repeat_cm = inputs.pattern_repeat_cm
     plan_name = inputs.plan_name
+    project_name = inputs.project_name
     seam_allowance_cm = inputs.seam_allowance_cm
     shrink_percent = inputs.shrink_percent
     used_today = inputs.used_today
@@ -2068,11 +2363,23 @@ def _respond_illustration(inputs: GenerationInputs):
         one_way_fabric=one_way_fabric, shrink_percent=shrink_percent,
         pattern_repeat_cm=pattern_repeat_cm,
         alterations=alterations, lining=lining, block_key=block_key,
+        measured_block=measured_block,
+        corrections=illustration_corrections,
+        extra_part_requests=_custom_panel_specs_to_requests(custom_panel_specs),
         include_empty_tiles=_bool_field(request.form, "include_empty_tiles"),
         paper=(request.form.get("paper") or "").strip() or None,
     )
 
+    draft_preview_path = _withhold_unconfirmed_outputs(result)
+    accessory_3d_result, vendor_package_result = _export_accessory_outputs(
+        result, custom_panel_specs, accessory_3d)
     payload = result.summary()
+    payload["production_status"] = _production_status(result)
+    if draft_preview_path:
+        payload["preview_svg"] = f"/download/{result.job_id}/svg"
+    if accessory_3d_result:
+        payload["accessory_3d"] = accessory_3d_result.as_dict()
+        payload["accessory_3d"]["vendor_package"] = vendor_package_result.as_dict()
     # round57: イラストから作ったものも、生成履歴から作り直せるようにする。
     #
     # round51以来「画像を保存していないため作り直せません」と案内して
@@ -2083,13 +2390,35 @@ def _respond_illustration(inputs: GenerationInputs):
     # 画像そのものは今までどおり保存しない。
     illustration_spec = {
         "mode": "illustration_replay",
+        "project_name": project_name,
         "measurements": measurements.as_dict(),
         "parts": [
             {"part_type": part.part_type, "variation": part.variation,
-             "quantity": part.quantity}
+             "quantity": part.quantity,
+             "design_length_cm": part.design_length_cm,
+             "layer_number": part.layer_number,
+             "custom_segments": part.custom_segments,
+             "allow_split": part.allow_split,
+             "replacement_part_type": part.replacement_part_type,
+             "seam_fit_confirmed": part.seam_fit_confirmed,
+             "grade_width_cm": part.grade_width_cm,
+             "grade_height_cm": part.grade_height_cm}
             for part in result.garment_spec.parts
-            if part.custom_segments is None
         ],
+        "princess_line": bool(result.garment_spec.princess_line),
+        "construction": dict(result.garment_spec.construction),
+        "custom_panels": [
+            {"label": panel.label, "points_cm": [list(point) for point in panel.points_cm],
+             "quantity": panel.quantity, "mirror": panel.mirror,
+             "allow_split": panel.allow_split,
+             "replacement_part_type": getattr(panel, "replacement_part_type", None),
+             "seam_fit_confirmed": getattr(panel, "seam_fit_confirmed", False),
+             "grade_width_cm": getattr(panel, "grade_width_cm", 0.0),
+             "grade_height_cm": getattr(panel, "grade_height_cm", 0.0)}
+            for panel in custom_panel_specs
+        ],
+        "accessory_3d": accessory_3d,
+        "illustration_stage": illustration_stage,
         "generation_kwargs": {
             "allow_rotation": allow_rotation,
             "seam_allowance_cm": seam_allowance_cm,
@@ -2101,6 +2430,7 @@ def _respond_illustration(inputs: GenerationInputs):
             "alterations": alterations or None,
             "lining": lining,
             "block_key": block_key,
+            "measured_block": measured_block,
             "fabric_group_assignments": fabric_groups or None,
             "include_empty_tiles": _bool_field(request.form, "include_empty_tiles"),
             "paper": (request.form.get("paper") or "").strip() or None,
@@ -2110,7 +2440,8 @@ def _respond_illustration(inputs: GenerationInputs):
     }
     db.record_job(result.job_id, owner_key, part_count=payload["part_count"],
                   waste_ratio=payload["waste_ratio"],
-                  spec_json=json.dumps(illustration_spec))
+                  spec_json=json.dumps(illustration_spec), project_name=project_name)
+    payload["project_name"] = project_name
     payload["download"] = _download_links(result)
     payload["classification_log"] = [
         {"part_type": c.part_type, "variation": c.variation, "confidence": round(c.confidence, 2),
@@ -2123,21 +2454,45 @@ def _respond_illustration(inputs: GenerationInputs):
     # 足すべきかを構造化して返す。
     modes = {entry["mode"] for entry in payload["classification_log"]}
     used_mock = "mock" in modes
-    has_back_reference = bool(request.files.getlist("illustration_back"))
-    detected = [
-        f"{entry['part_type']}：{entry['variation']}（信頼度 {entry['confidence']:.0%}）"
-        for entry in payload["classification_log"]
-    ]
+    has_back_reference = any(f and f.filename for f in request.files.getlist("illustration_back"))
+    has_side_reference = any(f and f.filename for f in request.files.getlist("illustration_side"))
+    has_detail_reference = any(f and f.filename for f in request.files.getlist("illustration_detail"))
+    evidence = payload.get("classification_evidence") or []
+    if evidence:
+        detected = []
+        for entry in evidence:
+            text = (f"{entry['part_type']}：{entry['variation'] or '標準'}"
+                    f"（{entry['votes']}票・合計信頼度 {entry['confidence_sum']:.2f}）")
+            if entry.get("conflicted"):
+                alternatives = "、".join(
+                    f"{item['variation'] or '標準'} {item['confidence_sum']:.2f}"
+                    for item in entry.get("alternatives", [])[:2])
+                text += f"／要確認: 別候補 {alternatives}"
+            detected.append(text)
+    else:
+        detected = [
+            f"{entry['part_type']}：{entry['variation']}（信頼度 {entry['confidence']:.0%}）"
+            for entry in payload["classification_log"]
+        ]
     missing = ["着る人の実採寸（入力済みの値を確認）"]
     if not has_back_reference:
         missing.insert(0, "背面資料（後ろ襟・背中の切替・ファスナー位置を確認）")
-    missing.append("色分け、飾り、金具、プリントは生成後に別工程で確認")
+    if not has_side_reference:
+        missing.append("側面資料（脇線・前後差・厚み・ドレープを確認）")
+    if not has_detail_reference:
+        missing.append("装飾拡大（留め具・金具・プリント・切替線を確認）")
+    if any(entry.get("conflicted") for entry in evidence):
+        missing.append("複数画像で形の判定が割れています。要確認と表示されたパーツを確定してください")
+    if illustration_corrections:
+        detected.insert(0, "利用者の確認入力を自動判定より優先して反映")
     if used_mock:
         payload.setdefault("measurement_warnings", []).append(
             "この画像入力は簡易判定（モック）で生成しました。ラフの細部は読めないため、"
-            "生成した型紙をそのまま裁断せず、正面・背面資料を追加して仮縫いで確認してください。"
+            "生成した型紙をそのまま裁断せず、正面・背面・側面・装飾拡大を追加し、"
+            "『自動判定を確認・補正する』で形を確定してから仮縫いしてください。"
         )
-        summary = "簡易判定でシルエットの土台を生成しました。画像固有の袖・首元・スリット・装飾は確定していません。"
+        summary = ("簡易判定でシルエットの土台を生成しました。自動判定が難しい形は、"
+                   "生成前の確認・補正欄で確定できます。")
     else:
         summary = "画像判定でシルエットの土台を生成しました。下の読み取り内容と資料不足を確認してから裁断してください。"
     payload["reference_review"] = {
@@ -2145,6 +2500,8 @@ def _respond_illustration(inputs: GenerationInputs):
         "detected": detected,
         "missing": missing,
         "has_back_reference": has_back_reference,
+        "has_side_reference": has_side_reference,
+        "has_detail_reference": has_detail_reference,
         "used_mock": used_mock,
     }
     payload["usage"] = {"plan": plan_name, "used_today": used_today, "daily_limit": daily_limit}
@@ -2161,6 +2518,7 @@ def _respond_multi_size(inputs: GenerationInputs):
     alterations = inputs.alterations
     block_key = inputs.block_key
     custom_grade_cm = inputs.custom_grade_cm
+    custom_panel_specs = inputs.custom_panel_specs or []
     daily_limit = inputs.daily_limit
     design_lengths = inputs.design_lengths
     fabric_groups = inputs.fabric_groups
@@ -2169,12 +2527,14 @@ def _respond_multi_size(inputs: GenerationInputs):
     hem_seam_allowance_cm = inputs.hem_seam_allowance_cm
     lining = inputs.lining
     measurements = inputs.measurements
+    measured_block = inputs.measured_block
     mode = inputs.mode
     one_way_fabric = inputs.one_way_fabric
     owner_key = inputs.owner_key
     pattern_repeat_cm = inputs.pattern_repeat_cm
     per_fabric_stash = inputs.per_fabric_stash
     plan_name = inputs.plan_name
+    project_name = inputs.project_name
     seam_allowance_cm = inputs.seam_allowance_cm
     shrink_percent = inputs.shrink_percent
     sizes = inputs.sizes
@@ -2196,6 +2556,7 @@ def _respond_multi_size(inputs: GenerationInputs):
         "alterations": alterations or None,
         "lining": lining,
         "block_key": block_key,
+        "measured_block": measured_block,
         "include_empty_tiles": _bool_field(request.form, "include_empty_tiles"),
         "paper": (request.form.get("paper") or "").strip() or None,
     }
@@ -2204,10 +2565,23 @@ def _respond_multi_size(inputs: GenerationInputs):
     total_parts = sum(r.summary()["part_count"] for r in multi.results.values())
     regen_spec = {
         "mode": "multi_size",
+        "project_name": project_name,
         "measurements": measurements.as_dict(),
         "garment_spec": garment_spec_kwargs,
         "sizes": sizes,
         "custom_grade_cm": custom_grade_cm,
+        "custom_panels": [
+            {"label": panel.label,
+             "points_cm": [list(point) for point in panel.points_cm],
+             "quantity": panel.quantity, "mirror": panel.mirror,
+             "allow_split": panel.allow_split,
+             "replacement_part_type": panel.replacement_part_type,
+             "seam_fit_confirmed": panel.seam_fit_confirmed,
+             "grade_width_cm": panel.grade_width_cm,
+             "grade_height_cm": panel.grade_height_cm}
+            for panel in custom_panel_specs
+        ],
+        "construction": dict(spec.construction),
         "allow_rotation": allow_rotation,
         "seam_allowance_cm": seam_allowance_cm,
         "hem_seam_allowance_cm": hem_seam_allowance_cm,
@@ -2220,7 +2594,7 @@ def _respond_multi_size(inputs: GenerationInputs):
                                "fit": _fit_to_json(multi_size_kwargs["fit"])},
     }
     db.record_job(multi.bundle_job_id, owner_key, part_count=total_parts, waste_ratio=None,
-                  spec_json=json.dumps(regen_spec))
+                  spec_json=json.dumps(regen_spec), project_name=project_name)
 
     results_payload = {}
     for size, result in multi.results.items():
@@ -2239,11 +2613,17 @@ def _respond_multi_size(inputs: GenerationInputs):
                 per_fabric_stash=per_fabric_stash,
                 allow_rotation=allow_rotation,
                 one_way_fabric=one_way_fabric,
+                block_key=block_key,
+                measured_block=measured_block,
                 seam_allowance_cm=seam_allowance_cm,
                 hem_seam_allowance_cm=hem_seam_allowance_cm)
         size_payload = result.summary()
+        # 各サイズに実際に使った採寸を返す。基準値だけでは、
+        # 専用原型の肩幅・袖ぐりがS/M/Lで変化したかを画面から
+        # 確認できない。
+        size_payload["measurements"] = result.measurements.as_dict()
         db.record_job(result.job_id, owner_key, part_count=size_payload["part_count"],
-                      waste_ratio=size_payload["waste_ratio"])
+                      waste_ratio=size_payload["waste_ratio"], project_name=project_name)
         # round41: ここには`"projector"`が**2回**書かれていた
         # (2つ目はインデントも崩れていた)。dictリテラルの重複キーは
         # 例外にならず後勝ちで潰れるので、値が同じだったこの箇所では
@@ -2274,6 +2654,7 @@ def _respond_multi_size(inputs: GenerationInputs):
     return jsonify({
         "ok": True,
         "mode": mode,
+        "project_name": project_name,
         "sizes": multi.sizes,
         "bundle_job_id": multi.bundle_job_id,
         "base_measurements": multi.base_measurements.as_dict(),
@@ -2298,6 +2679,7 @@ def _respond_manual(inputs: GenerationInputs):
     まとめて取り出している(24個)。
     """
     allow_rotation = inputs.allow_rotation
+    accessory_3d = inputs.accessory_3d
     alterations = inputs.alterations
     block_key = inputs.block_key
     custom_panel_specs = inputs.custom_panel_specs
@@ -2311,12 +2693,14 @@ def _respond_manual(inputs: GenerationInputs):
     include_body_garment = inputs.include_body_garment
     lining = inputs.lining
     measurements = inputs.measurements
+    measured_block = inputs.measured_block
     mode = inputs.mode
     one_way_fabric = inputs.one_way_fabric
     owner_key = inputs.owner_key
     pattern_repeat_cm = inputs.pattern_repeat_cm
     per_fabric_stash = inputs.per_fabric_stash
     plan_name = inputs.plan_name
+    project_name = inputs.project_name
     seam_allowance_cm = inputs.seam_allowance_cm
     shrink_percent = inputs.shrink_percent
     spec = inputs.spec
@@ -2334,6 +2718,7 @@ def _respond_manual(inputs: GenerationInputs):
         "alterations": alterations or None,
         "lining": costume_project.lining if costume_project else lining,
         "block_key": block_key,
+        "measured_block": measured_block,
         "design_length_overrides": design_lengths or None,
         "fabric_group_assignments": fabric_groups or None,
         # round57: 白紙の面も印刷するか(既定は省く)。
@@ -2364,14 +2749,22 @@ def _respond_manual(inputs: GenerationInputs):
             allow_rotation=allow_rotation, one_way_fabric=one_way_fabric,
             fit=fit, seam_allowance_cm=seam_allowance_cm,
             hem_seam_allowance_cm=hem_seam_allowance_cm,
+            block_key=block_key,
+            measured_block=measured_block,
             fabric_group_assignments=fabric_groups or None,
             per_fabric_stash=per_fabric_stash)
 
+    accessory_3d_result, vendor_package_result = _export_accessory_outputs(
+        result, custom_panel_specs, accessory_3d)
     payload = result.summary()
+    if accessory_3d_result:
+        payload["accessory_3d"] = accessory_3d_result.as_dict()
+        payload["accessory_3d"]["vendor_package"] = vendor_package_result.as_dict()
     if costume_project:
         payload["costume_project"] = costume_project.as_dict()
     regen_spec = {
         "mode": "manual",
+        "project_name": project_name,
         "measurements": measurements.as_dict(),
         "garment_spec": garment_spec_kwargs,
         # round10で追加。既存(round10より前)の生成履歴にはこの2キーが
@@ -2385,9 +2778,15 @@ def _respond_manual(inputs: GenerationInputs):
                 "quantity": s.quantity,
                 "mirror": s.mirror,
                 "allow_split": getattr(s, "allow_split", False),
+                "replacement_part_type": getattr(s, "replacement_part_type", None),
+                "seam_fit_confirmed": getattr(s, "seam_fit_confirmed", False),
+                "grade_width_cm": getattr(s, "grade_width_cm", 0.0),
+                "grade_height_cm": getattr(s, "grade_height_cm", 0.0),
             }
             for s in custom_panel_specs
         ],
+        "construction": dict(spec.construction),
+        "accessory_3d": accessory_3d,
         "allow_rotation": allow_rotation,
         "seam_allowance_cm": seam_allowance_cm,
         "hem_seam_allowance_cm": hem_seam_allowance_cm,
@@ -2398,7 +2797,9 @@ def _respond_manual(inputs: GenerationInputs):
                                "fit": _fit_to_json(generation_kwargs["fit"])},
     }
     db.record_job(result.job_id, owner_key, part_count=payload["part_count"],
-                  waste_ratio=payload["waste_ratio"], spec_json=json.dumps(regen_spec))
+                  waste_ratio=payload["waste_ratio"], spec_json=json.dumps(regen_spec),
+                  project_name=project_name)
+    payload["project_name"] = project_name
     payload["download"] = _download_links(result)
     payload["classification_log"] = [
         {"part_type": c.part_type, "variation": c.variation, "confidence": round(c.confidence, 2),
@@ -2409,8 +2810,7 @@ def _respond_manual(inputs: GenerationInputs):
     return jsonify({"ok": True, "mode": mode, **payload})
 
 
-@app.post("/api/generate")
-def api_generate():
+def _api_generate_impl():
     if not _generate_rate_limiter.allow(_client_key()):
         return jsonify({"ok": False, "error": "リクエストが多すぎます。しばらく待って再試行してください。"}), 429
 
@@ -2425,6 +2825,7 @@ def api_generate():
     _usage_day: str | None = None
     try:
         measurements = _parse_measurements(request.form)
+        project_name = _parse_project_name(request.form)
         mode = request.form.get("mode", "manual")
         allow_rotation = _bool_field(request.form, "allow_rotation")
         one_way_fabric, shrink_percent, pattern_repeat_cm = \
@@ -2437,10 +2838,20 @@ def api_generate():
         fabric_groups = _parse_fabric_groups(request.form)
         # round41: 裏地の型紙も一緒に出すか(engine/lining.py)。
         lining = _bool_field(request.form, "lining")
+        lining_scope = request.form.getlist("lining_scope") if lining else []
+        allowed_lining_scope = {
+            "front_bodice", "back_bodice", "sleeve", "skirt",
+            "front_pants", "back_pants",
+        }
+        unknown_lining_scope = sorted(set(lining_scope) - allowed_lining_scope)
+        if unknown_lining_scope:
+            raise ValueError("裏地の対象部位が不正です。画面から選び直してください。")
         # round42: どの原型で引くか(engine/blocks.py)。知らないキーは
         # get_block()が明確なエラーにする(黙って大人に落とさない)。
         block_key = (request.form.get("block") or "").strip() or None
-        get_block(block_key)
+        measured_block = _parse_measured_block(request.form, block_key)
+        if measured_block is None:
+            get_block(block_key)
         seam_allowance_cm, hem_seam_allowance_cm = _parse_seam_allowance_fields(request.form)
 
         image = None
@@ -2450,6 +2861,8 @@ def api_generate():
         # (イラストモードでは`garment_spec_kwargs`が、手動モードでは
         #  `illustration_views`が、それぞれ決まらない)。
         illustration_views: list[str] | None = None
+        illustration_corrections: dict[str, object] | None = None
+        illustration_stage = "production"
         garment_spec_kwargs: dict | None = None
         sizes: list[str] | None = None
         custom_grade_cm: dict[str, float] | None = None
@@ -2458,6 +2871,7 @@ def api_generate():
         # 分岐では使わない(未対応、下記参照)ため既定値のまま。
         include_body_garment = True
         custom_panel_specs: list[CustomPanelSpec] = []
+        accessory_3d = None
         costume_project = get_costume_project(
             (request.form.get("costume_project") or "").strip(), measurements)
         if costume_project and mode != "manual":
@@ -2477,9 +2891,13 @@ def api_generate():
             # 従来の"illustration"欄だけを使えばround20までとまったく同じ動き。
             front_uploads = [f for f in request.files.getlist("illustration") if f and f.filename]
             back_uploads = [f for f in request.files.getlist("illustration_back") if f and f.filename]
-            uploads = front_uploads + back_uploads
+            side_uploads = [f for f in request.files.getlist("illustration_side") if f and f.filename]
+            detail_uploads = [f for f in request.files.getlist("illustration_detail") if f and f.filename]
+            uploads = front_uploads + back_uploads + side_uploads + detail_uploads
             illustration_views = (["front"] * len(front_uploads)
-                                   + ["back"] * len(back_uploads)) if back_uploads else None
+                                   + ["back"] * len(back_uploads)
+                                   + ["side"] * len(side_uploads)
+                                   + ["detail"] * len(detail_uploads))
             if not uploads:
                 # イラストモードを選んだのにファイルが無い場合、手動モードの
                 # デフォルト選択で黙って生成してしまうと「イラストを見て
@@ -2494,39 +2912,245 @@ def api_generate():
                 # 「イラストを見てくれなかったことに気づけない」が、
                 # そのまま起きていた。実測で 200・パーツ6枚が返っていた。
                 raise ValueError(
-                    "後ろから見た絵だけが選ばれています。"
+                    "補助資料だけが選ばれています。"
                     "前から見た絵は必ず指定してください"
-                    "(後ろの絵は、後身頃の襟ぐりを読むための補助です)。")
+                    "(後ろ・側面・装飾拡大は補助資料です)。")
             if len(uploads) > MAX_ILLUSTRATION_IMAGES:
                 raise ValueError(
                     f"イラストは一度に{MAX_ILLUSTRATION_IMAGES}枚までです"
                     f"（{len(uploads)}枚が選択されています）。"
                 )
             image = [_load_uploaded_image(f) for f in uploads]
-            # round50: ここは `_has_custom_panels()` を通す。
-            #
-            # 【round49まで何が起きていたか】以前は
-            # `(request.form.get("custom_panels_json") or "").strip()` という
-            # **文字列の真偽値**で判定していた。この欄の既定値は空文字ではなく
-            # **文字列 "[]"** なので、カスタムパーツを1つも追加していなくても
-            # 常に真になる。つまり画面からのイラストモードは、
-            # **1度も成功できない状態だった**。実測:
-            #
-            #   画面そのまま(custom_panels_json="[]") → 400
-            #     「カスタムパーツ(自由形状)は現在、イラストモードでは併用できません。」
-            #   その欄だけ取り除いて送る              → 200・パーツ6枚
-            #
-            # エンジン側は正常で、この1行だけがモード全体を塞いでいた。
-            # しかも同じ間違いはround32に**manual側で見つかって直され**、
-            # そのとき `_has_custom_panels()` の説明文に
-            # 「文字列としての真偽値で判定してはいけない」とまで書かれていた。
-            # 直したのは見つけた場所だけで、こちらは残っていた。
-            if _has_custom_panels(request.form.get("custom_panels_json") or ""):
-                # 正直な既知の制約(README参照): custom_panelはround10で
-                # 追加したばかりで、AIパーツ判定(イラストモード)側との
-                # 組み合わせはまだ検証していない。曖昧に無視するのではなく、
-                # 明確なエラーで伝える(カフス+袖なしの既存の扱いと同じ方針)。
-                raise ValueError("カスタムパーツ(自由形状)は現在、イラストモードでは併用できません。")
+
+            illustration_stage = (request.form.get("illustration_stage")
+                                  or "production").strip()
+            if illustration_stage not in {"production", "draft"}:
+                raise ValueError("画像生成の段階は「製作用」または「ラフ確認」を選んでください。")
+
+            # 画像に写らない／ラフでは判別しづらい構造だけを、人が確認して
+            # 上書きできる。"auto" は辞書に入れず、自動判定をそのまま使う。
+            illustration_corrections = {}
+            front_neckline = (request.form.get("illustration_neckline") or "auto").strip()
+            back_neckline = (request.form.get("illustration_back_neckline") or "auto").strip()
+            sleeve_style = (request.form.get("illustration_sleeve_style") or "auto").strip()
+            skirt_style = (request.form.get("illustration_skirt_style") or "auto").strip()
+            pants_style = (request.form.get("illustration_pants_style") or "auto").strip()
+            collar_style = (request.form.get("illustration_collar_style") or "auto").strip()
+            cuffs_style = (request.form.get("illustration_cuffs_style") or "auto").strip()
+            waistband_style = (request.form.get("illustration_waistband_style") or "auto").strip()
+            hood = (request.form.get("illustration_hood") or "auto").strip()
+            if front_neckline != "auto":
+                illustration_corrections["neckline"] = front_neckline
+            if back_neckline != "auto":
+                illustration_corrections["back_neckline"] = back_neckline
+            if sleeve_style != "auto":
+                illustration_corrections["sleeve_style"] = None if sleeve_style == "none" else sleeve_style
+            if skirt_style != "auto":
+                illustration_corrections["skirt_style"] = None if skirt_style == "none" else skirt_style
+            for field_value, key in (
+                (pants_style, "pants_style"), (collar_style, "collar_style"),
+                (cuffs_style, "cuffs_style"), (waistband_style, "waistband_style"),
+            ):
+                if field_value != "auto":
+                    illustration_corrections[key] = (
+                        None if field_value == "none"
+                        else "" if field_value == "default"
+                        else field_value)
+            if hood != "auto":
+                illustration_corrections["hood"] = hood == "yes"
+            closure = (request.form.get("illustration_closure") or "auto").strip()
+            if closure != "auto":
+                illustration_corrections["closure"] = closure
+            closure_length = (request.form.get("illustration_closure_length_cm") or "").strip()
+            if closure_length:
+                illustration_corrections["closure_length_cm"] = closure_length
+            closure_count = (request.form.get("illustration_closure_count") or "").strip()
+            closure_spacing = (request.form.get("illustration_closure_spacing_cm") or "").strip()
+            closure_overlap = (request.form.get("illustration_closure_overlap_cm") or "").strip()
+            if closure_count:
+                illustration_corrections["closure_count"] = closure_count
+            if closure_spacing:
+                illustration_corrections["closure_spacing_cm"] = closure_spacing
+            if closure_overlap:
+                illustration_corrections["closure_overlap_cm"] = closure_overlap
+            if _bool_field(request.form, "illustration_front_zip"):
+                illustration_corrections["front_zip"] = True
+            if _bool_field(request.form, "illustration_princess_line"):
+                illustration_corrections["princess_line"] = True
+            for form_name, correction_name in (
+                ("illustration_symmetry", "symmetry"),
+                ("illustration_internal_support", "internal_support"),
+                ("illustration_movement", "movement"),
+            ):
+                value = (request.form.get(form_name) or "auto").strip()
+                if value != "auto":
+                    illustration_corrections[correction_name] = value
+            petticoat_style = (request.form.get("illustration_petticoat_style") or "").strip()
+            petticoat_tiers = (request.form.get("illustration_petticoat_tier_count") or "").strip()
+            petticoat_length = (request.form.get("illustration_petticoat_length_cm") or "").strip()
+            petticoat_fullness = (request.form.get("illustration_petticoat_fullness_ratio") or "").strip()
+            petticoat_diameters = (request.form.get("illustration_petticoat_hoop_diameters_cm") or "").strip()
+            if petticoat_style:
+                illustration_corrections["petticoat_style"] = petticoat_style
+            if petticoat_tiers:
+                illustration_corrections["petticoat_tier_count"] = petticoat_tiers
+            if petticoat_length:
+                illustration_corrections["petticoat_length_cm"] = petticoat_length
+            if petticoat_fullness:
+                illustration_corrections["petticoat_fullness_ratio"] = petticoat_fullness
+            if petticoat_diameters:
+                try:
+                    illustration_corrections["petticoat_hoop_diameters_cm"] = [
+                        float(value.strip()) for value in petticoat_diameters.split(",")
+                        if value.strip()
+                    ]
+                except ValueError as exc:
+                    raise ValueError("ワイヤー輪直径は半角カンマ区切りの数値で入力してください。") from exc
+            layer_count = (request.form.get("illustration_layer_count") or "1").strip()
+            if layer_count != "1":
+                illustration_corrections["layer_count"] = layer_count
+            layer_lengths = (request.form.get("illustration_layer_lengths_cm") or "").strip()
+            if layer_lengths:
+                try:
+                    illustration_corrections["layer_lengths_cm"] = [
+                        float(value.strip()) for value in layer_lengths.split(",")
+                        if value.strip()
+                    ]
+                except ValueError as exc:
+                    raise ValueError(
+                        "層ごとの丈は半角カンマ区切りの数値で入力してください。"
+                        "例: 80,65,50") from exc
+            gather_ratio = (request.form.get("illustration_gather_ratio") or "").strip()
+            if gather_ratio:
+                illustration_corrections["gather_ratio"] = gather_ratio
+            pleat_count = (request.form.get("illustration_pleat_count") or "").strip()
+            if pleat_count:
+                illustration_corrections["pleat_count"] = pleat_count
+            pleat_depth = (request.form.get("illustration_pleat_depth_cm") or "").strip()
+            if pleat_depth:
+                illustration_corrections["pleat_depth_cm"] = pleat_depth
+            slit_position = (request.form.get("illustration_slit_position") or "none").strip()
+            slit_length = (request.form.get("illustration_slit_length_cm") or "").strip()
+            if slit_position != "none" or slit_length:
+                illustration_corrections["slit_position"] = slit_position
+                illustration_corrections["slit_length_cm"] = slit_length
+            motif_position = (request.form.get("illustration_motif_position") or "none").strip()
+            motif_width = (request.form.get("illustration_motif_width_cm") or "").strip()
+            motif_height = (request.form.get("illustration_motif_height_cm") or "").strip()
+            if motif_position != "none" or motif_width or motif_height:
+                illustration_corrections["motif_position"] = motif_position
+                illustration_corrections["motif_width_cm"] = motif_width
+                illustration_corrections["motif_height_cm"] = motif_height
+                motif_image = request.files.get("illustration_motif_image")
+                if motif_image and motif_image.filename:
+                    motif_outline, motif_regions = _trace_normalized_motif_data(motif_image)
+                    illustration_corrections["motif_outline_normalized"] = motif_outline
+                    if motif_regions:
+                        illustration_corrections["motif_regions_normalized"] = motif_regions
+            construction_note = (request.form.get("illustration_construction_note") or "").strip()
+            if construction_note:
+                illustration_corrections["construction_note"] = construction_note
+            # 左右非対称の本番型紙は、同一型紙の反転では作れない。確認ゲートの
+            # 前に左右別の自由輪郭を解析し、実在する2形状があるかまで確かめる。
+            raw_custom_panels_json = (request.form.get("custom_panels_json") or "").strip()
+            if _has_custom_panels(raw_custom_panels_json):
+                custom_panel_specs.extend(
+                    _parse_custom_panels(raw_custom_panels_json, measurements))
+            # 画像だけでは縫製構造を確定できない。自動判定のまま残した項目を
+            # 仕様書へ引き継ぎ、「確認済み」と誤表示しない。
+            unconfirmed_fields = [
+                label for value, label in (
+                    (front_neckline, "前の襟ぐりを確認してください"),
+                    (back_neckline, "後ろの襟ぐりを確認してください"),
+                    (sleeve_style, "袖の有無・形を確認してください"),
+                    (skirt_style, "スカートの有無・形を確認してください"),
+                    (pants_style, "パンツの有無・形を確認してください"),
+                    (collar_style, "衿の有無・形を確認してください"),
+                    (cuffs_style, "カフスの有無・形を確認してください"),
+                    (waistband_style, "ウエストベルトの有無・形を確認してください"),
+                    (hood, "フードの有無を確認してください"),
+                    (closure, "開閉方法を確認してください"),
+                    ((request.form.get("illustration_symmetry") or "auto").strip(),
+                     "左右対称・非対称を確認してください"),
+                    ((request.form.get("illustration_internal_support") or "auto").strip(),
+                     "芯材・ボーン等の内部構造を確認してください"),
+                    ((request.form.get("illustration_movement") or "auto").strip(),
+                     "着用時の動作量を確認してください"),
+                ) if value == "auto"
+            ]
+            if unconfirmed_fields:
+                illustration_corrections["unconfirmed_fields"] = unconfirmed_fields
+            if closure in {"back_zip", "side_zip"} and not closure_length:
+                unconfirmed_fields.append("ファスナーの開き長を確認してください")
+                illustration_corrections["unconfirmed_fields"] = unconfirmed_fields
+            if closure in {"hooks", "snaps"}:
+                missing = []
+                if not closure_count:
+                    missing.append("個数")
+                if not closure_spacing:
+                    missing.append("間隔")
+                if closure == "snaps" and not closure_overlap:
+                    missing.append("重なり量")
+                if missing:
+                    unconfirmed_fields.append(
+                        "ホック／スナップの" + "・".join(missing)
+                        + "を確認してください")
+                    illustration_corrections["unconfirmed_fields"] = unconfirmed_fields
+            if pleat_count and not pleat_depth:
+                unconfirmed_fields.append("プリーツのひだ深さを確認してください")
+                illustration_corrections["unconfirmed_fields"] = unconfirmed_fields
+            support_value = (request.form.get("illustration_internal_support") or "auto").strip()
+            if support_value == "interfacing":
+                interfacing_targets = [value.strip() for value in
+                                       request.form.getlist("illustration_interfacing_targets")
+                                       if value.strip()]
+                interfacing_inset = (request.form.get(
+                    "illustration_interfacing_inset_cm") or "0").strip()
+                illustration_corrections["interfacing_targets"] = interfacing_targets
+                illustration_corrections["interfacing_inset_cm"] = interfacing_inset
+                if not interfacing_targets:
+                    unconfirmed_fields.append("接着芯を貼る部位を確認してください")
+                    illustration_corrections["unconfirmed_fields"] = unconfirmed_fields
+            if support_value == "petticoat":
+                missing = []
+                if petticoat_style not in {"soft", "hoop"}:
+                    missing.append("方式")
+                if not petticoat_tiers:
+                    missing.append("段数")
+                if not petticoat_length:
+                    missing.append("丈")
+                if petticoat_style == "soft" and not petticoat_fullness:
+                    missing.append("段倍率")
+                if petticoat_style == "hoop" and not petticoat_diameters:
+                    missing.append("輪直径")
+                if missing:
+                    unconfirmed_fields.append(
+                        "パニエの" + "・".join(missing) + "を確認してください")
+                    illustration_corrections["unconfirmed_fields"] = unconfirmed_fields
+            if support_value == "armor_base" and not custom_panel_specs:
+                unconfirmed_fields.append(
+                    "造形物用の土台輪郭をカスタムパーツでトレースしてください")
+                illustration_corrections["unconfirmed_fields"] = unconfirmed_fields
+            symmetry = (request.form.get("illustration_symmetry") or "auto").strip()
+            if symmetry == "asymmetric":
+                distinct_shapes = {repr(panel.points_cm)
+                                   for panel in custom_panel_specs}
+                if len(distinct_shapes) < 2:
+                    unconfirmed_fields.append(
+                        "左右非対称は左側・右側それぞれの異なる輪郭を2件以上"
+                        "トレースしてください")
+                    illustration_corrections["unconfirmed_fields"] = unconfirmed_fields
+            if illustration_stage == "production" and unconfirmed_fields:
+                raise ValueError(
+                    "製作用データを出すには、自動判定のままの項目をすべて確認してください: "
+                    + "／".join(unconfirmed_fields)
+                    + "。まだ決められない場合は「ラフ確認」を選べますが、"
+                      "その場合は裁断用PDF・DXF・STLを出しません。")
+            if illustration_stage == "draft":
+                illustration_corrections["draft_mode"] = True
+            illustration_corrections = illustration_corrections or None
+            # 左右非対称、ケープ、翼、装甲などの自由輪郭は、上の製作可否
+            # チェック前に解析済み。校正済みcmなのでAI側の再スケーリングはしない。
         else:
             # round8で追加: 生成履歴からの再生成機能のため、build_garment_spec
             # に渡す引数をそのままJSONに保存できる辞書として先に組み立てる
@@ -2568,14 +3192,13 @@ def api_generate():
             has_custom_panels = _has_custom_panels(raw_custom_panels_json)
             if mode == "multi_size":
                 if has_custom_panels:
-                    # サイズ展開(グレーディング)はbust/height等の採寸比率で
-                    # 各パーツを再スケーリングする仕組みだが、custom_panelは
-                    # 校正済みの実寸cmを一切スケーリングしない設計
-                    # (PART_SCALE_RULES["custom_panel"]参照)のため、
-                    # 「サイズ展開したら小道具だけサイズが変わらない」という
-                    # 分かりにくい挙動になる。現時点では明確なエラーにする。
-                    raise ValueError("カスタムパーツ(自由形状)は現在、サイズ展開モードでは併用できません。")
+                    custom_panel_specs.extend(
+                        _parse_custom_panels(raw_custom_panels_json, measurements))
                 spec = build_garment_spec(**garment_spec_kwargs)
+                if custom_panel_specs:
+                    spec.parts = merge_custom_panel_requests(
+                        spec.parts, _custom_panel_specs_to_requests(custom_panel_specs),
+                        princess_line=spec.princess_line)
                 sizes = request.form.getlist("sizes")
                 if not sizes:
                     raise ValueError(
@@ -2601,12 +3224,106 @@ def api_generate():
                     custom_panel_specs.extend(
                         _parse_custom_panels(raw_custom_panels_json, measurements))
                 if custom_panel_specs:
-                    spec.parts.extend(_custom_panel_specs_to_requests(custom_panel_specs))
+                    spec.parts = merge_custom_panel_requests(
+                        spec.parts,
+                        _custom_panel_specs_to_requests(custom_panel_specs),
+                        princess_line=spec.princess_line)
                 if not spec.parts:
                     raise ValueError(
                         "生成するパーツがありません。本体パーツを含めるか、"
                         "カスタムパーツを1つ以上追加してください。"
                     )
+
+        # 対象が未選択なら従来どおり総裏。選択があれば部分裏として、同じ
+        # GarmentSpecに保存するので手動・画像・サイズ展開・再生成で共通に効く。
+        if lining_scope:
+            if spec is not None:
+                spec.construction["lining_scope"] = list(lining_scope)
+            if illustration_corrections is not None:
+                illustration_corrections["lining_scope"] = list(lining_scope)
+
+        if _bool_field(request.form, "generate_accessory_stl"):
+            if mode not in {"manual", "illustration"}:
+                raise ValueError("3D小物のSTL出力は手動または画像モードで使用してください。")
+            if not custom_panel_specs:
+                raise ValueError(
+                    "3D小物を出力するには、カスタムパーツを1つ以上追加してください。")
+            if mode == "illustration" and illustration_stage == "draft":
+                raise ValueError(
+                    "ラフ確認ではSTLを出力できません。画像の確認項目を確定し、"
+                    "「製作用データを作る」を選んでください。")
+            thickness, bed_width, bed_depth = validate_accessory_settings(
+                request.form.get("accessory_thickness_mm", "3"),
+                request.form.get("accessory_bed_width_mm", "220"),
+                request.form.get("accessory_bed_depth_mm", "220"),
+            )
+            curvature_radius, curvature_height_radius, curve_axis = \
+                validate_compound_curvature_settings(
+                request.form.get("accessory_curvature_radius_mm"),
+                request.form.get("accessory_curvature_radius_height_mm"),
+                request.form.get("accessory_curve_axis") or "width",
+            )
+            material_profile, finish_note = normalize_order_options(
+                request.form.get("accessory_material_profile") or "consult",
+                request.form.get("accessory_finish_note") or "業者と相談",
+            )
+            hole_pattern, hole_diameter, hole_inset = validate_mounting_holes(
+                request.form.get("accessory_mounting_hole_pattern") or "none",
+                request.form.get("accessory_mounting_hole_diameter_mm"),
+                request.form.get("accessory_mounting_hole_inset_mm"),
+            )
+            (attachment_interface, attachment_pattern,
+             attachment_diameter, attachment_inset) = validate_attachment_interface(
+                request.form.get("accessory_attachment_interface") or "none",
+                request.form.get("accessory_attachment_hole_diameter_mm"),
+                request.form.get("accessory_attachment_hole_inset_mm"),
+            )
+            if attachment_interface != "none":
+                if hole_pattern != "none":
+                    raise ValueError(
+                        "取付金具インターフェースと汎用の丸穴は同時に指定できません。"
+                        "金具用の穴は自動で作られます。")
+                hole_pattern, hole_diameter, hole_inset = (
+                    attachment_pattern, attachment_diameter, attachment_inset)
+            slot_pattern, slot_length, slot_width, slot_axis, slot_inset = \
+                validate_mounting_slots(
+                    request.form.get("accessory_mounting_slot_pattern") or "none",
+                    request.form.get("accessory_mounting_slot_length_mm"),
+                    request.form.get("accessory_mounting_slot_width_mm"),
+                    request.form.get("accessory_mounting_slot_axis") or "width",
+                    request.form.get("accessory_mounting_slot_inset_mm"),
+                )
+            magnet_pattern, magnet_diameter, magnet_depth, magnet_inset = \
+                validate_magnet_pockets(
+                    request.form.get("accessory_magnet_pocket_pattern") or "none",
+                    request.form.get("accessory_magnet_pocket_diameter_mm"),
+                    request.form.get("accessory_magnet_pocket_depth_mm"),
+                    request.form.get("accessory_magnet_pocket_inset_mm"),
+                    thickness,
+                )
+            accessory_3d = {
+                "thickness_mm": thickness,
+                "bed_width_mm": bed_width,
+                "bed_depth_mm": bed_depth,
+                "curvature_radius_mm": curvature_radius,
+                "curvature_radius_height_mm": curvature_height_radius,
+                "curve_axis": curve_axis,
+                "material_profile": material_profile,
+                "finish_note": finish_note,
+                "mounting_hole_pattern": hole_pattern,
+                "mounting_hole_diameter_mm": hole_diameter,
+                "mounting_hole_inset_mm": hole_inset,
+                "mounting_slot_pattern": slot_pattern,
+                "mounting_slot_length_mm": slot_length,
+                "mounting_slot_width_mm": slot_width,
+                "mounting_slot_axis": slot_axis,
+                "mounting_slot_inset_mm": slot_inset,
+                "magnet_pocket_pattern": magnet_pattern,
+                "magnet_pocket_diameter_mm": magnet_diameter,
+                "magnet_pocket_depth_mm": magnet_depth,
+                "magnet_pocket_inset_mm": magnet_inset,
+                "attachment_interface": attachment_interface,
+            }
 
         # 入力検証(採寸値・パーツ構成の組み合わせ・画像の妥当性)を通過した
         # リクエストだけを1回分の利用回数として数える。単純な入力ミスで
@@ -2629,6 +3346,7 @@ def api_generate():
         # ここまでで読み取った値を1つに束ね、モードごとの関数へ渡す。
         inputs = GenerationInputs(
             allow_rotation=allow_rotation,
+            accessory_3d=accessory_3d,
             alterations=alterations,
             block_key=block_key,
             custom_grade_cm=custom_grade_cm,
@@ -2641,16 +3359,20 @@ def api_generate():
             garment_spec_kwargs=garment_spec_kwargs,
             hem_seam_allowance_cm=hem_seam_allowance_cm,
             illustration_views=illustration_views,
+            illustration_corrections=illustration_corrections,
+            illustration_stage=illustration_stage,
             image=image,
             include_body_garment=include_body_garment,
             lining=lining,
             measurements=measurements,
+            measured_block=measured_block,
             mode=mode,
             one_way_fabric=one_way_fabric,
             owner_key=owner_key,
             pattern_repeat_cm=pattern_repeat_cm,
             per_fabric_stash=per_fabric_stash,
             plan_name=plan_name,
+            project_name=project_name,
             seam_allowance_cm=seam_allowance_cm,
             shrink_percent=shrink_percent,
             sizes=sizes,
@@ -2701,6 +3423,12 @@ def api_generate():
             "error": f"内部エラーが発生しました（エラーID: {error_id}）。"
                       "しばらく待って再試行するか、このIDをサポートにお伝えください。",
         }), 500
+
+
+@app.post("/api/generate")
+def api_generate():
+    """画面からの生成要求を、入力解析とモード別処理へ引き渡す。"""
+    return _api_generate_impl()
 
 
 @app.get("/download/<job_id>/<fmt>")
@@ -3138,8 +3866,9 @@ def api_v1_generate():
     対応しない。B2Bの利用シナリオ(自社システムから採寸値とパーツ構成を
     渡して型紙を得る)で最も必要になる「手動選択モード」のみを最小構成で
     提供する(今後の拡張候補としてREADMEに明記する)。リクエストボディは
-    `/api/generate`と同じフォームフィールド(multipart/form-data、または
-    application/x-www-form-urlencoded)を受け付ける。
+    `/api/generate`の手動選択モードと同じフォームフィールド
+    (multipart/form-data、またはapplication/x-www-form-urlencoded)を
+    受け付ける。画像解析・自由輪郭・3D小物にだけ使う入力は対象外とする。
 
     利用回数上限・レート制限は、鍵の持ち主のプラン・所有権キー
     (`user:<id>`、組織所属時は`org:<id>`)にそのまま従う(ブラウザ経由の
@@ -3170,8 +3899,18 @@ def api_v1_generate():
         design_lengths = _parse_design_lengths(request.form)
         fabric_groups = _parse_fabric_groups(request.form)
         lining = _bool_field(request.form, "lining")
+        lining_scope = request.form.getlist("lining_scope") if lining else []
+        allowed_lining_scope = {
+            "front_bodice", "back_bodice", "sleeve", "skirt",
+            "front_pants", "back_pants",
+        }
+        unknown_lining_scope = sorted(set(lining_scope) - allowed_lining_scope)
+        if unknown_lining_scope:
+            raise ValueError("裏地の対象部位が不正です。画面から選び直してください。")
         block_key = (request.form.get("block") or "").strip() or None
-        get_block(block_key)
+        measured_block = _parse_measured_block(request.form, block_key)
+        if measured_block is None:
+            get_block(block_key)
         seam_allowance_cm, hem_seam_allowance_cm = _parse_seam_allowance_fields(request.form)
         # round58: このAPIのdocstringは「リクエストボディは`/api/generate`と
         # 同じフォームフィールドを受け付ける」と約束している。round41に
@@ -3199,6 +3938,8 @@ def api_v1_generate():
             "princess_line": _bool_field(request.form, "princess_line"),
         }
         spec = build_garment_spec(**garment_spec_kwargs)
+        if lining_scope:
+            spec.construction["lining_scope"] = list(lining_scope)
 
         allowed, used_today = db.check_and_increment_usage(owner_key, daily_limit, _today_str())
         if not allowed:
@@ -3221,6 +3962,7 @@ def api_v1_generate():
             one_way_fabric=one_way_fabric, shrink_percent=shrink_percent,
             pattern_repeat_cm=pattern_repeat_cm,
             alterations=alterations, lining=lining, block_key=block_key,
+            measured_block=measured_block,
             design_length_overrides=design_lengths or None,
             fabric_group_assignments=fabric_groups or None,
             fit=fit, paper=paper, include_empty_tiles=include_empty_tiles,
@@ -3231,6 +3973,7 @@ def api_v1_generate():
                 fabric_group_assignments=fabric_groups or None,
                 per_fabric_stash=per_fabric_stash,
                 allow_rotation=allow_rotation, one_way_fabric=one_way_fabric,
+                block_key=block_key, measured_block=measured_block,
                 seam_allowance_cm=seam_allowance_cm,
                 hem_seam_allowance_cm=hem_seam_allowance_cm)
         payload = result.summary()
@@ -3241,6 +3984,26 @@ def api_v1_generate():
             "allow_rotation": allow_rotation,
             "seam_allowance_cm": seam_allowance_cm,
             "hem_seam_allowance_cm": hem_seam_allowance_cm,
+            # ブラウザ経由と同じ形式で保存する。専用原型は8項目すべてが
+            # 揃わない限り再構築できないため、block名だけ／トップレベルの
+            # 一部だけを保存して既定原型へ落とすことはしない。
+            "generation_kwargs": {
+                "allow_rotation": allow_rotation,
+                "seam_allowance_cm": seam_allowance_cm,
+                "hem_seam_allowance_cm": hem_seam_allowance_cm,
+                "one_way_fabric": one_way_fabric,
+                "shrink_percent": shrink_percent,
+                "pattern_repeat_cm": pattern_repeat_cm,
+                "alterations": alterations or None,
+                "lining": lining,
+                "block_key": block_key,
+                "measured_block": measured_block,
+                "design_length_overrides": design_lengths or None,
+                "fabric_group_assignments": fabric_groups or None,
+                "fit": _fit_to_json(fit),
+                "paper": paper,
+                "include_empty_tiles": include_empty_tiles,
+            },
         }
         db.record_job(result.job_id, owner_key, part_count=payload["part_count"],
                       waste_ratio=payload["waste_ratio"], spec_json=json.dumps(regen_spec))
@@ -3505,6 +4268,7 @@ def regenerate_job(job_id: str):
 
     try:
         measurements = Measurements(**regen_spec["measurements"])
+        project_name = regen_spec.get("project_name")
         # round57: イラストから作ったものは、パーツ構成を`garment_spec`
         # (選択肢の組み合わせ)ではなく、読み取った結果のパーツ一覧として
         # 保存してある。下の共通処理はその形を知らないので先に分ける。
@@ -3515,14 +4279,25 @@ def regenerate_job(job_id: str):
         # round10より前に生成された履歴の再生成は一切挙動が変わらない。
         include_body_garment = regen_spec.get("include_body_garment", True)
         spec = build_garment_spec(**garment_spec_kwargs) if include_body_garment else GarmentSpec(parts=[])
-        for panel in regen_spec.get("custom_panels", []):
-            spec.parts.extend(build_custom_panel_requests(
-                panel["label"],
-                [tuple(p) for p in panel["points_cm"]],
+        spec.construction.update(dict(regen_spec.get("construction") or {}))
+        regen_custom_specs = [
+            CustomPanelSpec(
+                label=panel["label"],
+                points_cm=[tuple(p) for p in panel["points_cm"]],
                 quantity=panel.get("quantity", 1),
                 mirror=panel.get("mirror", False),
                 allow_split=panel.get("allow_split", False),
-            ))
+                replacement_part_type=panel.get("replacement_part_type"),
+                seam_fit_confirmed=bool(panel.get("seam_fit_confirmed", False)),
+                grade_width_cm=float(panel.get("grade_width_cm", 0.0)),
+                grade_height_cm=float(panel.get("grade_height_cm", 0.0)),
+            )
+            for panel in regen_spec.get("custom_panels", [])
+        ]
+        if regen_custom_specs and regen_spec.get("mode") != "illustration_replay":
+            spec.parts = merge_custom_panel_requests(
+                spec.parts, _custom_panel_specs_to_requests(regen_custom_specs),
+                princess_line=spec.princess_line)
         allow_rotation = regen_spec.get("allow_rotation", False)
         seam_allowance_cm = regen_spec.get("seam_allowance_cm", DEFAULT_SEAM_ALLOWANCE_CM)
         hem_seam_allowance_cm = regen_spec.get("hem_seam_allowance_cm")
@@ -3535,24 +4310,46 @@ def regenerate_job(job_id: str):
             spec = GarmentSpec(parts=[
                 PartRequest(part_type=part["part_type"],
                             variation=part.get("variation", ""),
-                            quantity=int(part.get("quantity", 1)))
+                            quantity=int(part.get("quantity", 1)),
+                            custom_segments=part.get("custom_segments"),
+                            allow_split=bool(part.get("allow_split", False)),
+                            design_length_cm=part.get("design_length_cm"),
+                            layer_number=part.get("layer_number"),
+                            replacement_part_type=part.get("replacement_part_type"),
+                            seam_fit_confirmed=bool(
+                                part.get("seam_fit_confirmed", False)),
+                            grade_width_cm=float(part.get("grade_width_cm", 0.0)),
+                            grade_height_cm=float(part.get("grade_height_cm", 0.0)))
                 for part in regen_spec.get("parts", [])
-            ])
+            ], princess_line=bool(regen_spec.get("princess_line", False)),
+                construction=dict(regen_spec.get("construction") or {}))
             generation_kwargs = _restore_generation_kwargs(
                 regen_spec.get("generation_kwargs") or {})
             result = pipeline.generate_from_selection(
                 spec, measurements, **generation_kwargs)
+            draft_preview_path = _withhold_unconfirmed_outputs(result)
+            accessory_3d = regen_spec.get("accessory_3d")
+            if accessory_3d:
+                _export_accessory_outputs(result, regen_custom_specs, accessory_3d)
             payload = result.summary()
             db.record_job(result.job_id, owner_key, part_count=payload["part_count"],
                           waste_ratio=payload["waste_ratio"],
-                          spec_json=json.dumps(regen_spec))
-            flash(
-                f"再生成しました（イラストから読み取った構成のまま）。"
-                f"{_describe_restored_settings(generation_kwargs)}。"
-                f" ダウンロード: /download/{result.job_id}/svg （SVG） "
-                f"/download/{result.job_id}/pdf （PDF）",
-                "success",
-            )
+                          spec_json=json.dumps(regen_spec), project_name=project_name)
+            if draft_preview_path:
+                flash(
+                    f"ラフ確認を再生成しました。未確認項目があるため裁断用PDF・DXFは"
+                    f"出力していません。確認資料: /download/{result.job_id}/svg "
+                    f"製作仕様書: /download/{result.job_id}/spec_pdf",
+                    "success")
+            else:
+                flash(
+                    f"再生成しました（イラストから読み取った構成のまま）。"
+                    f"{_describe_restored_settings(generation_kwargs)}。"
+                    f" ダウンロード: /download/{result.job_id}/svg （SVG） "
+                    f"/download/{result.job_id}/pdf （PDF） "
+                    f"/download/{result.job_id}/spec_pdf （製作仕様書）",
+                    "success",
+                )
         elif regen_spec["mode"] == "multi_size":
             sizes = regen_spec["sizes"]
             custom_grade_cm = regen_spec.get("custom_grade_cm")
@@ -3569,11 +4366,12 @@ def regenerate_job(job_id: str):
                 spec, measurements, sizes, **multi_size_kwargs)
             total_parts = sum(r.summary()["part_count"] for r in multi.results.values())
             db.record_job(multi.bundle_job_id, owner_key, part_count=total_parts, waste_ratio=None,
-                          spec_json=json.dumps(regen_spec))
+                          spec_json=json.dumps(regen_spec), project_name=project_name)
             for size, result in multi.results.items():
                 size_payload = result.summary()
                 db.record_job(result.job_id, owner_key, part_count=size_payload["part_count"],
-                              waste_ratio=size_payload["waste_ratio"])
+                              waste_ratio=size_payload["waste_ratio"],
+                              project_name=project_name)
             flash(f"再生成しました。{_describe_restored_settings(multi_size_kwargs)}。"
                    f" ダウンロード: /download/{multi.bundle_job_id}/zip （ZIP一括）", "success")
         else:
@@ -3587,13 +4385,22 @@ def regenerate_job(job_id: str):
             }
             result = pipeline.generate_from_selection(
                 spec, measurements, **generation_kwargs)
+            accessory_3d = regen_spec.get("accessory_3d")
+            stl_note = ""
+            if accessory_3d:
+                _export_accessory_outputs(result, regen_custom_specs, accessory_3d)
+                stl_note = (
+                    f" /download/{result.job_id}/stl （3D小物STL）"
+                    f" /download/{result.job_id}/vendor_zip （業者入稿ZIP）")
             payload = result.summary()
             db.record_job(result.job_id, owner_key, part_count=payload["part_count"],
-                          waste_ratio=payload["waste_ratio"], spec_json=json.dumps(regen_spec))
+                          waste_ratio=payload["waste_ratio"], spec_json=json.dumps(regen_spec),
+                          project_name=project_name)
             flash(
                 f"再生成しました。{_describe_restored_settings(generation_kwargs)}。"
                 f" ダウンロード: /download/{result.job_id}/svg （SVG） "
-                f"/download/{result.job_id}/pdf （PDF）",
+                f"/download/{result.job_id}/pdf （PDF） "
+                f"/download/{result.job_id}/spec_pdf （製作仕様書）{stl_note}",
                 "success",
             )
         return redirect(url_for("account"))

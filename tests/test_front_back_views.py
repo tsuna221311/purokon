@@ -163,7 +163,7 @@ def test_a_back_view_sets_the_back_bodice_neckline(tmp_path):
          _silhouette("back_bodice", "square_neck")],
         M, views=["front", "back"])
     assert _bodices(result) == {"front_bodice": "v_neck", "back_bodice": "square_neck"}
-    notes = [n for n in result.measurement_warnings if "襟ぐり" in n]
+    notes = [n for n in result.design_notes if "襟ぐり" in n]
     assert any("前身頃" in n and "v_neck" in n for n in notes), notes
     assert any("後ろの絵" in n and "square_neck" in n for n in notes), notes
 
@@ -189,14 +189,14 @@ def test_an_unsewable_back_neckline_falls_back_and_says_why(tmp_path):
         M, views=["front", "back"])
     assert _bodices(result) == {"front_bodice": "round_neck", "back_bodice": "round_neck"}
     assert not any(w.kind == "shoulder_seam" for w in result.compatibility_warnings())
-    excuse = [n for n in result.measurement_warnings if "肩線" in n]
+    excuse = [n for n in result.design_notes if "肩線" in n]
     assert excuse, result.measurement_warnings
     assert "boat_neck" in excuse[0] and "round_neck" in excuse[0]
 
 
 @pytest.mark.parametrize("views,message", [
     (["front"], "同じ枚数"),
-    (["front", "side"], "views に指定できるのは"),
+    (["front", "diagonal"], "views に指定できるのは"),
 ])
 def test_bad_views_are_rejected_rather_than_ignored(tmp_path, views, message):
     """viewsの指定が画像と食い違っていたら、黙って無視せずエラーにすること。"""
@@ -216,6 +216,120 @@ def test_the_form_offers_a_back_view_field(client):
     assert "後ろから見た絵" in page
 
 
+def test_the_form_offers_side_detail_and_correction_fields(client):
+    page = client.get("/").get_data(as_text=True)
+    for name in (
+        "illustration_side", "illustration_detail", "illustration_neckline",
+        "illustration_back_neckline", "illustration_sleeve_style",
+        "illustration_skirt_style", "illustration_pants_style",
+        "illustration_collar_style", "illustration_cuffs_style",
+        "illustration_waistband_style", "illustration_hood",
+        "illustration_closure", "illustration_closure_length_cm",
+        "illustration_closure_count", "illustration_closure_spacing_cm",
+        "illustration_closure_overlap_cm",
+        "illustration_princess_line", "illustration_layer_count",
+        "illustration_layer_lengths_cm",
+        "illustration_symmetry", "illustration_internal_support",
+        "illustration_petticoat_style", "illustration_petticoat_tier_count",
+        "illustration_petticoat_length_cm",
+        "illustration_petticoat_fullness_ratio",
+        "illustration_petticoat_hoop_diameters_cm",
+        "illustration_movement", "illustration_gather_ratio",
+        "illustration_pleat_count", "illustration_pleat_depth_cm",
+        "illustration_slit_position",
+        "illustration_slit_length_cm", "illustration_motif_position",
+        "illustration_motif_width_cm", "illustration_motif_height_cm",
+        "illustration_construction_note",
+    ):
+        assert f'name="{name}"' in page, name
+
+
+def test_side_and_detail_views_are_accepted_as_classification_only_helpers(tmp_path):
+    pipeline = PatternForgePipeline(output_dir=str(tmp_path))
+    result = pipeline.generate_from_illustration(
+        [_silhouette("front_bodice", "v_neck"),
+         _silhouette("front_bodice", "round_neck"),
+         _silhouette("front_bodice", "square_neck")],
+        M, views=["front", "side", "detail"])
+    assert _bodices(result)["front_bodice"] == "v_neck"
+
+
+def test_confirmed_corrections_override_the_image_reading(tmp_path):
+    pipeline = PatternForgePipeline(output_dir=str(tmp_path))
+    result = pipeline.generate_from_illustration(
+        _silhouette("front_bodice", "v_neck"), M,
+        corrections={"neckline": "square_neck", "back_neckline": "square_neck",
+                     "sleeve_style": None, "skirt_style": "tight"})
+    pairs = {(p.part_type, p.variation) for p in result.garment_spec.parts}
+    assert ("front_bodice", "square_neck") in pairs
+    assert ("back_bodice", "square_neck") in pairs
+    assert ("skirt", "tight") in pairs
+    assert not any(part == "sleeve" for part, _ in pairs)
+    assert any("確認入力" in note for note in result.design_notes)
+
+
+def test_confirmed_front_zip_is_a_real_split_pattern(tmp_path):
+    pipeline = PatternForgePipeline(output_dir=str(tmp_path))
+    result = pipeline.generate_from_illustration(
+        _silhouette("front_bodice", "round_neck"), M,
+        corrections={"neckline": "round_neck", "closure": "front_zip"})
+    front = [p for p in result.garment_spec.parts
+             if p.part_type == "front_bodice_zip_panel"]
+    assert len(front) == 1 and front[0].quantity == 2
+
+
+def test_confirmed_small_parts_layers_and_construction_are_preserved(tmp_path):
+    pipeline = PatternForgePipeline(output_dir=str(tmp_path))
+    result = pipeline.generate_from_illustration(
+        _silhouette("front_bodice", "round_neck"), M,
+        corrections={
+            "sleeve_style": "straight", "skirt_style": "flare",
+            "pants_style": "wide", "collar_style": "shirt_collar",
+            "cuffs_style": "button_tab", "waistband_style": "contour",
+            "hood": True,
+            "layer_count": 3, "layer_lengths_cm": [80, 60, 40],
+            "closure": "back_zip", "closure_length_cm": 35,
+            "symmetry": "symmetric",
+            "internal_support": "boning", "movement": "dance",
+            "pleat_count": 12, "pleat_depth_cm": 2.5,
+            "slit_position": "left", "slit_length_cm": 28,
+            "construction_note": "左肩の装飾は別パーツ",
+        })
+    requests = {(p.part_type, p.variation): p.quantity
+                for p in result.garment_spec.parts}
+    layered_skirts = [p for p in result.garment_spec.parts if p.part_type == "skirt"]
+    assert len(layered_skirts) == 3
+    assert [p.quantity for p in layered_skirts] == [2, 2, 2]
+    assert [p.design_length_cm for p in layered_skirts] == [80, 60, 40]
+    assert requests[("front_pants", "wide")] == 2
+    assert requests[("back_pants", "wide")] == 2
+    assert requests[("collar", "shirt_collar")] == 1
+    assert requests[("cuffs", "button_tab")] == 2
+    assert requests[("waistband", "contour")] == 1
+    assert requests[("hood", "")] == 1
+    skirt_labels = [p.label_suffix for p in result.finalized_parts
+                    if p.part_type == "skirt"]
+    assert any("第1層" in label for label in skirt_labels)
+    assert any("第3層" in label for label in skirt_labels)
+    heights_by_layer = {
+        layer: max(p.height_cm for p in result.finalized_parts
+                   if p.part_type == "skirt" and layer in p.label_suffix)
+        for layer in ("第1層", "第2層", "第3層")
+    }
+    assert heights_by_layer["第1層"] > heights_by_layer["第2層"] > heights_by_layer["第3層"]
+    notes = "\n".join(result.design_notes)
+    for phrase in ("後ろファスナー", "ボーン", "ダンス",
+                   "第1層80cm", "第3層40cm", "12本", "深さ2.5cm",
+                   "左脇に28cm", "左肩の装飾は別パーツ"):
+        assert phrase in notes
+    reference_labels = [label for part in result.finalized_parts
+                        for label, _points in part.reference_lines]
+    assert any("プリーツ" in label for label in reference_labels)
+    assert any("スリット" in label for label in reference_labels)
+    assert any("後中心ファスナー" in label for label in reference_labels)
+    assert any("ボーン位置" in label for label in reference_labels)
+
+
 def test_uploading_a_back_view_through_the_web_reaches_the_back_bodice(client):
     """Webから後ろの絵を送ると、後身頃のネックラインに実際に届くこと。
 
@@ -230,6 +344,7 @@ def test_uploading_a_back_view_through_the_web_reaches_the_back_bodice(client):
 
     response = client.post("/api/generate", data={
         "mode": "illustration",
+        "illustration_stage": "draft",
         "bust": "83", "waist": "66", "hip": "91",
         "height": "158", "sleeve_length": "52", "shoulder_width": "37",
         "illustration": (_png("front_bodice", "v_neck"), "front.png"),
@@ -244,5 +359,5 @@ def test_uploading_a_back_view_through_the_web_reaches_the_back_bodice(client):
     pairs = {(p["part_type"], p["variation"]) for p in payload["parts"]}
     assert ("front_bodice", "v_neck") in pairs, pairs
     assert ("back_bodice", "square_neck") in pairs, pairs
-    notes = [n for n in payload["measurement_warnings"] if "襟ぐり" in n]
+    notes = [n for n in payload["design_notes"] if "襟ぐり" in n]
     assert any("後ろの絵" in n and "square_neck" in n for n in notes), notes

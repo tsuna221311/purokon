@@ -61,6 +61,7 @@ def _form(**extra):
         "bust": "84", "waist": "68", "hip": "92", "height": "160",
         "sleeve_length": "54", "shoulder_width": "37",
         "mode": "illustration",
+        "illustration_stage": "draft",
     }
     data.update(extra)
     return data
@@ -83,11 +84,8 @@ def test_the_illustration_mode_works_with_the_default_empty_panel_field(client):
     assert body["part_count"] > 0
 
 
-def test_a_real_custom_panel_is_still_refused(client):
-    """本物のカスタムパーツを併用したら、今までどおり断ること。
-
-    直したのは「空を空として読む」ところだけで、併用の制限は外していない。
-    """
+def test_a_real_custom_panel_is_combined_with_the_detected_garment(client):
+    """本体の画像判定と、マント等の自由輪郭を同じ型紙へ入れられること。"""
     panel = json.dumps([{
         "label": "マント", "points": [[0, 0], [100, 0], [100, 100], [0, 100]],
         "ref_point_a": [0, 0], "ref_point_b": [100, 0],
@@ -97,8 +95,10 @@ def test_a_real_custom_panel_is_still_refused(client):
     data["illustration"] = (io.BytesIO(_dress_png()), "dress.png")
     response = client.post("/api/generate", data=data,
                            content_type="multipart/form-data")
-    assert response.status_code == 400
-    assert "イラストモードでは併用できません" in response.get_json()["error"]
+    assert response.status_code == 200, response.get_json().get("error")
+    parts = response.get_json()["parts"]
+    assert any(part["part_type"] == "custom_panel" for part in parts)
+    assert any(part["part_type"] == "front_bodice" for part in parts)
 
 
 def test_a_broken_panel_json_is_still_refused(client):

@@ -139,6 +139,7 @@ def test_api_generate_illustration_mode_does_not_leak_raw_ai_text_on_classificat
         "/api/generate",
         data={
             "mode": "illustration",
+            "illustration_stage": "draft",
             "bust": "84", "waist": "66", "hip": "90", "height": "160",
             "sleeve_length": "55", "shoulder_width": "38",
             "illustration": (buf, "test.png"),
