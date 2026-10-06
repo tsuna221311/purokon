@@ -49,6 +49,7 @@ from .compatibility import (
     _closed_points, _COORD_TOL, _is_side_seam_edge, _MIN_VERTICAL_RUN_CM,
     _sum_length_at_x, first_side_seam_index, seam_edge_path, side_seam_edges,
 )
+from .zip_front_geometry import front_zip_armhole_path
 
 Point = tuple[float, float]
 
@@ -182,12 +183,20 @@ def _left_armhole_path(stitch_line: list[Point],
                         underarm_y: float | None = None) -> list[Point]:
     """輪郭の先頭(左肩先)から、左の脇の下までの点列を返す。
 
-    `engine/compatibility.py`の`armhole_length`とまったく同じ走査規則
-    (最初に現れる脇線の辺で打ち切る)を使う。長さを測る関数と合印を置く
-    関数が別々の規則を持つとずれるため、判定そのものを共有している
-    (round26で`_is_side_seam_edge`に集約した)。
+    A declared underarm is more precise than the near-vertical side-edge
+    heuristic: on some rounded back armholes the final ~1 cm of the curve
+    itself looks like a side seam.  Use its unique left contour vertex when
+    present, and retain the old geometric search for contours without one.
     """
     pts = _closed_points(stitch_line)
+    if underarm_y is not None and pts:
+        center_x = (min(point[0] for point in pts) +
+                    max(point[0] for point in pts)) / 2.0
+        matches = [index for index, point in enumerate(pts)
+                   if point[0] < center_x and
+                   abs(point[1] - underarm_y) <= _COORD_TOL]
+        if len(matches) == 1:
+            return pts[:matches[0] + 1]
     stop = first_side_seam_index(pts, underarm_y=underarm_y)
     if stop is None:
         return []
@@ -246,12 +255,29 @@ def armhole_notch_points(stitch_line: list[Point], is_back: bool,
     return out
 
 
+def front_zip_armhole_notch_points(stitch_line: list[Point],
+                                    underarm_y: float,
+                                    ratio: float = ARMHOLE_NOTCH_RATIO) -> list[Point]:
+    """One front notch on the *actual* one-sided zip-panel armhole.
+
+    A zip front is not symmetric about its bounding box: its other edge is
+    the centre opening.  Reusing ``armhole_notch_points`` would mirror the
+    notch onto that opening instead of the second armhole.
+    """
+    path = front_zip_armhole_path(stitch_line, underarm_y)
+    distance = _walk_length(path, len(path) - 1) * ratio
+    point = _point_at_arc(path, distance)
+    return [point] if point is not None else []
+
+
 def sleeve_cap_notch_points(stitch_line: list[Point], armhole_distance_cm: float,
-                             back_gap_cm: float = BACK_DOUBLE_NOTCH_GAP_CM) -> list[Point]:
-    """袖山カーブの両端から、それぞれ`armhole_distance_cm`の位置に合印を返す。
+                             back_gap_cm: float = BACK_DOUBLE_NOTCH_GAP_CM,
+                             back_distance_cm: float | None = None) -> list[Point]:
+    """袖山の前端から前の距離、後端から後ろの距離で合印を返す。
 
     身頃側の合印は「脇の下から弧長で何cm」の位置にある。袖側も袖山の端
-    (=脇の下に来る点)から同じ距離に打てば、縫うときに必ず突き合う。
+    (=脇の下に来る点)から同じ距離に打つ。後ろ袖ぐりの長さが前と違う場合は
+    `back_distance_cm`で別の距離を渡す。
 
     袖山は袖ぐりより「いせ込み」のぶんだけ長い(round14で袖幅を袖ぐりに
     合わせるようにしたので、その差は常にいせ込み(`sleeve_cap_ease_cm`)+デザイン分)。
@@ -275,7 +301,10 @@ def sleeve_cap_notch_points(stitch_line: list[Point], armhole_distance_cm: float
     if len(cap) < 3:
         return []
     total = _walk_length(cap, len(cap) - 1)
-    if armhole_distance_cm >= total:
+    back_distance = (armhole_distance_cm if back_distance_cm is None
+                     else back_distance_cm)
+    if (back_distance <= 0 or
+            armhole_distance_cm + back_distance + back_gap_cm >= total):
         return []
 
     out: list[Point] = []
@@ -283,7 +312,11 @@ def sleeve_cap_notch_points(stitch_line: list[Point], armhole_distance_cm: float
     if front is not None:
         out.append(front)
     reverse = list(reversed(cap))
-    for d in (armhole_distance_cm, max(0.0, armhole_distance_cm - back_gap_cm)):
+    # The back bodice's left path runs shoulder -> underarm.  Its second
+    # mark is moved *toward the shoulder* on that path, which means +gap when
+    # measured from the underarm.  A negative gap here silently mismatched
+    # the sewn bodice and sleeve despite both having two back notches.
+    for d in (back_distance, back_distance + back_gap_cm):
         point = _point_at_arc(reverse, d)
         if point is not None:
             out.append(point)

@@ -61,7 +61,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from .seam import FinalizedPart, Point, finalize_from_stitch_line
+from .seam import (FinalizedPart, Point, extend_notches_to_cut_line,
+                   finalize_from_stitch_line)
 
 #: 裏地の裾の縫い代を、表地より何cm減らすか。
 #: 出典: うさこの洋裁工房「表地の裾の縫い代-2ｃｍ分出来上がり線から短く切る」
@@ -84,6 +85,7 @@ LINED_PART_TYPES = frozenset({
     "back_bodice_center", "back_bodice_side",
     "front_bodice_zip_panel",
     "sleeve",
+    "hood",
     "skirt",
     "front_pants", "back_pants",
 })
@@ -267,7 +269,8 @@ def _center_x(points: list[Point]) -> float:
 
 
 def lining_part(outer: FinalizedPart, *,
-                hem_seam_allowance_cm: float | None = None) -> FinalizedPart | None:
+                hem_seam_allowance_cm: float | None = None,
+                allow_custom_panel: bool = False) -> FinalizedPart | None:
     """表地の確定パーツから、対応する裏地のパーツを1枚作る。
 
     裏地を付けないパーツ種(`LINED_PART_TYPES`にないもの)ではNoneを返す。
@@ -275,11 +278,15 @@ def lining_part(outer: FinalizedPart, *,
     hem_seam_allowance_cm: 表地の裾の縫い代。Noneなら表地が全辺一律
         (`outer.seam_allowance_cm`)だったとみなす。
     """
-    if outer.part_type not in LINED_PART_TYPES:
+    if (outer.part_type not in LINED_PART_TYPES
+            and not (allow_custom_panel and outer.part_type == "custom_panel")):
         return None
     outer_hem = (outer.seam_allowance_cm if hem_seam_allowance_cm is None
                  else float(hem_seam_allowance_cm))
-    lining_hem = lining_hem_allowance_cm(outer_hem)
+    # A cuffed sleeve has no free hem to shorten: its lower edge is the seam
+    # joining the cuff.  Keep the same joining allowance on both layers.
+    lining_hem = (outer.seam_allowance_cm if outer.hem_edge_is_joined
+                  else lining_hem_allowance_cm(outer_hem))
 
     stitch = list(outer.stitch_line)
     internal = [list(line) for line in outer.internal_lines]
@@ -327,7 +334,15 @@ def lining_part(outer: FinalizedPart, *,
         internal_lines=internal,
         reference_lines=reference,
     )
-    return replace(part, notches=notches)
+    # Preserve the matching position on the stitch line, but end each mark at
+    # *this* piece's cut line.  The lining hem can be 2 cm shorter than the
+    # outer hem, so copying both endpoints draws a notch past the cut edge.
+    allowance = max(outer.seam_allowance_cm, lining_hem)
+    notches = extend_notches_to_cut_line(
+        notches, part.cut_line, maximum_distance_cm=allowance * 2.0 + 0.5,
+        stitch_line=stitch)
+    return replace(part, notches=notches,
+                   hem_edge_is_joined=outer.hem_edge_is_joined)
 
 
 #: 部分裏の対象部位の、画面に出す日本語名。
@@ -361,6 +376,7 @@ def missing_lining_scopes(parts: list[FinalizedPart],
 def build_lining_parts(parts: list[FinalizedPart], *,
                        hem_seam_allowance_cm: float | None = None,
                        scope: list[str] | tuple[str, ...] | None = None,
+                       custom_panel_scopes: dict[str, str] | None = None,
                        ) -> list[FinalizedPart]:
     """表地から総裏または明示された部位だけの部分裏を作る。"""
     selected_types: frozenset[str] | None = None
@@ -370,11 +386,19 @@ def build_lining_parts(parts: list[FinalizedPart], *,
             raise ValueError("裏地の対象部位が不正です: " + "・".join(unknown))
         selected_types = frozenset(
             part_type for key in scope for part_type in LINING_SCOPE_PART_TYPES[key])
+    custom_panel_scopes = custom_panel_scopes or {}
+    if any(key not in LINING_SCOPE_PART_TYPES
+           for key in custom_panel_scopes.values()):
+        raise ValueError("衣装専用の裏地対象区分が不正です")
     out: list[FinalizedPart] = []
     for part in parts:
-        if selected_types is not None and part.part_type not in selected_types:
+        custom_scope = (custom_panel_scopes.get(part.variation)
+                        if part.part_type == "custom_panel" else None)
+        if (selected_types is not None and part.part_type not in selected_types
+                and (custom_scope is None or custom_scope not in scope)):
             continue
-        lining = lining_part(part, hem_seam_allowance_cm=hem_seam_allowance_cm)
+        lining = lining_part(part, hem_seam_allowance_cm=hem_seam_allowance_cm,
+                             allow_custom_panel=custom_scope is not None)
         if lining is not None:
             out.append(replace(lining, cut_quantity=part.cut_quantity,
                                 cut_on_fold=part.cut_on_fold))
@@ -523,6 +547,11 @@ def lining_notes(parts: list[FinalizedPart], outer_hem_cm: float) -> list[str]:
         "(かたやまゆうこ「表身頃は4cm、裏身頃は0cm」)、"
         "この型紙は「出来上がり線は同じ・縫い代だけ2cm減らす」うさこ式です。",
     ]
+    if any(getattr(part, "hem_edge_is_joined", False) for part in parts):
+        notes.append(
+            "別パーツに縫い付ける袖口・身頃裾は自由な裾ではありません。"
+            "その接合辺は表地・裏地とも通常の縫い合わせ用の縫い代を付け、"
+            "裾の短縮規則を適用していません。")
     if removed < LINING_HEM_REDUCTION_CM - 1e-9:
         # round46: 引き切れなかったことを、はっきり言う。
         # 「0.0cm」とだけ書かれても、それが出来上がり線で裁つという意味だとは

@@ -45,6 +45,15 @@ def test_unconfirmed_image_fields_make_specification_not_ready(tmp_path):
     assert "確認完了まで裁断しない" in text
 
 
+def test_specification_does_not_approve_a_broken_cut_outline(tmp_path):
+    result = PatternForgePipeline(output_dir=str(tmp_path)).generate_from_selection(
+        build_garment_spec(skirt_style=None), MEASUREMENTS, skip_export=True)
+    result.finalized_parts[0].cut_line = []
+    ready, pending = production_readiness(result)
+    assert ready is False
+    assert any("型紙形状" in message for message in pending)
+
+
 def test_specification_spells_out_confirmed_construction_values(tmp_path):
     spec = build_garment_spec(sleeve_style="straight", skirt_style="flare")
     spec.construction.update({

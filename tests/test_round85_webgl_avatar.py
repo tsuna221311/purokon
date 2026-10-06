@@ -35,10 +35,27 @@ def test_webgl_viewer_has_pbr_lighting_shadows_and_orbit_controls():
 def test_vrm_glb_is_parsed_from_memory_and_normalised_without_upload():
     js = _read("web/static/outfit3d.js")
     assert "file.arrayBuffer()" in js
-    assert 'new GLTFLoader().parse(buffer, ""' in js
+    assert 'avatarLoader().parse(buffer, ""' in js
+    assert "new VRMLoaderPlugin(parser)" in js
+    assert "VRMUtils.rotateVRM0(vrm)" in js
     assert "100 * 1024 * 1024" in js
     assert "fitImportedAvatar(nextAvatar)" in js
     assert "fetch(" not in js
+
+
+def test_cc0_vrm_is_bundled_as_the_default_avatar():
+    html = _read("web/templates/index.html")
+    assert "models/default-avatar.vrm" in html
+    assert (ROOT / "web/static/models/default-avatar.vrm").stat().st_size > 10_000_000
+    assert (ROOT / "web/static/models/LICENSE.md").is_file()
+    assert (ROOT / "web/static/vendor/three-vrm.module.min.js").is_file()
+    assert (ROOT / "web/static/vendor/THREE_VRM_LICENSE").is_file()
+
+
+def test_csp_allows_embedded_vrm_textures(client):
+    csp = client.get("/").headers["Content-Security-Policy"]
+    assert "img-src 'self' data: blob:" in csp
+    assert "connect-src 'self' blob:" in csp
 
 
 def test_repeated_generation_and_avatar_replacement_release_gpu_resources():
@@ -58,6 +75,21 @@ def test_existing_controls_and_exports_use_high_quality_renderer_when_ready():
     assert "window.PatternForge3D?.update(outfitState)" in js
     assert "window.PatternForge3D?.canvas || outfitCanvas" in js
     assert "window.PatternForge3D?.makeFourViewSheet" in js
+
+
+def test_generated_clothing_uses_dense_tailored_surfaces_and_reference_palette():
+    viewer = _read("web/static/outfit3d.js")
+    app = _read("web/static/app.js")
+    for feature in (
+        "tailoredShellGeometry", "fittedSleeveGeometry", "drapedSkirtGeometry",
+        "trouserLegGeometry", "getFabricNormalTexture", "ellipseTrim",
+        "ruffledHem", "detachedDressSleeve",
+    ):
+        assert feature in viewer
+    assert "inferOutfitPaletteFromReference" in app
+    assert "inferredOutfitColor" in app
+    assert 'role: "cloth"' in viewer
+    assert 'role: "stitch"' in viewer
 
 
 def test_threejs_is_bundled_locally_with_license_and_relative_imports():

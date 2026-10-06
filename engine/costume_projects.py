@@ -31,6 +31,15 @@ class CostumeProject:
     construction_plan: tuple[str, ...]
     limitations: tuple[str, ...]
     commercial_benchmark: tuple[str, ...] = ()
+    fabric_group_defaults: tuple[tuple[str, str], ...] = ()
+    fabric_variant_area_overrides: tuple[tuple[str, str], ...] = ()
+    lined_custom_panel_scopes: tuple[tuple[str, str], ...] = ()
+    # (接合記号, 追加パネル名, 本体種別, 本体の左右)
+    hem_extension_pairs: tuple[tuple[str, str, str, str], ...] = ()
+    hem_extension_side_flare_cm: float | None = None
+    hem_extension_allow_sewn_darts: bool = False
+    # (重ね記号, 飾りパネル名, 下身頃パネル名)
+    overlay_pairs: tuple[tuple[str, str, str], ...] = ()
 
     def as_dict(self) -> dict[str, object]:
         """画面/APIで表示する。数値や推測を隠さない制作計画。"""
@@ -43,6 +52,22 @@ class CostumeProject:
             "construction_plan": list(self.construction_plan),
             "limitations": list(self.limitations),
             "commercial_benchmark": list(self.commercial_benchmark),
+            "fabric_group_defaults": dict(self.fabric_group_defaults),
+            "fabric_variant_area_overrides": dict(self.fabric_variant_area_overrides),
+            "lined_custom_panel_scopes": dict(self.lined_custom_panel_scopes),
+            "hem_extension_pairs": [
+                {"code": code, "panel": panel, "host_type": host,
+                 "host_suffix": side,
+                 **({"side_flare_cm": self.hem_extension_side_flare_cm}
+                    if self.hem_extension_side_flare_cm is not None else {}),
+                 **({"allow_sewn_hem_darts": True}
+                    if self.hem_extension_allow_sewn_darts else {})}
+                for code, panel, host, side in self.hem_extension_pairs
+            ],
+            "overlay_pairs": [
+                {"code": code, "overlay": overlay, "base": base}
+                for code, overlay, base in self.overlay_pairs
+            ],
         }
 
 
@@ -55,14 +80,19 @@ def _endministrator_female(measurements: Measurements) -> CostumeProject:
     """
     height = measurements.height
     hip = measurements.hip
-    # コートの下半分。体に沿わせる本体ではなく、前開き身頃に重ねて縫い付ける
-    # 外装なので、身長・ヒップから穏やかに決める。極端な採寸でも型紙が
-    # 扱いにくい大きさにならないよう範囲を置く。
-    tail_length = min(112.0, max(82.0, height * 0.60))
+    # These panels begin at the bodice hem (roughly the hip), not at the
+    # shoulder.  The old 0.60 * height was mistakenly used as an *extension*
+    # and yielded an ankle-length coat on a 158 cm body.  In the supplied
+    # front illustration, the coat ends around the upper knee, so use a
+    # provisional 0.24 * height extension and verify it in a toile.
+    tail_length = min(45.0, max(32.0, height * 0.24))
     tail_width = min(43.0, max(28.0, hip * 0.34))
-    back_width = min(52.0, max(36.0, hip * 0.48))
+    # The lower shell is later resized to the real back-bodice hem.  A fixed
+    # 52 cm draft cap made the *preliminary* panel 37% narrower than its host
+    # at a plausible large size and rejected the garment before that join.
+    back_width = max(36.0, hip * 0.48)
 
-    panels = (
+    overlays = (
         CustomPanelSpec(
             label="管理人コート・左前裾オーバーレイ",
             points_cm=[(0.0, 0.0), (tail_width, 0.0),
@@ -85,6 +115,25 @@ def _endministrator_female(measurements: Measurements) -> CostumeProject:
                        (back_width * 0.12, tail_length * 0.84)],
             quantity=1, mirror=False, allow_split=False),
     )
+    # The previous 3 cm side flare made the finished lower-shell circumference
+    # only about 1.16x its upper seam.  The existing authored silhouette is
+    # about 1.54x at the comparable hem; a 1.5x *pattern* target is a closer
+    # starting hypothesis.  This is still not a measured commercial garment:
+    # the rear outline must be confirmed from side/back references and toile.
+    base_flare = min(12.0, max(7.5, hip * .10))
+    base_panels = tuple(
+        CustomPanelSpec(
+            label=label,
+            points_cm=[(0.0, 0.0), (width, 0.0),
+                       (width + base_flare, tail_length),
+                       (-base_flare, tail_length)],
+            quantity=1, mirror=False, allow_split=False)
+        for label, width in (
+            ("管理人コート・左前下身頃", tail_width),
+            ("管理人コート・右前下身頃", tail_width),
+            ("管理人コート・後下身頃（推定）", back_width),
+        )
+    )
     return CostumeProject(
         key="endministrator_female",
         label="アークナイツ：エンドフィールド 管理人（女性）",
@@ -96,51 +145,83 @@ def _endministrator_female(measurements: Measurements) -> CostumeProject:
             "include_pants": True,
             "pants_style": "shorts",
             "include_collar": False,
+            "include_hood": True,
             "include_cuffs": False,
             "include_waistband": False,
-            # 現行エンジンでは中心前を分割する前開きと、身頃を縦に分ける
-            # プリンセスラインを同時に製図できない。コートでは前開きの
-            # ファスナー／見返しを優先し、立体感は別裁ちの外装パネルで出す。
+            # エンジンは前開き＋プリンセスラインを製図できる。ただし
+            # この衣装の裾A/B/C接合と型紙由来3Dの検証は未分割の前身頃を
+            # 前提にしている。分割版の接合線を検証するまでは切り替えず、
+            # 外装パネルで前面の切替を試作として表す。
             "princess_line": False,
         },
-        custom_panel_specs=panels,
+        custom_panel_specs=base_panels + overlays,
         lining=True,
         shoulder_drop_cm=5.0,
         worn_over_bust_cm=measurements.bust + 10.0,
+        fabric_group_defaults=(("custom_panel", "外装パネル用生地"),),
+        fabric_variant_area_overrides=tuple(
+            (panel.label, "bodice") for panel in base_panels),
+        lined_custom_panel_scopes=(
+            (base_panels[0].label, "front_bodice"),
+            (base_panels[1].label, "front_bodice"),
+            (base_panels[2].label, "back_bodice"),
+        ),
+        hem_extension_pairs=(
+            ("A", base_panels[0].label, "front_bodice_zip_panel", "左"),
+            ("B", base_panels[1].label, "front_bodice_zip_panel", "右"),
+            ("C", base_panels[2].label, "back_bodice", ""),
+        ),
+        hem_extension_side_flare_cm=base_flare,
+        hem_extension_allow_sewn_darts=True,
+        overlay_pairs=tuple((code, overlay.label, base.label)
+                            for code, overlay, base in zip(
+                                ("A", "B", "C"), overlays, base_panels)),
         patternable_components=(
             "前開きコート本体（前身頃・後身頃・長袖）",
+            "首ぐりに合わせて製図したフード",
             "ショートパンツ",
+            "脇の縫い線を合わせたコート下身頃3枚（後面は推定）",
             "左右非対称の前裾オーバーレイ2枚",
-            "背中フレアオーバーレイ1枚",
+            "背中フレアオーバーレイ1枚（推定）",
             "コート本体の裏地",
         ),
         separate_components=(
-            "黄色い肩当て（EVAフォームまたは合皮で別制作）",
-            "胸元・袖・背中の金具とストラップ",
-            "リブ編みのハイネックインナー",
-            "タイツ、靴、髪飾り、マスク",
+            "黄色い右肩当てと肩装飾（硬質芯／合皮。左右非対称の向きを確認）",
+            "襟の金具1組とインナーの襟ストラップ2本",
+            "袖口装飾2個・上腕装飾2個（本体袖とは別体。取付位置を仮縫いで確認）",
+            "背面装飾2個と垂れストラップ2本（正面画像から位置を確定できない）",
+            "金属調小物、しずく形の飾り、髪飾り（布型紙には含めない）",
+            "リブ編みのハイネックインナー、タイツ、靴、必要なら別売のマスク",
         ),
         material_plan=(
-            "表地: チャコールの中肉ツイル／ポリエステル混。光沢が強すぎないもの。",
-            "裏地: 黒または濃グレーの滑りのよい裏地。",
-            "オーバーレイ: 表地と同系色の合皮または張りのある布。",
+            "表地の試作候補（未採用）: チャコールの中肉ツイル／ポリエステル混。光沢が強すぎないもの。実布の重量・伸び・曲げ剛性を測るまで確定しない。",
+            "裏地の試作候補（未採用）: 黒または濃グレーの滑りのよい裏地。実布の厚みと摩擦を確認する。",
+            "下身頃: 表地と同じ布で連続したコートを試作する。オーバーレイは同系色の合皮または張りのある別布を比較し、厚み・縫製の収まりを仮縫いする。",
             "黄色い肩当て: 2〜3mm EVAフォーム＋黄色合皮。",
-            "副資材: 黒のコイルファスナー、黒テープ、Dカン／ナスカン、銀色バックル。",
+            "副資材: 黒のコイルファスナー、黒テープ、Dカン／ナスカン、銀色バックル。袖口・上腕の別体帯は面ファスナー等で着脱可能にし、衣服側へ補強布を当てる。",
         ),
         construction_plan=(
             "先にインナーとショートパンツを試着して、上に羽織るコートのゆとりを確認する。",
             "コート本体を組み、裏地を付ける前にドロップショルダーと袖丈を仮縫いで確認する。",
-            "非対称オーバーレイは本体の前裾・背中でしつけ留めし、着用状態で位置を決めてから縫い付ける。",
+            "フードは前後の首ぐりと付け根の長さ・合印を紙上で照合し、仮縫いで被り心地と後ろ姿を確認する。",
+            "裾に開きダーツが出る寸法では、身頃のダーツ両脚を先に縫い閉じ、口を下身頃の接合線として直線でまたがない。ダーツを閉じた後の各裾区間と下身頃A/B/C上辺の合印・縫い線長を再照合する。",
+            "下身頃A/B/Cの前後脇を先に合わせ、飾り裾を対応する下身頃の表側上辺に合印で仮止めする。次に本体裾へ同じ接合線で縫い込み、三枚重ねの厚み・自由端・裏地との干渉を仮縫いで確認する。背面と取付構造は推定として扱う。",
+            "袖口2個・上腕2個・肩・背面2個の取付ベースを衣装に仮止めし、腕を曲げて干渉しないか確認する。",
             "EVAフォーム、金具、ストラップは最後に取り付ける。布型紙へ無理に混在させない。",
         ),
         limitations=(
             "このプリセットは提供された正面イラストを基にした制作計画であり、公式衣装の複製型紙ではありません。",
             "背面の形、金具の位置、黄色い肩当ての立体形状は正面資料だけでは確定できません。背面資料と実物合わせが必要です。",
+            "裾オーバーレイの延長丈は正面イラストの比率からの推定です。裁断前に肩から裾までの希望丈を着用者に合わせて確認してください。",
+            "連続した下身頃の裾広がりと後面の輪郭は推定です。仮縫い前に市販現物と同等の外観だと判断しないでください。",
             "リブ編みインナーは伸縮率で寸法が変わるため、通常布向けのコート型紙とは別に試作してください。",
+            "市販店ごとに記載素材が異なります。Cosskyは合皮・糸・ニット、CCosplayはプリント生地・フェルトと記載しており、現在の素材案は特定商品の実物再現ではありません。",
         ),
         commercial_benchmark=(
-            "市販セットはコート、ショートパンツ、タイツ、各種飾りを含む。型紙だけで完結させず、別工程の飾りを制作計画に残す。",
-            "比較対象: Costowns 管理人（女性）38,800円、XS〜XXL（2026-09確認）。",
+            "市販品の写真と同梱表では、コート・リブインナー・ショートパンツ・タイツが別体で、袖口・上腕・肩・背面・襟の装飾も個別部品。型紙だけで完成と扱わない。",
+            "比較資料: https://cossky.com/products/arknights-endfield-the-female-endministrator-women-outfit-halloween-carnival-party-cosplay-costume （2026-10確認）。",
+            "素材記載の対照: https://www.ccosplay.com/arknights-endfield-costume-endministrator-women-cosplay-suit （2026-10確認）。どちらも実物の試験片・物性値は未入手。",
+            "背面形状と装飾の取り付け方式は商品ごとに違うため、正面画像だけで一致と判定しない。",
         ),
     )
 

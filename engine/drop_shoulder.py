@@ -36,7 +36,9 @@
     **cmを書いていない**。そこで下げ幅そのものではなく、
     「**袖ぐりの長さをドロップ前と同じに保つ**」という条件を
     こちらで決め、それを満たす下げ幅を解いている
-    (`apply_drop_shoulder`)。出典から採った数字ではない。
+    (`apply_drop_shoulder`)。ただし胸ダーツと交差する体型では脇の下の
+    下げ幅を抑え、実際の袖ぐり長に袖山を合わせ直す。この例外は
+    出力メモへ明記する。出典から採った数字ではない。
   * **ドロップ量と袖山の関係式。** 出典にあるのは作例1つ(25%)だけで、
     「7cm出したら袖山を何cmにする」という式は無い。ドロップを大きく
     しても袖山の比は25%のままである。
@@ -46,6 +48,8 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+
+from shapely.geometry import Polygon
 
 from .svgpath import segments_to_polyline
 
@@ -59,6 +63,8 @@ class DropShoulderResult:
     underarm_y_cm: float
     #: 脇の下を下げた量(cm)。
     armhole_drop_cm: float
+    #: False when the full drop would cross an existing dart or seam.
+    armhole_length_preserved: bool = True
 
 #: ドロップショルダーの袖山の高さ ÷ 袖ぐり(片腕)。
 #: 東レACS No.019「袖山Aはアームホールの25%」。
@@ -234,6 +240,7 @@ def apply_drop_shoulder(segments: list, fit_anchors_scaled: list,
         **袖ぐりの長さを、ドロップ前と同じに保つ。**
 
     この条件を満たす下げ幅を二分探索で求める(`_solve_armhole_drop`)。
+    ただし胸ダーツとの交差があれば有効な輪郭になるまで下げ幅を抑える。
     出典から採った数字ではなく、このプログラムが決めた条件である。
 
     座標は**変形後(cm)**のものを受け取る。基準点も変形後の値
@@ -253,8 +260,8 @@ def apply_drop_shoulder(segments: list, fit_anchors_scaled: list,
     if len(points) < 4:
         return None
 
-    moved = list(points)
     drops: list[float] = []
+    offsets: list[tuple[int, float, float, float]] = []
     for shoulder_x in shoulders:
         neck_x = min(necks, key=lambda x: abs(x - shoulder_x))
         side_x = min(sides, key=lambda x: abs(x - shoulder_x))
@@ -289,8 +296,37 @@ def apply_drop_shoulder(segments: list, fit_anchors_scaled: list,
         drops.append(armhole_drop)
         for k, idx in enumerate(run):
             w = weights[k]
-            x, y = moved[idx]
-            moved[idx] = (x + dx * w, y + dy * w + armhole_drop * (1.0 - w))
+            offsets.append((idx, dx * w, dy * w,
+                            armhole_drop * (1.0 - w)))
+
+    def _moved(armhole_scale: float) -> list[tuple[float, float]]:
+        candidate = list(points)
+        for idx, shoulder_x, shoulder_y, armhole_y in offsets:
+            x, y = candidate[idx]
+            candidate[idx] = (x + shoulder_x,
+                              y + shoulder_y + armhole_y * armhole_scale)
+        return candidate
+
+    moved = _moved(1.0)
+    armhole_scale = 1.0
+    if not Polygon(moved).is_valid:
+        # The full underarm drop may overtake the upper mouth of a bust dart
+        # on a narrow bodice.  Preserve the requested shoulder extension,
+        # but reduce only the underarm displacement until the complete sewing
+        # outline is simple.  Sleeve sizing downstream uses this actual edge.
+        if not Polygon(_moved(0.0)).is_valid:
+            return None
+        low, high = 0.0, 1.0
+        for _ in range(18):
+            mid = (low + high) / 2.0
+            if Polygon(_moved(mid)).is_valid:
+                low = mid
+            else:
+                high = mid
+        # Stay clear of a near-tangent edge rather than using the exact
+        # topological boundary, which can flip with PDF rounding.
+        armhole_scale = max(0.0, low - 0.02)
+        moved = _moved(armhole_scale)
 
     out: list = [("M", [moved[0][0], moved[0][1]])]
     out.extend(("L", [x, y]) for x, y in moved[1:])
@@ -304,15 +340,17 @@ def apply_drop_shoulder(segments: list, fit_anchors_scaled: list,
     # 脇の下より下)。つまりこの`min`は安全側に倒しているだけで、
     # **`max`に変えても落ちるテストを作れなかった**。左右で違う下げ幅に
     # なる組み合わせを見つけたら、ここを見張るテストを足すこと。
-    armhole_drop = min(drops)
+    armhole_drop = min(drops) * armhole_scale
     return DropShoulderResult(segments=out,
                               underarm_y_cm=underarm_y + armhole_drop,
-                              armhole_drop_cm=armhole_drop)
+                              armhole_drop_cm=armhole_drop,
+                              armhole_length_preserved=armhole_scale >= 0.999)
 
 
 def drop_shoulder_notes(drop_cm: float, armhole_per_arm_cm: float | None,
                         cap_height_cm: float | None,
-                        upper_arm_ignored: bool = False) -> list[str]:
+                        upper_arm_ignored: bool = False,
+                        armhole_length_preserved: bool = True) -> list[str]:
     """利用者へ出す説明(型紙に載る注記)。"""
     notes = [
         f"ドロップショルダー: 肩先を肩線の延長上へ{drop_cm:g}cm出しました。"
@@ -328,11 +366,17 @@ def drop_shoulder_notes(drop_cm: float, armhole_per_arm_cm: float | None,
     notes.append(
         f"袖山のいせ込みは{DROP_SLEEVE_CAP_EASE_CM:g}cmにしています"
         "(東レACS「いせ量を減らし全体で15mm前後とする」)。")
-    notes.append(
-        "脇の下は、袖ぐりの長さがドロップ前と変わらないところまで下げて"
-        "います。調べた資料はどれも「袖ぐりを下げる」とは書いていますが、"
-        "下げ幅のcmを書いていないため、下げ幅そのものではなく"
-        "「袖ぐりの長さを保つ」という条件で決めています。")
+    if armhole_length_preserved:
+        notes.append(
+            "脇の下は、袖ぐりの長さがドロップ前と変わらないところまで下げて"
+            "います。調べた資料はどれも「袖ぐりを下げる」とは書いていますが、"
+            "下げ幅のcmを書いていないため、下げ幅そのものではなく"
+            "「袖ぐりの長さを保つ」という条件で決めています。")
+    else:
+        notes.append(
+            "胸ダーツと袖ぐりが交差しないよう脇の下の下げ幅を抑えました。"
+            "袖ぐりの長さはドロップ前より短くなりますが、袖山は完成後の"
+            "袖ぐりへ合わせて引いています。仮縫いで腕の動きを確認してください。")
     if upper_arm_ignored:
         notes.append(
             "二の腕まわりを測っていただいていますが、ドロップショルダーでは"

@@ -20,8 +20,7 @@ from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.platypus import (
     PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
 )
-from .compatibility import unchecked_seams
-from .production_quality import fitting_checklist
+from .production_quality import fitting_checklist, production_quality_report
 
 
 _FONT = "HeiseiKakuGo-W5"
@@ -73,6 +72,7 @@ def _styles():
     heading = ParagraphStyle(
         "jp-heading", parent=normal, fontSize=14, leading=19,
         textColor=colors.HexColor("#172047"), spaceBefore=9, spaceAfter=5,
+        keepWithNext=1,
     )
     title = ParagraphStyle(
         "jp-title", parent=heading, fontSize=21, leading=27,
@@ -86,7 +86,7 @@ def _p(value, style):
     return Paragraph(escape(str(value)).replace("\n", "<br/>"), style)
 
 
-def _table(rows, widths, normal, *, header=True):
+def _table(rows, widths, normal, *, header=True, compact=False):
     rendered = [[_p(cell, normal) for cell in row] for row in rows]
     table = Table(rendered, colWidths=widths, repeatRows=1 if header else 0,
                   hAlign="LEFT")
@@ -95,8 +95,8 @@ def _table(rows, widths, normal, *, header=True):
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 5),
         ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 1 if compact else 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1 if compact else 4),
     ]
     if header:
         commands += [
@@ -203,29 +203,18 @@ def _construction_value(key: str, value) -> str:
 
 
 def production_readiness(result) -> tuple[bool, list[str]]:
-    """製作開始前に人が解消すべき項目を、根拠のある情報だけから返す。"""
-    pending = list(result.garment_spec.construction.get("unconfirmed_fields") or [])
-    if result.nesting.unplaced:
-        pending.append(f"配置できていない型紙が{len(result.nesting.unplaced)}枚あります")
-    if result.measurement_warnings:
-        pending.extend(f"採寸・補正: {message}" for message in result.measurement_warnings)
-    pending.extend(
-        f"縫い合わせ: {warning.message}"
-        for warning in result.compatibility_warnings()
-    )
-    pending.extend(
-        f"未検査の縫い合わせ: {message}"
-        for message in unchecked_seams(result.finalized_parts)
-    )
-    # 順序を保ったまま重複を除く。
-    pending = list(dict.fromkeys(str(item) for item in pending if str(item).strip()))
-    return not pending, pending
+    """Use the same geometry and seam gate as the digital quality report."""
+    report = production_quality_report(result)
+    return bool(report["digital_ready"]), list(report["blockers"])
 
 
 def export_specification_pdf(result, output_path: str) -> str:
     """この生成結果に対応するA4製作仕様書を原子的に書き出す。"""
     normal, heading, title, small = _styles()
     ready, pending = production_readiness(result)
+    costume_brief = result.garment_spec.construction.get("costume_project_brief")
+    if not isinstance(costume_brief, dict):
+        costume_brief = None
     temp_path = output_path + ".tmp"
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     doc = SimpleDocTemplate(
@@ -237,8 +226,10 @@ def export_specification_pdf(result, output_path: str) -> str:
         _p("PatternForge 製作仕様書", title),
         _table([
             ["ジョブID", result.job_id],
-            ["製作判定", "製作開始可" if ready else "要確認（確認完了まで裁断しない）"],
-            ["型紙", f"表地{len(result.finalized_parts)}枚 / 裏地{len(result.lining_parts)}枚"],
+            *([["対象衣装", costume_brief.get("label", "")]] if costume_brief else []),
+            ["製作判定", ("仮縫い用の試作可（本番裁断は実物確認後）" if ready
+                      else "要確認（確認完了まで裁断しない）")],
+            ["型紙", f"表地・別布{len(result.finalized_parts)}枚 / 裏地{len(result.lining_parts)}枚"],
             ["縫い代", f"標準{result.seam_allowance_cm:g}cm / 裾"
              + (f"{result.hem_seam_allowance_cm:g}cm"
                 if result.hem_seam_allowance_cm is not None else "標準と同じ")],
@@ -273,17 +264,16 @@ def export_specification_pdf(result, output_path: str) -> str:
 
     construction = {
         key: value for key, value in result.garment_spec.construction.items()
-        if key not in {"unconfirmed_fields", "draft_mode"}
+        if key not in {"unconfirmed_fields", "draft_mode", "costume_project_brief",
+                       "hem_extension_pairs"}
     }
-    story.append(_p("構造・装飾指定", heading))
     if construction:
+        story.append(_p("構造・装飾指定", heading))
         rows = [["項目", "確定値"]] + [
             [_CONSTRUCTION_LABELS.get(key, key), _construction_value(key, value)]
             for key, value in construction.items()
         ]
         story.append(_table(rows, [58 * mm, 118 * mm], normal))
-    else:
-        story.append(_p("追加の構造指定はありません。", normal))
 
     story += [PageBreak(), _p("縫製順・検査記録", title)]
     steps = result.assembly_steps()
@@ -303,7 +293,43 @@ def export_specification_pdf(result, output_path: str) -> str:
     for note in notes or ["追加メモはありません。"]:
         story.append(_p(f"・{note}", normal))
 
-    story += [PageBreak(), _p("仮縫い・実物検査票", title)]
+    if costume_brief:
+        # Long design notes may spill onto a nearly empty page.  Continue the
+        # costume plan there instead of forcing another mostly blank sheet.
+        story += [Spacer(1, 6 * mm), _p("衣装固有の製作計画", title)]
+        story.append(_p(
+            "以下は型紙の幾何検査とは別の制作指示です。正面資料から推定した部分は"
+            "仮縫いと背面資料で確認するまで確定寸法として扱わないでください。", normal))
+        from .hem_extensions import hem_extension_rows
+        paired_rows = hem_extension_rows(result.finalized_parts, costume_brief)
+        if paired_rows:
+            story.append(_p("裾パネルの縫い合わせ表", heading))
+            story.append(_p(
+                "A/B/Cは型紙の接合記号です。両方の縫い線と1/4・3/4の合印を"
+                "合わせ、折り返し裾にはしないでください。", normal))
+            story.append(_table(
+                [["記号", "本体裾", "追加パネル上辺", "縫い線長 本体/パネル"]
+                 ] + [list(row) for row in paired_rows],
+                [14 * mm, 49 * mm, 68 * mm, 45 * mm], small))
+        sections = (
+            ("型紙に含む布パーツ", "patternable_components"),
+            ("別途製作・調達する部品", "separate_components"),
+            ("素材の使い分け", "material_plan"),
+            ("組立・取付の順序", "construction_plan"),
+            ("未確定事項", "limitations"),
+        )
+        for label, key in sections:
+            items = costume_brief.get(key)
+            if not isinstance(items, (list, tuple)) or not items:
+                continue
+            story.append(_p(label, heading))
+            for item in items:
+                story.append(_p(f"・{item}", normal))
+
+    # The costume-specific notes may continue onto a second page.  Do not
+    # force another break here: that used to strand two short caveats on an
+    # otherwise empty page before the fitting checklist.
+    story += [Spacer(1, 6 * mm), _p("仮縫い・実物検査票", title)]
     story.append(_p(
         "デジタル検査を通過しても、生地の伸び・姿勢・動作時のつれは実物でしか"
         "確定できません。測った補正量は画面の「着てみて合わなかったら」へ入力し、"
@@ -313,9 +339,10 @@ def export_specification_pdf(result, output_path: str) -> str:
         correction = (f"入力先: {item.correction_field}" if item.correction_field
                       else "結果: □合格 □要修正")
         fitting_rows.append([item.label, item.method, item.pass_condition, correction])
-    story.append(_table(fitting_rows, [28 * mm, 56 * mm, 60 * mm, 32 * mm], small))
+    story.append(_table(fitting_rows, [28 * mm, 56 * mm, 60 * mm, 32 * mm],
+                        small, compact=True))
 
-    story.append(Spacer(1, 4 * mm))
+    story.append(Spacer(1, 1 * mm))
     story.append(_p(
         "重要: 本書は入力値と自動検査の記録です。素材固有の伸び、熱、強度、着用者の動作は実物の仮縫いで確認してください。未確認欄がある場合は解消するまで本番生地を裁断しないでください。",
         small))

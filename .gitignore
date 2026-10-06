@@ -15,3 +15,10 @@ patternforge.db
 .test-run-*/
 .test-tmp-*/
 pytest-cache-files-*/
+.codex_deps/
+.tmp_pip*/
+imageio_ffmpeg.whl
+submissions/2026-10-02/_2d_media/
+submissions/2026-10-02/_old_manual/
+submissions/2026-10-02/_qa_manual/
+submissions/2026-10-02/_qa_video/

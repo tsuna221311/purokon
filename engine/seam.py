@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from .svgpath import segments_to_polyline
 
 try:
-    from shapely.geometry import Polygon as _ShapelyPolygon
+    from shapely.geometry import Point as _ShapelyPoint, Polygon as _ShapelyPolygon
     from shapely.ops import unary_union as _shapely_unary_union
     _HAS_SHAPELY = True
 except Exception:  # pragma: no cover - shapely未導入環境向けフォールバック
@@ -30,6 +30,15 @@ Point = tuple[float, float]
 Segment = tuple[Point, Point]
 
 DEFAULT_SEAM_ALLOWANCE_CM = 1.0
+# A wide hem allowance is meaningful only on a garment piece with a free
+# lower edge.  Bands and collars have an assembly seam at their lowest y;
+# treating that seam as a hem silently changes the cutting shape.
+HEM_EDGE_PART_TYPES = frozenset({
+    "front_bodice", "back_bodice", "front_bodice_zip_panel",
+    "front_bodice_center", "front_bodice_side",
+    "back_bodice_center", "back_bodice_side",
+    "sleeve", "skirt", "front_pants", "back_pants",
+})
 # 直角は正確に角を立てる一方、鋭角で縫い代が長い針状に伸びるのを
 # 防ぐmiter長の上限。縫い代幅の2倍を超える鋭角はbevelに落とす。
 SEAM_CORNER_MITRE_LIMIT = 2.0
@@ -87,6 +96,9 @@ class FinalizedPart:
     # 後工程で左右へ分割したパーツなど、輪郭の並び順が元テンプレートと
     # 変わる場合の縫い合わせ実測値。compatibility.pyが再推定せず使用する。
     compatibility_measurements: dict[str, float] = field(default_factory=dict)
+    # The lower edge joins another piece (for example a sleeve with a cuff),
+    # so it must keep the ordinary joining allowance rather than a turned hem.
+    hem_edge_is_joined: bool = False
     #: 利用者が明示した接着芯指示。空ならpart_typeごとの既定指示を使う。
     interfacing_instruction: str = ""
     #: パーツ名と裁ち方指示を置く、必ず裁断線内にある座標。
@@ -328,7 +340,8 @@ _HEM_Y_TOLERANCE_CM = 1e-6
 
 
 def _hem_edge_distances(points: list[Point], base_distance: float,
-                         hem_distance: float) -> list[float]:
+                         hem_distance: float, *,
+                         curved_hem: bool = False) -> list[float]:
     """輪郭の各辺について、「裾(hem)」とみなす辺だけhem_distanceを、それ
     以外はbase_distanceを割り当てた、辺の本数と同じ長さのリストを返す。
 
@@ -338,26 +351,38 @@ def _hem_edge_distances(points: list[Point], base_distance: float,
     back_bodiceの裾、skirtの裾、front_pants/back_pantsの裾(=足首の
     開き口)、sleeveの袖口など、多くのパーツで「y座標が最大の辺=実際の
     折り返しが入る縁」に対応するため、パーツ種ごとの特別扱いをせずに
-    汎用的に扱える。ウエストダーツを追加した後は、裾の一部がダーツの
+    汎用的に扱える。円形・プリーツスカートのような曲線/ジグザグの裾は
+    ``curved_hem=True`` の場合だけ、下端付近の横方向の辺を連続して選ぶ。
+    脇の縦辺や、上端のウエスト線は選ばない。
+    ウエストダーツを追加した後は、裾の一部がダーツの
     V字切り込みで分割されるため、裾のうちダーツの脚(斜めの辺)部分は
     「水平ではない」という理由でhemと判定されず、通常の縫い代幅になる
     （裾全体が一律にhem幅になるとは限らない、という正直な限界がある）。
-    collar/cuffs/waistbandのような帯状パーツにも同じ判定を機械的に
-    適用しており、「片方の長辺がたまたまy最大」というだけの理由で
-    hem幅が付くことがある（実務上、縫い代が広すぎて困ることはない）。
+    この関数自体は汎用の幾何処理であり、衿・カフス・ウエストバンドに
+    裾幅を適用しない判断は ``finalize_from_stitch_line`` 側で行う。
     """
     pts = points[:-1] if points and points[0] == points[-1] else list(points)
     n = len(pts)
     if n < 3:
         return [base_distance] * n
     max_y = max(p[1] for p in pts)
+    min_y = min(p[1] for p in pts)
+    # A shallow zigzag may dip 2 cm even on a short piece.  Limit the search
+    # to the lower quarter (and at most 5 cm), then require a transverse edge.
+    lower_band = min(5.0, (max_y - min_y) * 0.25)
     distances = []
     for i in range(n):
         p1, p2 = pts[i], pts[(i + 1) % n]
         is_horizontal = abs(p1[1] - p2[1]) < _HEM_Y_TOLERANCE_CM
         is_at_max_y = (abs(p1[1] - max_y) < _HEM_Y_TOLERANCE_CM
                        and abs(p2[1] - max_y) < _HEM_Y_TOLERANCE_CM)
-        distances.append(hem_distance if (is_horizontal and is_at_max_y) else base_distance)
+        is_curved_hem = (
+            curved_hem
+            and min(p1[1], p2[1]) >= max_y - lower_band - _HEM_Y_TOLERANCE_CM
+            and abs(p2[0] - p1[0]) >= abs(p2[1] - p1[1])
+        )
+        distances.append(hem_distance if ((is_horizontal and is_at_max_y)
+                                           or is_curved_hem) else base_distance)
     return distances
 
 
@@ -378,7 +403,8 @@ def _outward_flip(pts: list[Point], cx: float, cy: float) -> bool:
 
 
 def _offset_polygon_variable_shapely(points: list[Point], base_distance: float,
-                                      hem_distance: float) -> list[Point]:
+                                      hem_distance: float, *,
+                                      curved_hem: bool = False) -> list[Point]:
     """shapelyが使える場合の「辺ごとに異なる幅」オフセット。
 
     `_offset_polygon_per_edge`(miter/bevel の手計算方式)をそのまま
@@ -418,7 +444,8 @@ def _offset_polygon_variable_shapely(points: list[Point], base_distance: float,
         base_distance, join_style=2,
         mitre_limit=SEAM_CORNER_MITRE_LIMIT)
 
-    edge_distances = _hem_edge_distances(points, base_distance, hem_distance)
+    edge_distances = _hem_edge_distances(
+        points, base_distance, hem_distance, curved_hem=curved_hem)
     cx = sum(p[0] for p in pts) / n
     cy = sum(p[1] for p in pts) / n
     flip_all = _outward_flip(pts, cx, cy)
@@ -461,6 +488,11 @@ def _offset_polygon_variable_shapely(points: list[Point], base_distance: float,
             ])
             result = result.difference(sliver)
 
+    # At a zigzag valley, the extended subtraction strip can cross the stitch
+    # line even though its own edge is offset outward.  A 0 cm lining hem may
+    # touch that line, but the cutting contour must never cut into the piece.
+    result = _shapely_unary_union([result, base_poly])
+
     if result.geom_type == "MultiPolygon":  # pragma: no cover - 理論上のみ、実テンプレートでは未発生
         result = max(result.geoms, key=lambda g: g.area)
     if not result.is_valid:  # pragma: no cover - 上記の演算はいずれも頑健なはずの保険
@@ -469,9 +501,11 @@ def _offset_polygon_variable_shapely(points: list[Point], base_distance: float,
 
 
 def offset_polygon_variable(points: list[Point], base_distance: float,
-                             hem_distance: float | None = None) -> list[Point]:
+                             hem_distance: float | None = None, *,
+                             curved_hem: bool = False) -> list[Point]:
     """縫い代を辺ごとに変えたい場合のオフセット。裾(hem)だけ別の幅を
     指定できる(round5「縫い代を辺ごとに設定可能に」)。
+    ``curved_hem`` は円形・プリーツスカートの下端の横方向辺も対象にする。
 
     hem_distanceがNone、またはbase_distanceと等しい場合は、従来通り
     `offset_polygon`(shapelyの一様buffer、利用可能な場合)にそのまま
@@ -485,8 +519,10 @@ def offset_polygon_variable(points: list[Point], base_distance: float,
     if hem_distance is None or hem_distance == base_distance:
         return offset_polygon(points, base_distance)
     if _HAS_SHAPELY:
-        return _offset_polygon_variable_shapely(points, base_distance, hem_distance)
-    edge_distances = _hem_edge_distances(points, base_distance, hem_distance)
+        return _offset_polygon_variable_shapely(
+            points, base_distance, hem_distance, curved_hem=curved_hem)
+    edge_distances = _hem_edge_distances(
+        points, base_distance, hem_distance, curved_hem=curved_hem)
     return _offset_polygon_per_edge(points, edge_distances)
 
 
@@ -543,22 +579,74 @@ def _closest_point_on_segment(point: Point, start: Point, end: Point) -> Point:
     return start[0] + t * dx, start[1] + t * dy
 
 
+def _ray_cut_intersection(origin: Point, direction: Point,
+                          start: Point, end: Point) -> tuple[float, Point] | None:
+    """Return the first forward intersection of a notch ray and a cut edge."""
+    sx, sy = end[0] - start[0], end[1] - start[1]
+    denominator = direction[0] * sy - direction[1] * sx
+    if abs(denominator) < 1e-10:
+        return None
+    qx, qy = start[0] - origin[0], start[1] - origin[1]
+    distance = (qx * sy - qy * sx) / denominator
+    fraction = (qx * direction[1] - qy * direction[0]) / denominator
+    if distance <= 1e-7 or not -1e-8 <= fraction <= 1.0 + 1e-8:
+        return None
+    return distance, (origin[0] + direction[0] * distance,
+                      origin[1] + direction[1] * distance)
+
+
 def extend_notches_to_cut_line(notches: list[Segment],
                                cut_line: list[Point],
-                               maximum_distance_cm: float
+                               maximum_distance_cm: float,
+                               stitch_line: list[Point] | None = None,
                                ) -> list[Segment]:
     """合印の外向き線を、実際の裁断線まで延ばす。
 
     従来は縫い線から固定5mmだけ描画していた。縫い代1cm以上では
     合印が裁断線へ届かず、型紙を外周で切ると印の位置が分からなかった。
-    ここでは、すでに計算済みの裁断外周の全辺から最短点を求める。
-    左右反転パネルや凹部で「外向き法線」の推定が逆になっても影響せず、
-    丸い角も実際の外周へ正確に届く。
+    合印の向きにレイを伸ばして最初に当たる裁断線を優先する。単純な
+    「最も近い外周」は、細いパーツの角では隣の辺を選び、合印を斜めに
+    曲げてしまう。法線が内向きなら最短点へフォールバックする。
     """
     boundary = (cut_line if cut_line and cut_line[0] == cut_line[-1]
                 else list(cut_line) + ([cut_line[0]] if cut_line else []))
+    stitch_polygon = (_ShapelyPolygon(stitch_line)
+                      if _HAS_SHAPELY and stitch_line and len(stitch_line) >= 3
+                      else None)
     output: list[Segment] = []
     for origin, hint in notches:
+        # A lining hem can have zero allowance even when its outer shell has
+        # one.  In that case the shared stitch-line origin is already on the
+        # lining cut edge: there is no fabric outside it into which a notch
+        # could be drawn.  Keep the matching location as a zero-length mark
+        # instead of retaining the outer shell's off-edge endpoint.
+        if min((math.dist(origin, _closest_point_on_segment(origin, a, b))
+                for a, b in zip(boundary, boundary[1:])),
+               default=float("inf")) <= 1e-8:
+            output.append((origin, origin))
+            continue
+        # The outer and lining often share the same cut edge.  Preserve an
+        # already-correct endpoint exactly, including its floating precision.
+        if min((math.dist(hint, _closest_point_on_segment(hint, a, b))
+                for a, b in zip(boundary, boundary[1:])), default=float("inf")) <= 1e-8:
+            output.append((origin, hint))
+            continue
+        dx, dy = hint[0] - origin[0], hint[1] - origin[1]
+        magnitude = math.hypot(dx, dy)
+        if magnitude > 1e-9:
+            direction = (dx / magnitude, dy / magnitude)
+            # An inward-pointing mark must never cross the finished garment.
+            probe = (origin[0] + direction[0] * 0.05,
+                     origin[1] + direction[1] * 0.05)
+            points_inward = (stitch_polygon is not None
+                             and stitch_polygon.contains(_ShapelyPoint(probe)))
+            if not points_inward:
+                crossings = [hit for a, b in zip(boundary, boundary[1:])
+                             if (hit := _ray_cut_intersection(origin, direction, a, b))
+                             and hit[0] <= maximum_distance_cm]
+                if crossings:
+                    output.append((origin, min(crossings, key=lambda hit: hit[0])[1]))
+                    continue
         candidates = [_closest_point_on_segment(origin, start, end)
                       for start, end in zip(boundary, boundary[1:])]
         if not candidates:
@@ -755,7 +843,13 @@ def finalize_from_stitch_line(part_type: str, variation: str,
     セグメントを持たない分岐を`finalize_part`側に足すより、共通処理をこちらへ
     出して`finalize_part`を薄い包みにするほうが分岐が増えない。
     """
-    cut_line = offset_polygon_variable(stitch_line, seam_allowance_cm, hem_seam_allowance_cm)
+    # The geometric offset helper is deliberately generic, but a garment's
+    # "hem" setting must not widen a collar, cuff, waistband or custom panel.
+    effective_hem_cm = (hem_seam_allowance_cm
+                        if part_type in HEM_EDGE_PART_TYPES else None)
+    cut_line = offset_polygon_variable(
+        stitch_line, seam_allowance_cm, effective_hem_cm,
+        curved_hem=(part_type == "skirt" and variation in {"circle", "pleated"}))
     # round16: `notch_points`(実際に縫い合わせる辺の上の座標)が与えられた
     # 場合はそれを使う。与えられない場合だけ、round15までの「自分自身の
     # 周長比」による既定位置へフォールバックする。周長比の合印は相手パーツ
@@ -774,13 +868,23 @@ def finalize_from_stitch_line(part_type: str, variation: str,
     # 合印を固定長の浮いた線にせず、裁断線まで届ける。
     # 裾だけ広い縫い代の場合も見落とさない上限を渡す。
     largest_allowance = max(seam_allowance_cm,
-                            hem_seam_allowance_cm or seam_allowance_cm)
+                            effective_hem_cm if effective_hem_cm is not None
+                            else seam_allowance_cm)
     notches = extend_notches_to_cut_line(
-        notches, cut_line, maximum_distance_cm=largest_allowance * 2.0 + 0.5)
+        notches, cut_line, maximum_distance_cm=largest_allowance * 2.0 + 0.5,
+        stitch_line=stitch_line)
     xs = [p[0] for p in cut_line]
     ys = [p[1] for p in cut_line]
     bbox = (min(xs), min(ys), max(xs), max(ys))
-    grain = grainline_marks(bbox, outline=cut_line)
+    # The grain arrow belongs on the usable piece, not in a seam allowance
+    # that will later be trimmed or folded.  This matters most for narrow
+    # cuffs, collars and waistbands where the allowance is a large fraction
+    # of the printed part.
+    stitch_xs = [p[0] for p in stitch_line]
+    stitch_ys = [p[1] for p in stitch_line]
+    stitch_bbox = (min(stitch_xs), min(stitch_ys),
+                   max(stitch_xs), max(stitch_ys))
+    grain = grainline_marks(stitch_bbox, outline=stitch_line)
     return FinalizedPart(
         part_type=part_type,
         variation=variation,
@@ -789,7 +893,7 @@ def finalize_from_stitch_line(part_type: str, variation: str,
         notches=notches,
         grainline=grain,
         seam_allowance_cm=seam_allowance_cm,
-        hem_seam_allowance_cm=hem_seam_allowance_cm,
+        hem_seam_allowance_cm=effective_hem_cm,
         label_suffix=label_suffix,
         dart_count=dart_count,
         seam_edge=seam_edge,

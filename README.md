@@ -25,6 +25,15 @@ Flask + 素のHTML/CSS/JSの簡易UIから、上記を一気通貫で試せる�
 
 ## クイックスタート
 
+### Windows展示用PC（事前セットアップ済み）
+
+ルートフォルダーの `start_forma.bat` をダブルクリックすると、Formaを起動して
+`http://127.0.0.1:5000` をブラウザーで開きます。終了時はサーバー画面で
+`Ctrl+C`を押してください。`.venv\Scripts\python.exe` があれば優先して使用し、
+無ければ `py -3` または `python` を使用します。
+
+初回セットアップや開発時は、次の手順を使用します。
+
 ```bash
 python3 -m venv .venv && source .venv/bin/activate   # 任意
 pip install -r requirements.txt

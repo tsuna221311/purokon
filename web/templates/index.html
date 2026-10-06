@@ -1522,26 +1522,61 @@
                    aria-labelledby="outfit-preview-title">
             <div class="outfit-preview-head">
               <div>
-                <span class="eyebrow">完成バランス確認</span>
-                <h3 id="outfit-preview-title">服と小物を合わせた360°イメージ</h3>
+                <span class="eyebrow">3D試着・衣装モデル確認</span>
+                <h3 id="outfit-preview-title">衣装の形を360°で確認</h3>
               </div>
-              <span class="concept-badge">完成コーデ確認</span>
+              <span class="concept-badge">制作・比較用プレビュー</span>
             </div>
             <div id="outfit-webgl-view" class="outfit-webgl-view hidden"
+                 data-default-avatar-url="{{ url_for('static', filename='models/default-avatar.vrm') }}"
                  role="img" aria-label="服と小物を装着した影付き3Dアバター"></div>
             <canvas id="outfit-preview-canvas" tabindex="0"
                     aria-label="生成した服と小物の完成イメージ。左右ドラッグで回転、ホイールで拡大縮小、矢印キーで向きを変更できます。"></canvas>
             <div class="outfit-avatar-controls">
               <div>
                 <strong>アバター</strong>
-                <span>標準アニメ調モデル、または手持ちのVRM/GLB</span>
+                <span>Tポーズ標準モデル、または手持ちのVRM/GLB</span>
               </div>
               <label class="outfit-avatar-file">VRM/GLBを読み込む
                 <input type="file" id="outfit-avatar-file" accept=".vrm,.glb,model/gltf-binary">
               </label>
-              <button type="button" id="outfit-avatar-reset" class="hidden">標準モデルに戻す</button>
+              <button type="button" id="outfit-avatar-reset" class="hidden">標準VRMに戻す</button>
               <span id="outfit-avatar-status" role="status" aria-live="polite">ファイルは端末内だけで処理され、サーバーへ送信されません。</span>
             </div>
+            <div class="outfit-garment-controls">
+              <div>
+                <strong>衣装モデル</strong>
+                <span>自動生成は形状確認用。作り込んだGLBはここで重ねて確認できます。</span>
+              </div>
+              <label class="outfit-avatar-file">衣装GLBを読み込む
+                <input type="file" id="outfit-garment-file" accept=".glb,model/gltf-binary">
+              </label>
+              <button type="button" id="outfit-garment-reset" class="hidden">自動生成に戻す</button>
+              <span id="outfit-garment-status" role="status" aria-live="polite">衣装GLBは端末内でのみ読み込みます。原点と向きをアバターに合わせて書き出してください。</span>
+            </div>
+            <div id="outfit-garment-fit" class="outfit-garment-fit hidden" aria-label="読み込んだ衣装の位置合わせ">
+              <label>倍率 <input type="range" id="outfit-garment-scale" min="30" max="400" value="100"><output>1.00倍</output></label>
+              <label>左右 <input type="range" id="outfit-garment-x" min="-100" max="100" value="0"><output>0.00</output></label>
+              <label>上下 <input type="range" id="outfit-garment-y" min="-200" max="200" value="0"><output>0.00</output></label>
+              <label>前後 <input type="range" id="outfit-garment-z" min="-100" max="100" value="0"><output>0.00</output></label>
+            </div>
+            <section class="outfit-reference-review" aria-labelledby="outfit-reference-title">
+              <div class="outfit-reference-heading">
+                <div>
+                  <h4 id="outfit-reference-title">参照画と3Dを三方向で比較</h4>
+                  <p>アップロードした画像は端末内で表示します。側面・背面が推定図なら、その確かさは別途確認してください。</p>
+                </div>
+                <button type="button" id="outfit-review-refresh">比較を更新</button>
+              </div>
+              <div class="outfit-reference-inputs">
+                <label>正面画像 <input type="file" data-garment-reference="front" accept="image/png,image/jpeg,image/webp"></label>
+                <label>側面画像 <input type="file" data-garment-reference="side" accept="image/png,image/jpeg,image/webp"></label>
+                <label>背面画像 <input type="file" data-garment-reference="back" accept="image/png,image/jpeg,image/webp"></label>
+              </div>
+              <p id="outfit-review-status" role="status" aria-live="polite">参照画像と衣装を読み込むと比較できます。</p>
+              <div id="outfit-review-metrics" class="outfit-review-metrics" aria-label="3D衣装の構造確認"></div>
+              <div id="outfit-review-grid" class="outfit-review-grid hidden" aria-label="資料画像と3Dの方向別比較"></div>
+            </section>
             <div class="outfit-preview-controls" aria-label="3Dイメージの向き">
               <button type="button" data-outfit-view="left">左側面</button>
               <button type="button" data-outfit-view="front">正面</button>
@@ -1575,7 +1610,7 @@
               <span><i class="legend-accessory"></i>小物・造形パーツ</span>
             </div>
             <p class="outfit-preview-caveat">
-              この3Dは、服と全小物を同じアバターに装着し、丈・重なり・取付位置を確認するための完成イメージです。
+              この3Dは、服と全小物を同じアバターに装着し、丈・重なり・取付位置を確認するための制作ラフです。
               配色と、小物の取付位置・大きさ・上下左右のずれは生成後に変更でき、現在の角度または4面図をPNGで保存できます。
               VRM/GLBの外見品質は読み込んだモデルに依存します。衣装は構成確認用の立体であり、布の落ち方、重力、縫い縮みを再現するクロスシミュレーションではありません。
               裁断寸法はPDF・DXF、3Dプリント寸法はSTL・3MFを正として確認してください。
@@ -1834,7 +1869,7 @@
 
   {% include "_footer.html" %}
 
-  <script type="module" src="{{ url_for('static', filename='outfit3d.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='outfit3d.js') }}?v=20261003-garment32"></script>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

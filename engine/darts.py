@@ -1710,6 +1710,44 @@ def retrue_bust_darts(segments: list) -> list:
             changed = True
     return out if changed else segments
 
+
+def retrue_bodice_waist_darts(segments: list,
+                              max_tip_shift_cm: float = .75) -> list:
+    """True a bodice's hem-opening waist darts after later waist shaping.
+
+    The dart is drafted with equal legs, but waist nipping can move its tip
+    relative to both mouth points.  Keep the sewn mouth and hem width intact;
+    only move a nearby tip onto the mouth bisector.  A larger change is not a
+    truing correction and remains for the quality gate to reject.
+    """
+    points = []
+    segment_indices = []
+    for index, (cmd, nums) in enumerate(segments):
+        if cmd in ("M", "L") and len(nums) >= 2:
+            points.append((float(nums[0]), float(nums[1])))
+            segment_indices.append(index)
+    if len(points) < 5:
+        return segments
+    hem_y = max(y for _x, y in points)
+    out = list(segments)
+    changed = False
+    for index in range(1, len(points) - 1):
+        mouth_a, tip, mouth_b = points[index - 1:index + 2]
+        if (abs(mouth_a[1] - hem_y) > .03 or
+                abs(mouth_b[1] - hem_y) > .03 or
+                not 5 <= hem_y - tip[1] <= 20 or
+                not min(mouth_a[0], mouth_b[0]) - .5 <= tip[0] <=
+                max(mouth_a[0], mouth_b[0]) + .5):
+            continue
+        target_x = (mouth_a[0] + mouth_b[0]) / 2
+        if abs(target_x - tip[0]) > max_tip_shift_cm:
+            continue
+        segment_index = segment_indices[index]
+        cmd, nums = out[segment_index]
+        out[segment_index] = (cmd, [target_x, tip[1], *nums[2:]])
+        changed = True
+    return out if changed else segments
+
 def apply_skirt_waist_dart(part_type: str, variation: str, segments: list,
                             measurements: Measurements) -> tuple[list, int]:
     """スカート(tight)のウエストライン(上端)にウエストダーツを追加する。

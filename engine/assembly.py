@@ -449,6 +449,44 @@ def assembly_steps(finalized_parts: list,
     # 終わっているため、**型紙のとおり作り終えた**と読めてしまう。
     # 手順に載っていない=付けなくてよい、ではない。
     # 分からないことは分からないと書く。
+    joined_customs = [p for p in finalized_parts if p.part_type == "custom_panel"
+                      and any(label.startswith("接合")
+                              for label, _line in p.reference_lines)]
+    if (len(joined_customs) == 3
+            and all("下身頃" in p.display_name for p in joined_customs)):
+        steps.append((
+            "コート下身頃の脇を縫う",
+            "左前・後ろ、右前・後ろの脇の縫い線と裾位置を合わせます。"
+            "後ろ形状は正面資料からの推定なので、仮縫いして横・後ろ姿を確認してから本縫いします。",
+            tuple(p.display_name for p in joined_customs),
+        ))
+    layered_customs = [p for p in finalized_parts if p.part_type == "custom_panel"
+                       and any(label.startswith("重ね")
+                               for label, _line in p.reference_lines)
+                       and p not in joined_customs]
+    if layered_customs:
+        steps.append((
+            "非対称の裾飾りを下身頃へ重ねる",
+            "重ねA/B/Cの表側を対応する下身頃の表側へ向け、上辺と1/4・3/4合印を"
+            "揃えて縫い代内だけに仮止めします。横辺と下辺は自由端とし、"
+            "試布でほつれを確認して必要な端処理を決めます。背面形状と固定方法は"
+            "正面資料からの推定なので、本縫い前に着用して位置と動きを確認します。",
+            tuple(p.display_name for p in [*joined_customs, *layered_customs]),
+        ))
+    if joined_customs:
+        names = tuple(p.display_name for p in [*joined_customs, *layered_customs])
+        layer_note = (
+            "仮止めした飾り裾も同じ接合線に挟み、三枚重ねの厚みと針通りを"
+            "試布・仮縫いで確認します。硬質装飾はこの縫い目に挟みません。"
+            if layered_customs else "")
+        steps.append((
+            "裾パネルを本体へ縫い合わせる",
+            "型紙の接合記号A/B/Cごとに、本体裾とパネル上辺の1/4・3/4合印を"
+            "中表に合わせます。" + layer_note +
+            "縫い線で縫い、縫い代は素材に合わせて始末します。"
+            "この接合辺は三つ折りの裾ではありません。仮縫いで長さと落ち感を確認します。",
+            names,
+        ))
     # --- 6b. 裏地(round41) --------------------------------------------------
     # 表地を縫い終えてから、同じ手順でもう1つ「裏地の身頃」を作り、最後に
     # 合わせる。ここに出すのは`engine/lining.py`が出典付きで持っている
@@ -484,7 +522,8 @@ def assembly_steps(finalized_parts: list,
         # 半分になる。既定の1cmだと5mmずつで、そのことを書かないと
         # 「三つ折りにしてください」だけが残って手が止まる。
         # 割り算の結果を書くだけで、縫い方の新しい主張はしていない。
-        f"裾を三つ折りにして縫います(縫い代を2回折るので、折り幅は"
+        ("接合A/B/C以外の自由な裾を" if joined_customs else "裾を")
+        + f"三つ折りにして縫います(縫い代を2回折るので、折り幅は"
         f"{hem_cm / 2:g}cmずつになります)。この型紙の裾の縫い代は{hem_cm:g}cmです"
         + ("(他の辺とは別に指定した値です)。" if hem_seam_allowance_cm is not None
            and hem_seam_allowance_cm != seam_allowance_cm else "。")
@@ -513,11 +552,14 @@ def assembly_steps(finalized_parts: list,
             # コメントでは再発を止められなかったので、テストで止める
             # (tests/test_round61_one_source_of_truth.py)。
             + hem_gap_phrase(hem_cm)
+            + ("ただし接合A/B/Cの身頃裾は自由な裾ではなく、"
+               "裏地も同じ縫い線で接合します。" if joined_customs else "")
             + "背中心のきせの分量だけです。",
             (),
         ))
 
-    customs = [p for p in finalized_parts if p.part_type == "custom_panel"]
+    customs = [p for p in finalized_parts if p.part_type == "custom_panel"
+               and p not in joined_customs and p not in layered_customs]
     if customs:
         names = tuple(dict.fromkeys(p.display_name for p in customs))
         steps.append((

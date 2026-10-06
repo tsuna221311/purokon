@@ -24,6 +24,7 @@ round53の最後に「いまのいちばん大きなコスプレ向けの穴」�
 """
 
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -54,6 +55,18 @@ def _page_texts(path):
     import pypdf
 
     return [page.extract_text() or "" for page in pypdf.PdfReader(path).pages]
+
+
+def test_costume_lower_shell_can_use_bodice_fabric_while_overlay_uses_accent():
+    parts = [SimpleNamespace(part_type="front_bodice_zip_panel", variation=None),
+             SimpleNamespace(part_type="custom_panel", variation="lower"),
+             SimpleNamespace(part_type="custom_panel", variation="overlay")]
+    groups = split_parts(parts, {"bodice": "coat twill", "custom_panel": "accent"},
+                         variation_area_overrides={"lower": "bodice"})
+    assert [(group.name, len(group.parts)) for group in groups] == [
+        ("coat twill", 2), ("accent", 1)]
+    with pytest.raises(FabricGroupError):
+        split_parts(parts, {}, variation_area_overrides={"lower": "unknown"})
 
 
 # --- 1. 生地ごとに分かれること ----------------------------------------------

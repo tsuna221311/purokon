@@ -205,17 +205,14 @@ def test_no_collar_warning_for_a_front_zip_pattern(pipe, body):
 
 
 @pytest.mark.parametrize("body", list(BODIES))
-def test_the_unchecked_collar_is_said_out_loud(pipe, body):
-    """確かめていないことを、黙らずに言うこと。
-
-    黙って飛ばすと「確かめた結果、問題なし」と区別が付かない。
-    """
+def test_the_zip_collar_is_measured_after_finalizing(pipe, body):
+    """前開きパネル2枚を含む首ぐりを完成型紙でも照合すること。"""
     result = _result(pipe, body, "前開き+衿")
-    notes = unchecked_seams(result.finalized_parts)
-    assert notes, body
-    assert any("確かめていません" in n for n in notes), notes
-    # 画面へ届いていること(design_notes に混ぜてある)。
-    assert any(n in result.summary()["design_notes"] for n in notes), body
+    fronts = [part for part in result.finalized_parts
+              if part.part_type == "front_bodice_zip_panel"]
+    assert len(fronts) == 2
+    assert all(C.neckline_length(part) is not None for part in fronts)
+    assert unchecked_seams(result.finalized_parts) == []
 
 
 def test_nothing_is_reported_unchecked_when_the_check_really_ran(pipe):

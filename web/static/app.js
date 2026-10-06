@@ -1038,8 +1038,76 @@ const outfitState = {
   auto: false, frame: 0, showGarment: true, showAccessories: true,
   showMannequin: true, accessoryAnchors: {}, accessoryTransforms: {},
   selectedAccessory: "", projectName: "", garmentColor: "#4f46e5",
-  accessoryColor: "#16a34a",
+  accessoryColor: "#16a34a", appearance: null,
 };
+let outfitPaletteToken = 0;
+let inferredOutfitColor = null;
+let pendingOutfitReviewFiles = null;
+
+function _rgbToHsv(red, green, blue) {
+  const r = red / 255, g = green / 255, b = blue / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const delta = max - min;
+  let hue = 0;
+  if (delta) {
+    if (max === r) hue = ((g - b) / delta) % 6;
+    else if (max === g) hue = (b - r) / delta + 2;
+    else hue = (r - g) / delta + 4;
+    hue = ((hue * 60) + 360) % 360;
+  }
+  return [hue, max ? delta / max : 0, max];
+}
+
+function _hexChannel(value) {
+  return Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, "0");
+}
+
+async function inferOutfitPaletteFromReference() {
+  const file = illustrationFileInput?.files?.[0];
+  if (!file || !file.type.startsWith("image/")) return null;
+  const token = ++outfitPaletteToken;
+  const bitmap = await createImageBitmap(file);
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = 96;
+    canvas.height = 128;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    const bins = Array.from({ length: 30 }, () => ({ score: 0, r: 0, g: 0, b: 0, weight: 0 }));
+    for (let index = 0; index < pixels.length; index += 4) {
+      if (pixels[index + 3] < 220) continue;
+      const r = pixels[index], g = pixels[index + 1], b = pixels[index + 2];
+      const [hue, saturation, value] = _rgbToHsv(r, g, b);
+      if (saturation < .22 || value > .94 || value < .08) continue;
+      const skinLike = hue >= 10 && hue <= 48 && saturation < .58 && value > .38;
+      if (skinLike) continue;
+      const weight = saturation * (.35 + (1 - Math.abs(value - .52))) ** 2;
+      const bin = bins[Math.min(bins.length - 1, Math.floor(hue / 360 * bins.length))];
+      bin.score += weight;
+      bin.r += r * weight;
+      bin.g += g * weight;
+      bin.b += b * weight;
+      bin.weight += weight;
+    }
+    if (token !== outfitPaletteToken) return null;
+    const dominant = bins.reduce((best, bin) => bin.score > best.score ? bin : best, bins[0]);
+    if (!dominant?.weight) return null;
+    const r = dominant.r / dominant.weight;
+    const g = dominant.g / dominant.weight;
+    const b = dominant.b / dominant.weight;
+    return `#${_hexChannel(r)}${_hexChannel(g)}${_hexChannel(b)}`;
+  } finally {
+    bitmap.close();
+  }
+}
+
+illustrationFileInput?.addEventListener("change", () => {
+  inferredOutfitColor = null;
+  inferOutfitPaletteFromReference().then((color) => {
+    inferredOutfitColor = color;
+  }).catch(() => {});
+});
 
 function _previewClamp(value, low, high) {
   return Math.max(low, Math.min(high, value));
@@ -1350,21 +1418,46 @@ function renderOutfitPreview(data) {
   if (!parts.length) return;
   outfitState.parts = parts;
   outfitState.projectName = data.project_name || "PatternForge-complete-look";
+  outfitState.appearance = data.outfit_appearance?.silhouette === "open_long_coat"
+    ? data.outfit_appearance : null;
   const accessories = parts.filter((part) => part.part_type === "custom_panel");
   const garmentTypes = new Set(parts.filter((part) => part.part_type !== "custom_panel")
     .map((part) => part.part_type));
   if (outfitSummary) {
-    outfitSummary.textContent = `${garmentTypes.size}種類の服パーツ`
-      + (accessories.length ? `と小物・造形パーツ${accessories.length}点をアバターへ配置しています。` : "をアバターへ配置しています。小物を追加すると同じ画面へ重ねて表示します。")
-      + " 左右へドラッグして、正面・側面・背面のバランスを確認できます。";
+    outfitSummary.textContent = outfitState.appearance
+      ? "参照画像から開いたロングコートと重ね着を推定した3Dイメージです。背面や細部は要確認。"
+        + (garmentTypes.has("skirt") ? " 型紙側は裾をスカートと判定しているため、このまま裁断しないでください。" : "")
+        + " 3Dは型紙の正確な完成形ではありません。"
+      : `${garmentTypes.size}種類の服パーツ`
+        + (accessories.length ? `と小物・造形パーツ${accessories.length}点をアバターへ配置しています。` : "をアバターへ配置しています。小物を追加すると同じ画面へ重ねて表示します。")
+        + " 左右へドラッグして、正面・側面・背面のバランスを確認できます。";
   }
   renderOutfitAccessoryList(accessories);
+  if (outfitState.appearance?.palette?.outer) {
+    outfitState.garmentColor = outfitState.appearance.palette.outer;
+    if (outfitGarmentColor) outfitGarmentColor.value = outfitState.garmentColor;
+  } else if (inferredOutfitColor) {
+    outfitState.garmentColor = inferredOutfitColor;
+    if (outfitGarmentColor) outfitGarmentColor.value = inferredOutfitColor;
+  }
   window.PatternForge3D?.setOutfit(parts, outfitState);
   setOutfitAngle(0);
+  // 参照画の支配的な衣装色を端末内で抽出し、単色の初期値ではなく元デザインに
+  // 近い配色で3Dを開始する。画像や抽出結果はサーバーへ追加送信しない。
+  if (!outfitState.appearance) inferOutfitPaletteFromReference().then((color) => {
+    if (!color || outfitState.parts !== parts) return;
+    outfitState.garmentColor = color;
+    if (outfitGarmentColor) outfitGarmentColor.value = color;
+    drawOutfitPreview();
+  }).catch(() => {});
 }
 
 window.addEventListener("patternforge3dready", () => {
   if (outfitState.parts.length) window.PatternForge3D?.setOutfit(outfitState.parts, outfitState);
+  if (pendingOutfitReviewFiles) {
+    window.PatternForge3D?.setReferenceImages(pendingOutfitReviewFiles);
+    pendingOutfitReviewFiles = null;
+  }
 });
 
 if (outfitCanvas) {
@@ -1437,7 +1530,7 @@ outfitResetView?.addEventListener("click", () => {
   outfitState.showMannequin = true;
   outfitState.accessoryAnchors = {};
   outfitState.accessoryTransforms = {};
-  outfitState.garmentColor = "#4f46e5";
+  outfitState.garmentColor = outfitState.appearance?.palette?.outer || "#4f46e5";
   outfitState.accessoryColor = "#16a34a";
   outfitState.selectedAccessory = "";
   if (outfitGarmentColor) outfitGarmentColor.value = outfitState.garmentColor;
@@ -1521,14 +1614,14 @@ function _downloadOutfitCanvas(canvas, suffix, successMessage) {
 outfitSaveImage?.addEventListener("click", () => {
   drawOutfitPreview();
   const source = window.PatternForge3D?.canvas || outfitCanvas;
-  _downloadOutfitCanvas(source, "完成イメージ", "高品質3DイメージをPNG保存しました");
+  _downloadOutfitCanvas(source, "衣装プレビュー", "現在の衣装プレビューをPNG保存しました");
 });
 
 outfitSaveFourViews?.addEventListener("click", () => {
   if (!outfitCanvas || !outfitState.parts.length) return;
   const webglSheet = window.PatternForge3D?.makeFourViewSheet(outfitState.projectName);
   if (webglSheet) {
-    _downloadOutfitCanvas(webglSheet, "完成4面図", "高品質3Dの完成4面図を保存しました");
+    _downloadOutfitCanvas(webglSheet, "衣装4面図", "現在の衣装4面図を保存しました");
     return;
   }
   const previousAngle = outfitState.angle;
@@ -3453,6 +3546,16 @@ form.addEventListener("submit", async (event) => {
   event.preventDefault();
   clearError();
 
+  // 送信後は安全のためfile inputを空にするので、3D試着へ使う参照色は
+  // 画像がまだ端末内にあるこの時点で確定させる。抽出失敗は生成を妨げない。
+  if (illustrationFileInput?.files?.length) {
+    try {
+      inferredOutfitColor = await inferOutfitPaletteFromReference();
+    } catch (_error) {
+      inferredOutfitColor = null;
+    }
+  }
+
   const referenceError = validateReferencesBeforeSubmit();
   if (referenceError) {
     showError(referenceError);
@@ -3475,6 +3578,17 @@ form.addEventListener("submit", async (event) => {
   if (measuredBlockError) {
     showError(measuredBlockError);
     return;
+  }
+
+  // The form clears uploaded files after generation. Preserve the selected
+  // front/side/back references locally for the garment comparison studio.
+  pendingOutfitReviewFiles = Object.fromEntries(referenceInputs
+    .filter(({ kind }) => ["front", "side", "back"].includes(kind))
+    .map(({ kind, input }) => [kind, input.files?.[0]])
+    .filter(([, file]) => Boolean(file)));
+  if (window.PatternForge3D?.setReferenceImages) {
+    window.PatternForge3D.setReferenceImages(pendingOutfitReviewFiles);
+    pendingOutfitReviewFiles = null;
   }
 
   placeholder.classList.add("hidden");

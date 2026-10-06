@@ -8,8 +8,77 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
+
+from shapely.errors import GEOSException
+from shapely.geometry import LineString, Point, Polygon
 
 from .compatibility import check_seam_compatibility, unchecked_seams
+from .endministrator_armhole import (endministrator_notch_pairing_warnings,
+                                      endministrator_side_seam_warnings)
+from .hem_extensions import hem_extension_warnings
+
+
+def pattern_geometry_warnings(parts) -> list[str]:
+    """Detect pieces whose raw cutting contour is unsafe to follow.
+
+    A repaired polygon from ``buffer(0)`` can hide a self-intersection or
+    remove material.  Inspect the exported coordinates as-is instead, and
+    require the cut outline to contain the entire finished shape.
+    """
+    warnings: list[str] = []
+    for part in parts:
+        label = part.display_name
+        stitch_points, cut_points = part.stitch_line, part.cut_line
+        try:
+            valid_coordinates = all(
+                len(point) == 2 and all(isfinite(float(value)) for value in point)
+                for point in stitch_points + cut_points)
+        except (TypeError, ValueError, OverflowError):
+            valid_coordinates = False
+        if (len(stitch_points) < 3 or len(cut_points) < 3
+                or not valid_coordinates):
+            warnings.append(f"{label}: 輪郭の点が不足するか、座標が不正です")
+            continue
+        try:
+            stitch = Polygon(stitch_points)
+            cut = Polygon(cut_points)
+        except (TypeError, ValueError):
+            warnings.append(f"{label}: 輪郭を多角形として読めません")
+            continue
+        if (not stitch.is_valid or stitch.is_empty or stitch.area <= 1e-6
+                or not cut.is_valid or cut.is_empty or cut.area <= 1e-6):
+            warnings.append(f"{label}: 縫い線または裁断線が自己交差・消失しています")
+        elif not cut.buffer(1e-6).covers(stitch):
+            warnings.append(f"{label}: 裁断線が縫い線の内側に入り込んでいます")
+        else:
+            grain = part.grainline or {}
+            segments = [grain.get("line"), *(grain.get("arrows") or ())]
+            try:
+                inside = bool(grain.get("line")) and all(
+                    segment and stitch.buffer(1e-6).covers(LineString(segment))
+                    for segment in segments)
+            except (TypeError, ValueError, GEOSException):
+                inside = False
+            if not inside:
+                warnings.append(f"{label}: 布目線が型紙本体の外に出ています")
+            stitch_interior = stitch.buffer(-0.01)
+            for index, (origin, end) in enumerate(part.notches, start=1):
+                try:
+                    if not all(isfinite(float(value)) for point in (origin, end)
+                               for value in point):
+                        raise ValueError("non-finite notch coordinate")
+                    mark = LineString((origin, end))
+                    if stitch.boundary.distance(Point(origin)) > 0.03:
+                        warnings.append(f"{label}: 合印{index}の起点が縫い線から外れています")
+                    if cut.boundary.distance(Point(end)) > 0.03:
+                        warnings.append(f"{label}: 合印{index}が裁断線に届いていません")
+                    if (not stitch_interior.is_empty
+                            and mark.intersection(stitch_interior).length > 0.05):
+                        warnings.append(f"{label}: 合印{index}が型紙本体を横切っています")
+                except (TypeError, ValueError, GEOSException):
+                    warnings.append(f"{label}: 合印{index}の座標が不正です")
+    return warnings
 
 
 @dataclass(frozen=True)
@@ -73,7 +142,28 @@ def fitting_checklist(result) -> list[QualityCheck]:
             "arm_motion", "袖ぐりと腕の可動域",
             "両腕を前・横・上へ動かし、袖山のねじれと袖ぐりの食い込みを確認する。",
             "予定する最大動作で身頃が大きく持ち上がらず、血流を妨げない。"))
+        checks.append(QualityCheck(
+            "sleeve_cap_toile", "袖山のいせ込みと左右差",
+            "本番生地と同条件の仮縫いで前1本・後ろ2本の合印を合わせ、袖山の波打ち・つれと左右の形を正面・側面・背面で比較する。",
+            "袖山に意図しないギャザー、縫い目の裂け、左右差がなく、腕を動かしても肩先に強いしわが出ない。"))
     construction = result.garment_spec.construction
+    brief = construction.get("costume_project_brief")
+    if isinstance(brief, dict):
+        if "custom_panel" in kinds:
+            checks.append(QualityCheck(
+                "overlay_alignment", "別裁ちパネルの位置・落ち感",
+                "左右・前後のパネルをしつけ留めし、正面・側面・背面を撮影して裾位置と布のたまりを測る。",
+                "左右非対称の向きが資料と一致し、歩行・着座で巻き込みや大きな浮きがない。"))
+        if brief.get("separate_components"):
+            checks.append(QualityCheck(
+                "costume_attachment", "装飾の固定と干渉",
+                "肩・袖口・上腕・背面の別体部品を仮止めし、着脱10回と腕上げ・着座を試す。",
+                "取付部が裂けず、金具が外れず、可動を妨げず、肌に鋭い縁が触れない。"))
+        if brief.get("limitations"):
+            checks.append(QualityCheck(
+                "reference_match", "未確定形状の照合",
+                "正面・側面・背面の資料と仮縫い写真を並べ、丈・切替・装飾位置を記録する。",
+                "推定箇所の寸法と取付位置を着用者・製作者が承認している。"))
     if construction.get("closure") not in (None, "none"):
         checks.append(QualityCheck(
             "closure_load", "開閉部の荷重",
@@ -102,6 +192,19 @@ def production_quality_report(result) -> dict[str, object]:
     blockers: list[str] = []
     blockers.extend(str(item) for item in
                     result.garment_spec.construction.get("unconfirmed_fields") or [])
+    blockers.extend(f"型紙形状: {message}" for message in pattern_geometry_warnings(
+        [*result.finalized_parts, *result.lining_parts]))
+    blockers.extend(f"裾パネル: {message}" for message in hem_extension_warnings(
+        result.finalized_parts,
+        result.garment_spec.construction.get("costume_project_brief")))
+    brief = result.garment_spec.construction.get("costume_project_brief")
+    if isinstance(brief, dict) and brief.get("key") == "endministrator_female":
+        blockers.extend(
+            f"袖付け合印: {message}" for message in
+            endministrator_notch_pairing_warnings(result.finalized_parts))
+        blockers.extend(
+            f"脇縫い線: {message}" for message in
+            endministrator_side_seam_warnings(result.finalized_parts))
     blockers.extend(
         f"縫い合わせ: {warning.message}"
         for warning in check_seam_compatibility(result.finalized_parts))

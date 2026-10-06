@@ -1,0 +1,19 @@
+# 管理人（女性）衣装：品質検証の引き継ぎ
+
+この文書は正面画像を基にしたPatternForgeのローカル試作について、**確認したことと未確認のことを分ける**。市販品同等の認証ではない。背面・側面形状、生地物性、着用者へのフィット、縫製・装飾の耐久性は実測していない。
+
+## 今回の改善と確認
+
+- 近傍100寸法のデジタル製図検査では79件が通過、21件は肩幅・胸ダーツ等の根拠ある停止条件を保持した。脇線補正なしの対照は72件通過で、補正による通過増は7件、例外0件。これは人口の着用合格率ではない。[結果](../output/endministrator_lower_shell_flared_v2/size_grid_nearby100_20261007.json)
+- 3D入力の書き出しは100件中100件成功。外周検査を追加した時点では身頃外周不一致70件と裾ダーツ未縫合51件で入力準備完了0件だった。その後、凹部の欠けた三角領域だけを補って全外周を照合し直し、[再検査](../output/endministrator_lower_shell_flared_v2/size_grid_3d_export_nearby100_gapfill_strict_20261007.json)では外周不一致0件、裾ダーツ未縫合51件、入力形式対応49件となった。**49件は布形状・見た目の合格ではない。**
+- 三角メッシュ検査に、有限座標、面の重複・潰れ、非多様体の辺、孤立島、面の向き、縫い線輪郭との面積差・外周一致を追加。面積差は0.5%以内とし、異常データを拒否するテストを追加した。関連65テストが通過した。
+- B112体型の新しい型紙JSONで24フレームのBlender布試作を再実行。前A/B・後Cの紙辺長差95百分位は29.38/34.52/12.01%、暫定形状判定は不合格。正面では胸・前開きが崩れ、袖は型紙由来でなく参照造形からの借用。[レポート](../output/endministrator_lower_shell_flared_v2/drape_b112_fresh_export_regression/pattern_panel_drape_report.json)／[正面](../output/endministrator_lower_shell_flared_v2/drape_b112_fresh_export_regression/pattern_shell_smoothed_front.png)／[側面](../output/endministrator_lower_shell_flared_v2/drape_b112_fresh_export_regression/pattern_shell_smoothed_side.png)／[背面](../output/endministrator_lower_shell_flared_v2/drape_b112_fresh_export_regression/pattern_shell_smoothed_back.png)
+- 100寸法のうち裾ダーツ未縫合51件は、上身頃に20cm超の三角辺があり、最大49.778cm。境界を残すだけでは布計算用の面密度にはならない。単純な細分化は別の比較試験でひずみと見た目を悪化させたため、採用していない。
+
+## 市販品質との未達差
+
+現行の管理人衣装は、型紙の一部と3Dプレビューの技術試作であり、**市販完成衣装と同等ではない**。特に型紙由来袖の立体配置・縫合、上身頃と下身頃の布の余り幅・接合、前開きの形、背面資料、装飾の固定方式、素材選定、着用試験が未解決である。静止画の見た目だけでフィットや耐久性を合格にしない。
+
+次に必要な入力は、対象衣装の背面・側面・装飾拡大の参照、着用者の採寸と姿勢、実際に使う表地・裏地の試験片、仮縫いの前後左右写真と測定値である。それが揃うまでは、紙上の自動検査を通った型紙も本番布の裁断用として確定しない。
+
+実験の詳細と不採用の理由は[下身頃・縫合試験ログ](endministrator_lower_shell_trial.md)に記録した。公開・GitHubへの送信は行っていない。

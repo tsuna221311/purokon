@@ -33,6 +33,7 @@ from engine.lining import (CB_PLEAT_DEPTH_CM, CB_PLEAT_FABRIC_CM,
                             spread_at_center, yardage_reference_note)
 from engine.measurements import Measurements
 from engine.pipeline import PatternForgePipeline, build_garment_spec
+from engine.seam import finalize_from_stitch_line
 
 STANDARD = Measurements(84, 68, 92, 160, 54, 37)
 #: 縫い線どうしの比較なので、0.005cm(50ミクロン)まで一致を求める。
@@ -90,8 +91,8 @@ def test_the_hem_reduction_is_the_two_centimetres_the_source_states():
     assert LINING_HEM_REDUCTION_CM == 2.0
 
 
-def test_every_lining_piece_is_exactly_two_centimetres_shorter_at_the_hem(lined):
-    """裾の縫い代が2cm減った分だけ、裁断線の丈が2cm縮んでいること。
+def test_every_free_lining_hem_is_exactly_two_centimetres_shorter(lined):
+    """自由な裾は2cm短くし、カフスに接ぐ袖口は短くしないこと。
 
     「だいたい短い」では意味が無い。裏地が表から見えるかどうかは、
     この2cmがそのとおり出ているかで決まる。
@@ -100,7 +101,9 @@ def test_every_lining_piece_is_exactly_two_centimetres_shorter_at_the_hem(lined)
     for part in lined.lining_parts:
         counterpart = outer[part.part_type][0]
         delta = _height(part.cut_line) - _height(counterpart.cut_line)
-        assert delta == pytest.approx(-LINING_HEM_REDUCTION_CM, abs=0.01), (
+        expected = (0.0 if counterpart.hem_edge_is_joined
+                    else -LINING_HEM_REDUCTION_CM)
+        assert delta == pytest.approx(expected, abs=0.01), (
             f"{part.part_type}: 裾が{-delta:.3f}cmしか短くなっていない")
 
 
@@ -189,6 +192,44 @@ def test_the_lining_notches_sit_where_the_outer_notches_do(lined):
                        for (a, _), (c, _) in zip(part.notches, counterpart.notches))
         else:
             assert part.notches == counterpart.notches, part.part_type
+
+
+def test_lining_hem_notch_ends_at_its_own_cut_edge():
+    """A 3 cm outer hem must not leave a notch 2 cm beyond the lining edge."""
+    stitch = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0),
+              (0.0, 10.0), (0.0, 0.0)]
+    outer = finalize_from_stitch_line(
+        "sleeve", "straight", stitch, seam_allowance_cm=1.0,
+        hem_seam_allowance_cm=3.0, notch_points=[(5.0, 10.0)])
+    lining = lining_part(outer, hem_seam_allowance_cm=3.0)
+    assert lining is not None
+    assert outer.notches[0][0] == lining.notches[0][0]
+    assert outer.notches[0][1][1] == pytest.approx(13.0)
+    assert lining.notches[0][1][1] == pytest.approx(11.0)
+
+
+def test_cuffed_sleeve_wrist_is_a_joining_seam_not_a_hem(lined):
+    """The global 3 cm hem setting must not widen a cuff attachment edge."""
+    sleeves = [part for part in lined.finalized_parts if part.part_type == "sleeve"]
+    linings = [part for part in lined.lining_parts if part.part_type == "sleeve"]
+    assert len(sleeves) == len(linings) == 2
+    for outer, inner in zip(sleeves, linings):
+        assert outer.hem_edge_is_joined
+        assert outer.hem_seam_allowance_cm == pytest.approx(1.0)
+        assert max(y for _, y in outer.cut_line) - max(y for _, y in outer.stitch_line) == pytest.approx(1.0)
+        assert max(y for _, y in inner.cut_line) - max(y for _, y in inner.stitch_line) == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("style", ["circle", "pleated"])
+def test_curved_skirt_lining_with_zero_hem_keeps_every_stitch_inside(tmp_path, style):
+    result = PatternForgePipeline(output_dir=str(tmp_path)).generate_from_selection(
+        build_garment_spec(skirt_style=style, sleeve_style=None), STANDARD,
+        hem_seam_allowance_cm=1.0, lining=True, skip_export=True)
+    for part in result.lining_parts:
+        if part.part_type == "skirt":
+            assert Polygon(part.cut_line).is_valid
+            assert Polygon(part.cut_line).buffer(1e-6).covers(
+                Polygon(part.stitch_line))
 
 
 def test_the_lining_cut_line_stays_a_valid_simple_polygon(lined):

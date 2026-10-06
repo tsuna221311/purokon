@@ -22,7 +22,7 @@ from .bodice_fit import (
 from .darts import (
     WAIST_DART_SHARE_SIDE_SEAM,
     apply_bust_dart, bust_dart_split_for_part, apply_pants_waist_dart, apply_skirt_waist_dart,
-    retrue_bust_darts,
+    retrue_bust_darts, retrue_bodice_waist_darts,
     apply_waist_dart, waist_dart_hip_limited,
 )
 from .measurements import Measurements, STANDARD_M
@@ -502,6 +502,8 @@ def scale_template(part_type: str, variation: str, segments: list,
     # ウエスト絞り・裾の開きが口の点を動かす(実測0.138cmずれていた)。
     if bust_dart_count:
         scaled = retrue_bust_darts(scaled)
+    if waist_dart_count and part_type in BODICE_PART_TYPES:
+        scaled = retrue_bodice_waist_darts(scaled)
     min_x, min_y, max_x, max_y = bounding_box(scaled)
     # round40: 基準点を変形後の座標へ写して持たせる。knots/y_knotsは
     # fit_anchors/fit_anchors_yと同じ並びの (変形前, 変形後) なので、

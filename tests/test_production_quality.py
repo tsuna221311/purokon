@@ -1,6 +1,7 @@
 from engine.measurements import Measurements
 from engine.pipeline import PatternForgePipeline, build_garment_spec
-from engine.production_quality import fitting_checklist, production_quality_report
+from engine.production_quality import (fitting_checklist, pattern_geometry_warnings,
+                                       production_quality_report)
 
 
 MEASUREMENTS = Measurements(84, 68, 92, 160, 54, 37)
@@ -42,3 +43,67 @@ def test_summary_exposes_machine_readable_quality_report(tmp_path):
     summary = _result(tmp_path).summary()
     assert summary["production_quality"]["physical_signoff_required"] is True
     assert summary["production_quality"]["fitting_checklist"]
+
+
+def test_self_intersecting_cut_line_blocks_digital_readiness(tmp_path):
+    result = _result(tmp_path)
+    result.finalized_parts[0].cut_line = [
+        (0.0, 0.0), (5.0, 5.0), (0.0, 5.0),
+        (5.0, 0.0), (0.0, 0.0)]
+    report = production_quality_report(result)
+    assert report["digital_ready"] is False
+    assert any("自己交差" in item for item in report["blockers"])
+
+
+def test_cut_line_inside_stitch_line_blocks_digital_readiness(tmp_path):
+    from shapely.geometry import Polygon
+
+    result = _result(tmp_path)
+    part = result.finalized_parts[0]
+    smaller = Polygon(part.stitch_line).buffer(-1.0)
+    assert not smaller.is_empty
+    part.cut_line = list(smaller.exterior.coords)
+    assert any("縫い線の内側" in item
+               for item in pattern_geometry_warnings(result.finalized_parts))
+    assert production_quality_report(result)["digital_ready"] is False
+
+
+def test_non_finite_cut_coordinate_is_reported_instead_of_crashing(tmp_path):
+    result = _result(tmp_path)
+    result.finalized_parts[0].cut_line[0] = (float("nan"), 0.0)
+    report = production_quality_report(result)
+    assert report["digital_ready"] is False
+    assert any("座標が不正" in item for item in report["blockers"])
+
+
+def test_grainline_outside_finished_piece_blocks_digital_readiness(tmp_path):
+    result = _result(tmp_path)
+    result.finalized_parts[0].grainline = {
+        "line": ((10000.0, 0.0), (10000.0, 10.0)), "arrows": []}
+    report = production_quality_report(result)
+    assert report["digital_ready"] is False
+    assert any("布目線" in item for item in report["blockers"])
+
+
+def test_notch_that_does_not_reach_cut_edge_blocks_digital_readiness(tmp_path):
+    result = _result(tmp_path)
+    part = next(p for p in result.finalized_parts if p.notches)
+    origin, end = part.notches[0]
+    part.notches[0] = (origin, ((origin[0] + end[0]) / 2,
+                                (origin[1] + end[1]) / 2))
+    report = production_quality_report(result)
+    assert report["digital_ready"] is False
+    assert any("裁断線に届いていません" in item for item in report["blockers"])
+
+
+def test_inward_notch_blocks_digital_readiness(tmp_path):
+    from shapely.geometry import Polygon
+
+    result = _result(tmp_path)
+    part = next(p for p in result.finalized_parts if p.notches)
+    origin, _ = part.notches[0]
+    center = Polygon(part.stitch_line).representative_point()
+    part.notches[0] = (origin, (center.x, center.y))
+    report = production_quality_report(result)
+    assert report["digital_ready"] is False
+    assert any("型紙本体を横切っています" in item for item in report["blockers"])

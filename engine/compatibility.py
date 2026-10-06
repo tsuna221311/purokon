@@ -1341,15 +1341,17 @@ def check_seam_compatibility(finalized_parts: list) -> list[CompatibilityWarning
     # 5. 前身頃+後ろ身頃の袖ぐり vs 袖(sleeve)の袖山
     # (round11で追加、round12で絶対値比較に改めた。上記
     #  SLEEVE_CAP_EASE_CMのコメントに経緯を記載)。
-    # front_bodice_zip_panelは対象外(armhole_lengthのdocstring参照)。
-    armhole_front_parts = _all(finalized_parts, {"front_bodice"})
+    # Zip-front halves carry the measured length of the unsplit front from
+    # which they were drafted.  Include both halves in the finished check.
+    armhole_front_parts = _all(finalized_parts,
+                               {"front_bodice", "front_bodice_zip_panel"})
     armhole_back_parts = _all(finalized_parts, {"back_bodice"})
     if armhole_front_parts and armhole_back_parts and sleeve_parts:
         front_armholes = [armhole_length(p) for p in armhole_front_parts]
         back_armholes = [armhole_length(p) for p in armhole_back_parts]
         if all(v is not None for v in front_armholes) and all(v is not None for v in back_armholes):
-            # armhole_lengthは1パーツぶん(左右2つ分)を返すので、
-            # 「片腕ぶんの袖ぐり周長」は前後の合計を2で割った値になる。
+            # Normal front/back pieces contribute both arms; zip halves
+            # contribute one each.  In either case the total spans two arms.
             armhole_per_arm = (sum(front_armholes) + sum(back_armholes)) / 2.0
             # round76: ドロップショルダーかどうかは、身頃が「下げた脇の下」を
             # 持っているかで分かる(`engine/drop_shoulder.py`)。生成側
@@ -1454,7 +1456,8 @@ def check_seam_compatibility(finalized_parts: list) -> list[CompatibilityWarning
     #      ボートネックと他を混ぜる … 差4.10〜4.89cm
     #        ※ボートネックだけ首の開きが1.75倍広く、そのぶん肩線が短い。
     #    許容誤差(_ABS_TOLERANCE_CM=1.5cm)は、前者を通し後者を捕らえる。
-    shoulder_front_parts = _all(finalized_parts, {"front_bodice"})
+    shoulder_front_parts = _all(finalized_parts,
+                                {"front_bodice", "front_bodice_zip_panel"})
     shoulder_back_parts = _all(finalized_parts, {"back_bodice"})
     if shoulder_front_parts and shoulder_back_parts:
         front_shoulders = [shoulder_seam_length(p) for p in shoulder_front_parts]
@@ -1519,5 +1522,20 @@ def unchecked_seams(finalized_parts: list) -> list[str]:
                 "型紙は、首ぐりの長さを測る方法をまだ持っていないためです）。"
                 "衿を付ける前に、型紙の首ぐりに紙の衿を当てて長さを"
                 "見比べてください。")
+
+    zip_fronts = _all(finalized_parts, {"front_bodice_zip_panel"})
+    if zip_fronts:
+        if _all(finalized_parts, {"sleeve"}) and not all(
+                armhole_length(p) is not None for p in zip_fronts):
+            notes.append("前開き身頃と袖の縫い合わせ長さを測定できませんでした。"
+                         "本番裁断前に袖山と前後袖ぐりを紙上で照合してください。")
+        if _all(finalized_parts, {"back_bodice"}) and not all(
+                shoulder_seam_length(p) is not None for p in zip_fronts):
+            notes.append("前開き身頃と後ろ身頃の肩線の長さを測定できませんでした。"
+                         "本番裁断前に前後の肩線を紙上で照合してください。")
+        if _all(finalized_parts, {"hood"}) and not all(
+                neckline_length(p) is not None for p in zip_fronts):
+            notes.append("前開き身頃とフードの首ぐり長さを測定できませんでした。"
+                         "本番裁断前に付け根を紙上で照合してください。")
 
     return notes

@@ -229,6 +229,7 @@ from engine.pipeline import (
     merge_custom_panel_requests,
 )
 from engine.segmentation import SimpleSilhouetteSegmenter
+from engine.outfit_appearance import analyze_outfit_appearance
 
 # モジュールレベルで最低限のロギングを設定する。`logging.basicConfig` は
 # root loggerにハンドラが無い場合のみ効くため、gunicorn配下で既にログ設定が
@@ -507,7 +508,8 @@ def _set_security_headers(response):
     response.headers.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+        "img-src 'self' data: blob:; connect-src 'self' blob:; "
+        "object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
     )
     # round48: 実際にヘッダーを読み出して、付いていなかった3つを足す。
     # どれもこのアプリが**一度も使っていない**機能を閉じるもので、
@@ -2374,6 +2376,10 @@ def _respond_illustration(inputs: GenerationInputs):
     accessory_3d_result, vendor_package_result = _export_accessory_outputs(
         result, custom_panel_specs, accessory_3d)
     payload = result.summary()
+    # 3D衣装の見た目は縫製用パーツ名とは別に参照画から推定する。たとえば
+    # 開いたコートの裾は型紙側でスカートと誤判定されても、プレビューまで
+    # スカートに固定しない。背面等が不明なため常に要確認として返す。
+    payload["outfit_appearance"] = analyze_outfit_appearance(image[0])
     payload["production_status"] = _production_status(result)
     if draft_preview_path:
         payload["preview_svg"] = f"/download/{result.job_id}/svg"
@@ -2418,6 +2424,8 @@ def _respond_illustration(inputs: GenerationInputs):
             for panel in custom_panel_specs
         ],
         "accessory_3d": accessory_3d,
+        # 画像自体は残さず、プレビューに必要な小さな推定情報だけ保存する。
+        "outfit_appearance": payload["outfit_appearance"],
         "illustration_stage": illustration_stage,
         "generation_kwargs": {
             "allow_rotation": allow_rotation,
@@ -2706,6 +2714,14 @@ def _respond_manual(inputs: GenerationInputs):
     spec = inputs.spec
     stash = inputs.stash
     used_today = inputs.used_today
+
+    if costume_project:
+        # Preserve the garment-specific handoff plan in the exported PDF.
+        # Cut the overlays separately from the coat shell by default.
+        spec.construction["costume_project_brief"] = costume_project.as_dict()
+        fabric_groups = dict(fabric_groups or {})
+        for area, fabric_name in costume_project.fabric_group_defaults:
+            fabric_groups.setdefault(area, fabric_name)
 
     generation_kwargs = {
         "allow_rotation": allow_rotation,
@@ -4332,6 +4348,7 @@ def regenerate_job(job_id: str):
             if accessory_3d:
                 _export_accessory_outputs(result, regen_custom_specs, accessory_3d)
             payload = result.summary()
+            payload["outfit_appearance"] = regen_spec.get("outfit_appearance")
             db.record_job(result.job_id, owner_key, part_count=payload["part_count"],
                           waste_ratio=payload["waste_ratio"],
                           spec_json=json.dumps(regen_spec), project_name=project_name)

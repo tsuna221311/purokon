@@ -173,7 +173,9 @@ class FabricGroup:
 
 
 def split_parts(parts: list, assignments: dict[str, str] | None,
-                default_name: str = DEFAULT_FABRIC_NAME) -> list[FabricGroup]:
+                default_name: str = DEFAULT_FABRIC_NAME,
+                variation_area_overrides: dict[str, str] | None = None
+                ) -> list[FabricGroup]:
     """パーツを生地ごとに分ける。
 
     並び順は「そのパーツが最初に現れた順」にする。番号や名前の五十音で
@@ -183,10 +185,16 @@ def split_parts(parts: list, assignments: dict[str, str] | None,
     グループ**を返す。呼び出し側はその場合に従来の経路をそのまま通れる。
     """
     assignments = assignments or {}
+    variation_area_overrides = variation_area_overrides or {}
+    known_areas = {area.key for area in ASSIGNABLE_AREAS}
+    if any(area not in known_areas for area in variation_area_overrides.values()):
+        raise FabricGroupError("型紙パーツに指定された生地区分が不正です")
     groups: dict[str, FabricGroup] = {}
     order: list[str] = []
     for part in parts:
-        name = fabric_name_for(part.part_type, assignments, default_name)
+        area = variation_area_overrides.get(getattr(part, "variation", None))
+        name = (assignments.get(area, default_name) if area else
+                fabric_name_for(part.part_type, assignments, default_name))
         if name not in groups:
             groups[name] = FabricGroup(name=name)
             order.append(name)

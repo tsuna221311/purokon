@@ -34,6 +34,10 @@ from .compatibility import (
     shoulder_seam_length, shoulder_seams_match, side_seam_length, unchecked_seams,
     waist_opening_length,
 )
+from .zip_front_geometry import (front_zip_armhole_length_cm,
+                                 front_zip_armhole_path)
+from .endministrator_side_seam_truing import (
+    _front_side_length, true_front_side_seam)
 from .darts import (
     BUST_DART_ELIGIBLE_PART_TYPES, WAIST_DART_BELOW_BP_CM, waist_dart_share,
     _closed_points_from_segments, _x_span_at_y, waist_diamond_dart_lines,
@@ -62,6 +66,7 @@ from .drop_shoulder import (
     too_large_drop_reason,
 )
 from .hood import hood_notes, hood_segments, plan_hood
+from .hem_extensions import pair_hem_extensions
 from .layering import (
     finished_bust_cm, layering_notes, plan_layer, too_tight_to_layer,
 )
@@ -73,7 +78,8 @@ from .illustration_fit import (
 )
 from .nesting import DEFAULT_FABRIC_WIDTHS_CM, NestingResult, best_fabric_width
 from .notches import (
-    armhole_notch_distance_cm, armhole_notch_points, seam_edge_points_at,
+    ARMHOLE_NOTCH_RATIO, armhole_notch_distance_cm, armhole_notch_points,
+    front_zip_armhole_notch_points, seam_edge_points_at,
     side_seam_notch_distance_cm, side_seam_notch_points,
     sleeve_cap_notch_points,
 )
@@ -176,6 +182,7 @@ PAIR_LABELS: dict[str, tuple[str, ...]] = {
     "back_pants": ("左", "右"),
     "skirt": ("前", "後"),
     "front_bodice_zip_panel": ("左", "右"),
+    "hood": ("左", "右"),
 }
 
 # round9で追加: custom_panel(自由形状パーツ)が同一ラベルでquantity>1枚
@@ -256,7 +263,8 @@ def build_garment_spec(neckline: str = "round_neck",
                         cuffs_style: str = "",
                         include_waistband: bool = False,
                         waistband_style: str = "",
-                        princess_line: bool = False) -> GarmentSpec:
+                        princess_line: bool = False,
+                        include_hood: bool = False) -> GarmentSpec:
     """UIのフォーム入力に近い形で GarmentSpec を組み立てる便利関数。
 
     pants_style/collar_style/cuffs_style/waistband_style は、対応する
@@ -345,6 +353,9 @@ def build_garment_spec(neckline: str = "round_neck",
                 "衿を付ける場合は他のネックラインを選んでください。"
             )
         parts.append(PartRequest("collar", collar_style, 1))
+
+    if include_hood:
+        parts.append(PartRequest("hood", "", 2))
 
     if include_waistband:
         if waistband_style not in WAISTBAND_STYLES:
@@ -1141,7 +1152,9 @@ def _drop_shoulder_disclosure(shoulder_drop_cm, drop_run,
         notes.extend(drop_shoulder_notes(
             shoulder_drop_cm, drop_run.armhole_per_arm_cm, cap_height,
             upper_arm_ignored=(measurements.upper_arm is not None
-                               and bool(sleeves))))
+                               and bool(sleeves)),
+            armhole_length_preserved=all(
+                result.armhole_length_preserved for result in drop_run.results)))
     for part_type in sorted(drop_run.failures):
         notes.append(
             f"{part_type_label(part_type)}にはドロップショルダーを"
@@ -1173,6 +1186,7 @@ def _armhole_per_arm_cm(scaled_by_type: dict[str, list[ScaledPart]],
     """
     fronts = scaled_by_type.get("front_bodice", [])
     backs = scaled_by_type.get("back_bodice", [])
+    zip_fronts = scaled_by_type.get("front_bodice_zip_panel", [])
     # round74: 前開きの身頃(front_bodice_zip_panel)でも袖ぐりを測る。
     #
     # 【round73まで何が起きていたか】ここは`front_bodice`しか見ていなかった。
@@ -1194,16 +1208,9 @@ def _armhole_per_arm_cm(scaled_by_type: dict[str, list[ScaledPart]],
     # 袖ぐりを測れないので**警告も出ない**。前を開けただけで袖が入らなく
     # なり、誰も何も言わない状態だった。
     #
-    # 測り方は「割る前の前身頃を測る」。`_front_zip_panel_d`
-    # (scripts/generate_templates.py)は対称な前身頃を中心前で割ったもので、
-    # 片側パネルが持つ袖ぐりは、割る前の左右どちらかとまったく同じ形である。
-    # 変形の基準点(`側`・`肩`)も両者で同じ値へ写る(実測で確認)。輪郭から
-    # 直接測ろうとすると「非対称な輪郭のどこが肩先か」という判定を新しく
-    # 足すことになり、そこを外すと今度は静かに別の値が出る。
-    if not fronts:
-        fronts = list(unsplit_fronts or ())
-    if not fronts or not backs:
-        return None
+    # round77: 分割前の計測値を最終パネルの縫い線と比較すると、4体型で
+    # 片側0.37〜1.38cmの差があった。前開きでは実際に出力する分割済みの
+    # 輪郭を測り、未分割前身頃は分割パネルが無い場合だけ使う。
     # round35: 脇の下の高さ(バストライン)を一緒に渡す。
     #
     # 【なぜ必要か】`armhole_length`は「輪郭の先頭から最初の脇線まで」を
@@ -1220,6 +1227,22 @@ def _armhole_per_arm_cm(scaled_by_type: dict[str, list[ScaledPart]],
             underarm_y_cm=sp.underarm_y_cm,
             reference_lines=([("BL", [(0.0, sp.bust_line_y_cm)])]
                              if sp.bust_line_y_cm is not None else [])))
+
+    if not fronts and zip_fronts:
+        if not backs:
+            return None
+        zip_lengths = [front_zip_armhole_length_cm(
+            segments_to_polyline(sp.segments),
+            sp.underarm_y_cm if sp.underarm_y_cm is not None else sp.bust_line_y_cm)
+            for sp in zip_fronts]
+        back_lengths = [_measure("back_bodice", sp) for sp in backs]
+        if not all(value is not None for value in back_lengths):
+            return None
+        return (sum(zip_lengths) + sum(back_lengths)) / 2.0
+    if not fronts:
+        fronts = list(unsplit_fronts or ())
+    if not fronts or not backs:
+        return None
 
     front_lengths = [_measure("front_bodice", sp) for sp in fronts]
     back_lengths = [_measure("back_bodice", sp) for sp in backs]
@@ -1566,6 +1589,9 @@ def _sleeve_cap_ease_for(finalized_parts: list) -> float | None:
     `PipelineResult.assembly_steps()`と同じ値になるよう、計算はここ1か所。
     """
     fronts = [p for p in finalized_parts if p.part_type == "front_bodice"]
+    if not fronts:
+        fronts = [p for p in finalized_parts
+                  if p.part_type == "front_bodice_zip_panel"]
     backs = [p for p in finalized_parts if p.part_type == "back_bodice"]
     if not fronts or not backs:
         return None
@@ -1849,6 +1875,30 @@ def _reference_lines_for(part_type: str, scaled, measurements: Measurements,
     if with_center and part_type in ("front_bodice", "back_bodice"):
         lines.append(("CF" if part_type == "front_bodice" else "CB",
                        [(center_x, min(ys) + inset), (center_x, max(ys) - inset)]))
+    elif with_center and part_type == "front_bodice_zip_panel":
+        # A zip panel includes an integral facing.  The fold at CF is not the
+        # outer cut edge; omitting it makes the included facing width unusable
+        # at the sewing table.  Clip the line to the actual panel so neckline
+        # shapes and darted outlines never put a mark outside the fabric.
+        cf = _anchor_x(scaled, "cf")
+        if cf is not None:
+            from shapely.geometry import LineString, Polygon
+
+            outline = Polygon(points)
+            # Invalid outlines are reported by the production quality check.
+            # Do not let their optional annotation crash pattern generation.
+            if outline.is_valid:
+                section = outline.intersection(LineString(
+                    [(cf, min(ys) - 1.0), (cf, max(ys) + 1.0)]))
+                segments = ([section] if section.geom_type == "LineString" else
+                            list(getattr(section, "geoms", ())))
+                sections = [segment for segment in segments
+                            if segment.geom_type == "LineString"
+                            and segment.length > 2 * inset]
+                if sections:
+                    segment = max(sections, key=lambda item: item.length)
+                    y0, y1 = sorted((segment.coords[0][1], segment.coords[-1][1]))
+                    lines.append(("CF", [(cf, y0 + inset), (cf, y1 - inset)]))
 
     # BP(バストポイント)。前身頃だけ。左右に1つずつ、十字で示す。
     # round42: 子ども原型は描かない(出典の製図にBPが出てこない。
@@ -1947,13 +1997,23 @@ def _notch_points_by_type(scaled_by_type: dict[str, list[ScaledPart]],
         for part_type in group:
             parts = scaled_by_type.get(part_type)
             if parts:
-                out[part_type] = side_seam_notch_points(
+                side_marks = side_seam_notch_points(
                     _poly(parts[0]), underarm_y=_underarm_y_of(parts[0]),
                     distance_cm=distance)
+                if part_type == "front_bodice_zip_panel" and side_marks:
+                    # This is a *half* front.  Its inner vertical edge is the
+                    # zipper opening, not another side seam.  The direct
+                    # armhole path identifies the outer/right-hand side.
+                    underarm_x = front_zip_armhole_path(
+                        _poly(parts[0]), _underarm_y_of(parts[0]))[0][0]
+                    side_marks = [min(
+                        side_marks, key=lambda mark: abs(mark[0] - underarm_x))]
+                out[part_type] = side_marks
 
     # 2. 袖ぐり ⇔ 袖山: 前は1本、後ろは2本。袖側は袖山の両端から
     #    「身頃の脇の下から合印までの距離」と同じだけ入った位置に打つ。
     fronts = scaled_by_type.get("front_bodice") or []
+    zip_fronts = scaled_by_type.get("front_bodice_zip_panel") or []
     backs = scaled_by_type.get("back_bodice") or []
     if fronts and backs:
         front_poly, back_poly = _poly(fronts[0]), _poly(backs[0])
@@ -1971,6 +2031,31 @@ def _notch_points_by_type(scaled_by_type: dict[str, list[ScaledPart]],
         if sleeves:
             distance = armhole_notch_distance_cm(front_poly, underarm_y=front_underarm)
             out["sleeve"] = sleeve_cap_notch_points(_poly(sleeves[0]), distance)
+            if len(out["sleeve"]) != 3:
+                raise ValueError("袖山の前後合印を縫い線上に配置できません")
+    elif zip_fronts and backs:
+        # A zip panel contains just one armhole.  Place its notch on the
+        # measured underarm-to-shoulder path; the second panel is cut mirrored.
+        front_poly, back_poly = _poly(zip_fronts[0]), _poly(backs[0])
+        front_underarm = _underarm_y_of(zip_fronts[0])
+        back_underarm = _underarm_y_of(backs[0])
+        front_length = front_zip_armhole_length_cm(front_poly, front_underarm)
+        out["front_bodice_zip_panel"] = (
+            out.get("front_bodice_zip_panel", [])
+            + front_zip_armhole_notch_points(front_poly, front_underarm))
+        out["back_bodice"] = (
+            out.get("back_bodice", [])
+            + armhole_notch_points(back_poly, is_back=True,
+                                   underarm_y=back_underarm))
+        sleeves = scaled_by_type.get("sleeve")
+        if sleeves:
+            back_distance = armhole_notch_distance_cm(
+                back_poly, underarm_y=back_underarm)
+            out["sleeve"] = sleeve_cap_notch_points(
+                _poly(sleeves[0]), front_length * ARMHOLE_NOTCH_RATIO,
+                back_distance_cm=back_distance)
+            if len(out["sleeve"]) != 3:
+                raise ValueError("前開き衣装の袖山合印を縫い線上に配置できません")
 
     # 3. ウエストバンド: 縫い付け辺の上に、スカート/パンツの各パーツの
     #    継ぎ目(脇線)が来る位置を示す。
@@ -2050,7 +2135,8 @@ class PatternForgePipeline:
                                    scaled_by_type, fit, ease, effective_seam_cm,
                                    effective_hem_cm, fabric_width_candidates,
                                    allow_rotation, one_way_fabric,
-                                   design_length_overrides, block):
+                                   design_length_overrides, block,
+                                   unsplit_fronts=()):
         """変形したパーツに、合印・ダーツ・縫い代を入れて確定させる。
 
         生地の幅に収まらないパーツは、ここで何枚かに分ける。
@@ -2066,8 +2152,45 @@ class PatternForgePipeline:
         princess_waist_total = 0.0
         split_records: dict[int, list[str]] = {}
         split_panels: dict[str, int] = {}
+        sleeve_has_cuff = any(
+            request.part_type == "cuffs" for request in garment_spec.parts)
         # round16: 合印を「実際に縫い合わせる相手」から決める。
         notch_points_by_type = _notch_points_by_type(scaled_by_type, self.template_db)
+
+        # The unsplit front remains a proxy for neckline and shoulder lengths.
+        # The armhole is instead measured on the actual scaled zip-panel seam;
+        # across four Endministrator sizes the old proxy overstated it by
+        # 0.37–1.38 cm per side.  Keep the final compatibility check aligned
+        # with the contour used to size the sleeve.
+        zip_seam_measurements: dict[str, float] = {}
+        if unsplit_fronts:
+            front = unsplit_fronts[0]
+            proxy = SimpleNamespace(
+                part_type="front_bodice", variation=front.variation,
+                stitch_line=segments_to_polyline(front.segments),
+                underarm_y_cm=front.underarm_y_cm,
+                reference_lines=([("BL", [(0.0, front.bust_line_y_cm)])]
+                                 if front.bust_line_y_cm is not None else []),
+                compatibility_measurements={})
+            front_armhole = armhole_length(proxy)
+            front_neckline = neckline_length(proxy)
+            front_shoulder = shoulder_seam_length(proxy)
+            if front_armhole is not None:
+                zip_seam_measurements["armhole_length"] = front_armhole / 2.0
+            if front_neckline is not None:
+                zip_seam_measurements["neckline_length"] = front_neckline / 2.0
+            if front_shoulder is not None:
+                zip_seam_measurements["shoulder_seam_length"] = front_shoulder
+        zip_fronts = scaled_by_type.get("front_bodice_zip_panel", [])
+        if zip_fronts:
+            direct_lengths = [front_zip_armhole_length_cm(
+                segments_to_polyline(part.segments),
+                part.underarm_y_cm if part.underarm_y_cm is not None
+                else part.bust_line_y_cm)
+                for part in zip_fronts]
+            if max(direct_lengths) - min(direct_lengths) > .05:
+                raise ValueError("Front zip panels have different armhole lengths")
+            zip_seam_measurements["armhole_length"] = direct_lengths[0]
 
         princess_stats: dict[str, dict] = {}
         princess_failures: set[str] = set()
@@ -2212,7 +2335,10 @@ class PatternForgePipeline:
                         request.part_type, scaled, measurements, block=block),
                     notch_points=notch_points_by_type.get(request.part_type),
                     seam_allowance_cm=effective_seam_cm,
-                    hem_seam_allowance_cm=effective_hem_cm,
+                    # 袖口をカフスに縫い付ける場合、その辺は裾ではない。
+                    hem_seam_allowance_cm=(effective_seam_cm
+                                           if request.part_type == "sleeve"
+                                           and sleeve_has_cuff else effective_hem_cm),
                     label_suffix=label_suffix,
                     extra_notch_fractions=extra_notches,
                     dart_count=scaled.dart_count + diamond_count,
@@ -2224,7 +2350,12 @@ class PatternForgePipeline:
                     # 袖ぐりをどこで打ち切るかの判定に使う高さも下がる
                     # (`engine/scaling.py`のScaledPart.underarm_y_cm)。
                     underarm_y_cm=scaled.underarm_y_cm,
+                    compatibility_measurements=(
+                        zip_seam_measurements
+                        if request.part_type == "front_bodice_zip_panel" else None),
                 )
+                if request.part_type == "sleeve" and sleeve_has_cuff:
+                    base_part = replace(base_part, hem_edge_is_joined=True)
 
                 # round35: 生地幅に収まらないパーツは、型紙から**黙って消えて
                 # いた**(engine/nesting.pyがunplacedにし、SVG/PDFは描かない)。
@@ -2376,8 +2507,9 @@ class PatternForgePipeline:
         hood_plans: list = []
 
         # round74: 前開きの身頃しか無い型紙のために、**割る前の前身頃**を
-        # 同じ設定で1枚だけ変形しておく。袖ぐりを測るためだけに使い、
-        # 型紙としては出力しない(`_armhole_per_arm_cm`のコメント参照)。
+        # 同じ設定で1枚だけ変形しておく。衿・フード側の測定と旧経路の
+        # フォールバックに使うが、袖ぐりはround77から分割済みの輪郭で測る。
+        # この代理は型紙として出力しない。
         unsplit_fronts = self._unsplit_fronts_for_measuring(
             garment_spec, scaled_by_type, measurements, fit, block,
             shoulder_drop_cm=shoulder_drop_cm)
@@ -2462,7 +2594,7 @@ class PatternForgePipeline:
                                 fit, block, precomputed, scaled_by_type,
                                 fallback_notes)
         return (precomputed, scaled_by_type, hood_plans,
-                drop_run, fallback_notes)
+                drop_run, fallback_notes, unsplit_fronts)
 
     def _scale_every_part(self, *args, **kwargs):
         """採寸変形の3段階処理を実装本体へ委譲する。"""
@@ -2777,7 +2909,8 @@ class PatternForgePipeline:
         return fabric_group_results
 
     def _nest_on_fabric(self, finalized_parts, fabric_group_assignments, paper,
-                         fabric_width_candidates, allow_rotation, one_way_fabric):
+                         fabric_width_candidates, allow_rotation, one_way_fabric,
+                         variation_area_overrides=None):
         """確定したパーツを生地の上に並べる。
 
         Returns:
@@ -2791,7 +2924,9 @@ class PatternForgePipeline:
         # 1種類のままなら、この行より下はround53までと同じ経路を通る。
         # round57: 用紙(A4/A3)。知らない名前はここで弾く(黙って既定にしない)。
         paper_obj = get_paper(paper)
-        fabric_split = split_fabric_groups(finalized_parts, fabric_group_assignments)
+        fabric_split = split_fabric_groups(
+            finalized_parts, fabric_group_assignments,
+            variation_area_overrides=variation_area_overrides)
         multi_fabric = len(fabric_split) > 1
         nesting_parts = fabric_split[0].parts if multi_fabric else finalized_parts
 
@@ -2802,7 +2937,8 @@ class PatternForgePipeline:
 
     def _draw_lining(self, finalized_parts, lining, effective_seam_cm,
                       effective_hem_cm, fabric_width_candidates,
-                      allow_rotation, one_way_fabric, scope=None):
+                      allow_rotation, one_way_fabric, scope=None,
+                      custom_panel_scopes=None):
         """裏地の型紙を引いて、裏地だけで並べ直す。
 
         Returns:
@@ -2829,7 +2965,7 @@ class PatternForgePipeline:
                 lining_note_list.extend(scope_notes)
             lining_parts_list = build_lining_parts(
                 finalized_parts, hem_seam_allowance_cm=outer_hem_cm,
-                scope=scope)
+                scope=scope, custom_panel_scopes=custom_panel_scopes)
             if lining_parts_list:
                 lining_nesting = best_fabric_width(
                     lining_parts_list, candidates=fabric_width_candidates,
@@ -2941,9 +3077,34 @@ class PatternForgePipeline:
         # 「元のrequests順序でfinalize」という3パス構成にし、partsの並び順に
         # 依存しない実装にした。
         (precomputed, scaled_by_type, hood_plans,
-         drop_run, fallback_notes) = self._scale_every_part(
+         drop_run, fallback_notes, unsplit_fronts) = self._scale_every_part(
             garment_spec, measurements, segments_by_idx, fit, block,
             alterations, design_lengths, shoulder_drop_cm=shoulder_drop_cm)
+        if ((garment_spec.construction.get("costume_project_brief") or {}).get(
+                "key") == "endministrator_female"
+                and not garment_spec.construction.get(
+                    "disable_endministrator_side_seam_truing", False)):
+            backs = scaled_by_type.get("back_bodice", [])
+            fronts = scaled_by_type.get("front_bodice_zip_panel", [])
+            if len(backs) == 1 and len(fronts) == 2:
+                back_length = _front_side_length(backs[0], backs[0].segments)
+                if back_length is not None:
+                    replacements = {}
+                    reports = []
+                    for front in fronts:
+                        adjusted, record = true_front_side_seam(
+                            front, back_length / 2, tolerance_cm=.5)
+                        replacements[id(front)] = adjusted
+                        reports.append(record)
+                    precomputed = {
+                        key: replacements.get(id(part), part)
+                        for key, part in precomputed.items()}
+                    scaled_by_type["front_bodice_zip_panel"] = [
+                        replacements[id(part)] for part in fronts]
+                    garment_spec.construction["side_seam_truing_report"] = reports
+                    design_notes.append(
+                        "管理人衣装の前後脇縫い線を紙上で再照合・補正しました。"
+                        "実布の仮縫いによる着用適合は未確認です。")
         # round76: 相手がいるのに相手へ合わせられなかったパーツと、
         # ドロップショルダーをどう引いたかを開示する。
         design_notes.extend(fallback_notes)
@@ -2955,11 +3116,14 @@ class PatternForgePipeline:
             design_notes.extend(hood_notes(plan))
         (scaled_parts, finalized_parts, princess_stats, princess_failures,
          princess_waist_total, split_records, split_panels
-         ) = self._finalize_every_part(
+        ) = self._finalize_every_part(
             garment_spec, measurements, precomputed, scaled_by_type,
             fit, ease, effective_seam_cm, effective_hem_cm,
             fabric_width_candidates, allow_rotation, one_way_fabric,
-            design_length_overrides, block)
+            design_length_overrides, block, unsplit_fronts)
+        finalized_parts, hem_pair_notes = pair_hem_extensions(
+            finalized_parts, garment_spec.construction.get("costume_project_brief"))
+        design_notes.extend(hem_pair_notes)
 
         # round52: カスタムパーツにも縫い代が付いていることを言う。
         #
@@ -3072,12 +3236,16 @@ class PatternForgePipeline:
         (paper_obj, fabric_split, multi_fabric,
          nesting_parts, nesting) = self._nest_on_fabric(
             finalized_parts, effective_fabric_assignments, paper,
-            fabric_width_candidates, allow_rotation, one_way_fabric)
+            fabric_width_candidates, allow_rotation, one_way_fabric,
+            (garment_spec.construction.get("costume_project_brief") or {}).get(
+                "fabric_variant_area_overrides"))
         (lining_parts_list, lining_nesting,
          lining_note_list, outer_hem_cm, lining_scope_notes) = self._draw_lining(
             finalized_parts, lining, effective_seam_cm, effective_hem_cm,
             fabric_width_candidates, allow_rotation, one_way_fabric,
-            garment_spec.construction.get("lining_scope"))
+            garment_spec.construction.get("lining_scope"),
+            (garment_spec.construction.get("costume_project_brief") or {}).get(
+                "lined_custom_panel_scopes"))
         design_notes.extend(lining_scope_notes)
         # round38: 買い物メモ。生地幅ごとの必要量は「内部で計算していたのに
         # 捨てていた」数字で、近所の店に置いている幅が違う人には、
@@ -3527,6 +3695,17 @@ class PatternForgePipeline:
                 front = next(item for item in evidence
                              if item.part_type == "front_bodice")
                 requests.append(PartRequest("back_bodice", front.variation, 1))
+            # パンツは前後の型紙がそろって初めて縫える。画像判定では正面資料から
+            # front_pantsだけが検出されることがあるため、同じバリエーションの
+            # 相方を必ず補う（左右2枚ずつ）。
+            if "front_pants" in seen_types and "back_pants" not in seen_types:
+                front_pants = next(item for item in evidence
+                                   if item.part_type == "front_pants")
+                requests.append(PartRequest("back_pants", front_pants.variation, 2))
+            if "back_pants" in seen_types and "front_pants" not in seen_types:
+                back_pants = next(item for item in evidence
+                                  if item.part_type == "back_pants")
+                requests.append(PartRequest("front_pants", back_pants.variation, 2))
 
         if not requests:
             raise ValueError(

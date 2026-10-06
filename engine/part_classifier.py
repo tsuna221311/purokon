@@ -9,6 +9,7 @@ segmentation側のラベルから決定的にpart_typeを割り当てる MockPar
 
 from __future__ import annotations
 import base64
+import colorsys
 import io
 import json
 import logging
@@ -209,12 +210,84 @@ class MockPartClassifier(PartClassifier):
     """
 
     def classify(self, image: Image.Image, region_label: str = "") -> ClassificationResult:
+        if region_label == "lower_body":
+            part_type, variation, confidence = _classify_lower_body_locally(image)
+            return ClassificationResult(
+                part_type=part_type, variation=variation, confidence=confidence,
+                raw={"mode": "mock", "region_label": region_label,
+                     "local_silhouette": True},
+            )
         part_type = _LABEL_TO_PART_TYPE.get(region_label, "front_bodice")
         variation = _DEFAULT_VARIATION.get(part_type, "")
         return ClassificationResult(
             part_type=part_type, variation=variation, confidence=0.3,
             raw={"mode": "mock", "region_label": region_label},
         )
+
+
+def _classify_lower_body_locally(image: Image.Image) -> tuple[str, str, float]:
+    """APIなしでも、支配色の裾幅からパンツとスカートを区別する。
+
+    人物入りの衣装画では背景や横に描かれた小物が輪郭へ混ざるため、画像全体の
+    白黒シルエットではなく、彩度のある画素を色相30度ごとに集計する。最大の
+    色群を衣装とみなし、その連結範囲の上部と裾の幅を比べる。裾が明確に広がる
+    場合だけスカートとし、同幅または細くなる長い筒形はワイドパンツにする。
+    判断材料が少ない線画は従来どおりフレアスカートへ安全にフォールバックする。
+    """
+    sample = image.convert("RGB")
+    sample.thumbnail((128, 160))
+    width, height = sample.size
+    if width < 8 or height < 8:
+        return "skirt", "flare", 0.3
+
+    pixels = sample.load()
+    bins: list[list[tuple[int, int, float]]] = [[] for _ in range(12)]
+    for y in range(height):
+        for x in range(width):
+            r, g, b = pixels[x, y]
+            hue, saturation, value = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+            if saturation < 0.24 or value < 0.10 or value > 0.96:
+                continue
+            # 肌色は衣装の色群から除く。
+            degrees = hue * 360
+            if 10 <= degrees <= 48 and saturation < 0.58 and value > 0.38:
+                continue
+            bins[min(11, int(hue * 12))].append((x, y, saturation))
+    dominant = max(bins, key=lambda group: sum(item[2] for item in group))
+    if len(dominant) < max(18, width * height * 0.006):
+        return "skirt", "flare", 0.3
+
+    xs = [item[0] for item in dominant]
+    ys = [item[1] for item in dominant]
+    x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+    garment_height = y1 - y0 + 1
+    if garment_height < height * 0.22:
+        return "skirt", "flare", 0.3
+
+    def span_between(start: float, end: float) -> float | None:
+        rows: list[float] = []
+        low = y0 + garment_height * start
+        high = y0 + garment_height * end
+        for y in range(max(0, int(low)), min(height, int(high) + 1)):
+            row = [x for x, py, _s in dominant if py == y]
+            if len(row) >= 3:
+                rows.append(max(row) - min(row) + 1)
+        if not rows:
+            return None
+        rows.sort()
+        return rows[len(rows) // 2]
+
+    upper = span_between(.12, .35)
+    hem = span_between(.72, .94)
+    if not upper or not hem:
+        return "skirt", "flare", 0.3
+    flare_ratio = hem / upper
+    if flare_ratio >= 1.22:
+        variation = "flare" if flare_ratio < 1.75 else "circle"
+        return "skirt", variation, 0.46
+    # 裾が上部と同幅の長い下衣は、舞台衣装で頻出するワイドパンツとして扱う。
+    variation = "wide" if flare_ratio >= .35 else "tapered"
+    return "front_pants", variation, 0.44
 
 
 def get_default_classifier() -> PartClassifier:

@@ -267,12 +267,14 @@ def test_sleeve_cap_notches_match_the_armhole_notches(tmp_path, name, measuremen
     measured = sorted(_arc_distance_from_either_end(cap, a) for a, _b in sleeve.notches)
     assert len(measured) == 3, name  # 前1本 + 後ろ2本
     # 前側の1本と、後ろ側の外側の1本が、身頃と同じ距離にある。
-    # 残る1本は後ろを示す2本目で、BACK_DOUBLE_NOTCH_GAP_CMだけ内側。
+    # 残る1本は後ろを示す2本目で、脇下から肩側へさらに
+    # BACK_DOUBLE_NOTCH_GAP_CMだけ進んだ位置。
     from engine.notches import BACK_DOUBLE_NOTCH_GAP_CM
-    assert measured[-1] == pytest.approx(distance, abs=0.1), (name, measured)
     assert measured[-2] == pytest.approx(distance, abs=0.1), (name, measured)
-    assert measured[0] == pytest.approx(distance - BACK_DOUBLE_NOTCH_GAP_CM, abs=0.1), (
+    assert measured[0] == pytest.approx(distance, abs=0.1), (
         name, measured)
+    assert measured[-1] == pytest.approx(distance + BACK_DOUBLE_NOTCH_GAP_CM,
+                                        abs=0.1), (name, measured)
 
 
 def _cap_path(stitch_line):

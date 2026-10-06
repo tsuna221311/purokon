@@ -1,5 +1,5 @@
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from engine.part_classifier import (
     ALLOWED_PART_TYPES,
@@ -33,6 +33,25 @@ def test_mock_classifier_falls_back_for_unknown_label():
     image = Image.new("RGB", (10, 10), "white")
     result = classifier.classify(image, region_label="something_unrecognized")
     assert result.part_type in ALLOWED_PART_TYPES
+
+
+def test_mock_classifier_distinguishes_flared_skirt_from_wide_pants():
+    classifier = MockPartClassifier()
+
+    skirt = Image.new("RGB", (120, 160), "white")
+    ImageDraw.Draw(skirt).polygon([(48, 18), (72, 18), (108, 145), (12, 145)],
+                                  fill="#9b2845")
+    skirt_result = classifier.classify(skirt, region_label="lower_body")
+    assert skirt_result.part_type == "skirt"
+    assert skirt_result.variation in {"flare", "circle"}
+
+    pants = Image.new("RGB", (120, 160), "white")
+    draw = ImageDraw.Draw(pants)
+    draw.rectangle((25, 18, 57, 145), fill="#9b2845")
+    draw.rectangle((63, 18, 95, 145), fill="#9b2845")
+    pants_result = classifier.classify(pants, region_label="lower_body")
+    assert pants_result.part_type == "front_pants"
+    assert pants_result.variation == "wide"
 
 
 def test_extract_json_finds_embedded_object():

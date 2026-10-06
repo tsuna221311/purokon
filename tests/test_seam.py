@@ -108,6 +108,24 @@ def test_every_template_grainline_stays_inside_its_cut_outline():
             part_type, variation, "arrows")
 
 
+@pytest.mark.skipif(not _HAS_SHAPELY, reason="shape-aware grainline requires shapely")
+def test_every_template_grainline_stays_inside_the_finished_piece():
+    """Especially on narrow bands, arrows must not live in seam allowance."""
+    from shapely.geometry import LineString, Polygon
+    from engine.templates_db import REQUIRED_PARTS
+
+    db = TemplateDB()
+    for part_type, variation in REQUIRED_PARTS:
+        part = finalize_part(part_type, variation, db.get(part_type, variation),
+                             seam_allowance_cm=1.0, hem_seam_allowance_cm=3.0)
+        finished = Polygon(part.stitch_line).buffer(1e-8)
+        assert finished.covers(LineString(part.grainline["line"])), (
+            part_type, variation, "line")
+        assert all(finished.covers(LineString(segment))
+                   for segment in part.grainline["arrows"]), (
+            part_type, variation, "arrows")
+
+
 @pytest.mark.skipif(not _HAS_SHAPELY, reason="shape-aware labels require shapely")
 def test_every_template_label_anchor_is_inside_and_clear_of_the_cut_edge():
     """凹形状でも、パーツ名を型紙外や外周線上に置かないこと。"""
@@ -163,6 +181,27 @@ def test_notch_extension_uses_the_nearest_point_on_the_real_cut_outline():
     assert min(_distance_to_segment(end, a, b)
                for a, b in zip(cut, cut[1:])) <= 1e-9
     assert end != marks[0][1]
+
+
+def test_notch_extension_follows_the_seam_normal_near_a_corner():
+    """An adjacent short edge must not steal a mark from its intended hem."""
+    marks = [((0.0, 0.0), (0.0, -0.5))]
+    cut = [(-0.25, -1.0), (10.0, -1.0), (10.0, 3.0),
+           (-0.25, 3.0), (-0.25, -1.0)]
+    # The left edge is 2.5 mm away; the proper hem edge is 1 cm away.
+    assert extend_notches_to_cut_line(marks, cut, 2.0)[0][1] == pytest.approx(
+        (0.0, -1.0))
+
+
+def test_notch_extension_does_not_follow_an_inward_hint_through_the_piece():
+    stitch = [(0.0, 0.0), (10.0, 0.0), (10.0, 2.0),
+              (0.0, 2.0), (0.0, 0.0)]
+    cut = [(-0.5, -0.5), (10.5, -0.5), (10.5, 2.5),
+           (-0.5, 2.5), (-0.5, -0.5)]
+    marks = [((5.0, 0.0), (5.0, 0.5))]
+    assert extend_notches_to_cut_line(marks, cut, 3.0,
+                                      stitch_line=stitch)[0][1] == pytest.approx(
+        (5.0, -0.5))
 
 
 def test_line_intersect_finds_the_correct_crossing_point():
@@ -257,6 +296,74 @@ def test_hem_edge_distances_all_base_when_no_horizontal_edge_at_max_y():
     assert distances == [1.0, 1.0, 1.0]
 
 
+def test_curved_hem_selects_lower_transverse_edges_not_side_seams():
+    outline = [(0.0, 0.0), (10.0, 0.0), (12.0, 10.0),
+               (8.0, 8.0), (4.0, 10.0), (-2.0, 10.0), (0.0, 0.0)]
+    distances = _hem_edge_distances(
+        outline, 1.0, 3.0, curved_hem=True)
+    assert distances == [1.0, 1.0, 3.0, 3.0, 3.0, 1.0]
+
+
+@pytest.mark.parametrize("style", ["circle", "pleated"])
+def test_curved_skirt_hem_really_uses_the_requested_allowance(style):
+    """A horizontal-edge-only rule silently leaves these hems at 1 cm."""
+    segments = TemplateDB().get("skirt", style)
+    regular = finalize_part("skirt", style, segments, seam_allowance_cm=1.0)
+    hemmed = finalize_part(
+        "skirt", style, segments, seam_allowance_cm=1.0,
+        hem_seam_allowance_cm=3.0)
+    assert max(y for _, y in hemmed.cut_line) - max(y for _, y in regular.cut_line) > 1.5
+    assert min(y for _, y in hemmed.cut_line) == pytest.approx(
+        min(y for _, y in regular.cut_line), abs=0.01)
+    if _HAS_SHAPELY:
+        assert _ShapelyPolygon(hemmed.cut_line).is_valid
+
+
+@pytest.mark.skipif(not _HAS_SHAPELY, reason="requires polygon intersections")
+@pytest.mark.parametrize("style", ["circle", "pleated"])
+def test_entire_curved_hem_has_three_centimetres_of_allowance(style):
+    """Checking only the lowest point would miss most of a curved hem."""
+    from math import hypot
+    from shapely.geometry import LineString, Point
+
+    part = finalize_part("skirt", style, TemplateDB().get("skirt", style),
+                         seam_allowance_cm=1.0, hem_seam_allowance_cm=3.0)
+    stitch = _ShapelyPolygon(part.stitch_line)
+    cut = _ShapelyPolygon(part.cut_line)
+    pts = part.stitch_line[:-1]
+    edges = _hem_edge_distances(part.stitch_line, 1.0, 3.0, curved_hem=True)
+    selected = [i for i, width in enumerate(edges) if width == 3.0]
+    assert len(selected) >= 4
+    for index in selected:
+        a, b = pts[index], pts[(index + 1) % len(pts)]
+        midpoint = ((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0)
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        length = hypot(dx, dy)
+        normal = (dy / length, -dx / length)
+        if stitch.contains(Point(midpoint[0] + normal[0] * 0.1,
+                                 midpoint[1] + normal[1] * 0.1)):
+            normal = (-normal[0], -normal[1])
+        ray = LineString([midpoint, (midpoint[0] + normal[0] * 10,
+                                     midpoint[1] + normal[1] * 10)])
+        crossing = cut.boundary.intersection(ray)
+        hits = list(crossing.geoms) if hasattr(crossing, "geoms") else [crossing]
+        assert hits, index
+        width = min(Point(midpoint).distance(hit) for hit in hits)
+        assert width == pytest.approx(3.0, abs=0.02), (style, index, width)
+
+
+@pytest.mark.skipif(not _HAS_SHAPELY, reason="requires polygon containment")
+def test_zero_allowance_pleated_lining_never_cuts_inside_stitch_line():
+    """The subtraction strips must not eat the material at a pleat valley."""
+    part = finalize_part(
+        "skirt", "pleated", TemplateDB().get("skirt", "pleated"),
+        seam_allowance_cm=1.0, hem_seam_allowance_cm=0.0)
+    stitch = _ShapelyPolygon(part.stitch_line)
+    cut = _ShapelyPolygon(part.cut_line)
+    assert cut.is_valid
+    assert cut.buffer(1e-6).covers(stitch)
+
+
 def test_offset_polygon_variable_delegates_to_offset_polygon_when_hem_is_none():
     square = _square(10.0)
     assert offset_polygon_variable(square, 1.0, None) == offset_polygon(square, 1.0)
@@ -283,6 +390,18 @@ def test_offset_polygon_variable_widens_only_the_max_y_edge():
     assert max(ys) == pytest.approx(13.0, abs=0.1)  # 裾側は3cm張り出す
     if _HAS_SHAPELY:
         assert _ShapelyPolygon(result[:-1]).is_valid
+
+
+@pytest.mark.parametrize("part_type", ["collar", "cuffs", "waistband", "custom_panel"])
+def test_hem_setting_does_not_widen_assembly_edges(part_type):
+    """A band's bottom edge is a joining seam, not a fold-up hem."""
+    segments = parse_path("M 0 0 L 20 0 L 20 4 L 0 4 Z")
+    regular = finalize_part(part_type, "", segments, seam_allowance_cm=1.0)
+    with_hem = finalize_part(
+        part_type, "", segments, seam_allowance_cm=1.0,
+        hem_seam_allowance_cm=3.0)
+    assert with_hem.cut_line == regular.cut_line
+    assert with_hem.hem_seam_allowance_cm is None
 
 
 def test_offset_polygon_variable_is_valid_and_larger_than_uniform_offset():
