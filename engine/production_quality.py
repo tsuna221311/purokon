@@ -228,6 +228,18 @@ def production_quality_report(result) -> dict[str, object]:
         f"採寸・補正: {message}" for message in result.measurement_warnings)
     if result.nesting.unplaced:
         blockers.append(f"配置できていない型紙が{len(result.nesting.unplaced)}枚あります")
+    if result.lining_parts:
+        if result.lining_nesting is None:
+            blockers.append("裏地型紙の配置が未計算です")
+        elif result.lining_nesting.unplaced:
+            blockers.append(
+                f"裏地で配置できていない型紙が{len(result.lining_nesting.unplaced)}枚あります")
+    for group in result.fabric_groups:
+        # The first fabric group reuses result.nesting and is already checked.
+        if group.index > 0 and group.nesting.unplaced:
+            blockers.append(
+                f"生地「{group.name}」で配置できていない型紙が"
+                f"{len(group.nesting.unplaced)}枚あります")
     blockers = list(dict.fromkeys(item for item in blockers if item.strip()))
     checklist = fitting_checklist(result)
     return {

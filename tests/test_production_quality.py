@@ -43,6 +43,35 @@ def test_malformed_notch_is_a_blocker_instead_of_a_crash():
     assert "試験片: 合印2の座標が不正です" in warnings
 
 
+def test_unplaced_lining_and_second_fabric_block_digital_release():
+    result = PatternForgePipeline(output_dir="output").generate_from_selection(
+        build_garment_spec(), MEASUREMENTS, lining=True, skip_export=True)
+    assert production_quality_report(result)["digital_ready"] is True
+
+    result.lining_nesting.unplaced.append(result.lining_parts[0])
+    report = production_quality_report(result)
+    assert report["digital_ready"] is False
+    assert any("裏地で配置できていない型紙が1枚" in item
+               for item in report["blockers"])
+
+    result.lining_nesting.unplaced.clear()
+    result.fabric_groups.append(SimpleNamespace(
+        name="別布", index=1, nesting=SimpleNamespace(unplaced=[object()])))
+    report = production_quality_report(result)
+    assert report["digital_ready"] is False
+    assert any("生地「別布」で配置できていない型紙が1枚" in item
+               for item in report["blockers"])
+
+
+def test_missing_lining_layout_blocks_digital_release():
+    result = PatternForgePipeline(output_dir="output").generate_from_selection(
+        build_garment_spec(), MEASUREMENTS, lining=True, skip_export=True)
+    result.lining_nesting = None
+    report = production_quality_report(result)
+    assert report["digital_ready"] is False
+    assert "裏地型紙の配置が未計算です" in report["blockers"]
+
+
 def _result(tmp_path, *, sleeve="straight", skirt="flare"):
     return PatternForgePipeline(output_dir=str(tmp_path)).generate_from_selection(
         build_garment_spec(sleeve_style=sleeve, skirt_style=skirt), MEASUREMENTS)
