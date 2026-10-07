@@ -129,6 +129,18 @@ def test_jp_label_font_actually_registered_not_falling_back_to_helvetica():
     assert pdf_export._LABEL_FONT != "Helvetica"
 
 
+@pytest.mark.parametrize("exporter", [
+    lambda: pdf_export.render_a4_pdf(None, "unused.pdf"),
+    lambda: pdf_export.render_combined_pdf([], "unused.pdf"),
+    lambda: pdf_export.render_projector_pdf(None, "unused.pdf"),
+    lambda: pdf_export.export_pattern(None, ""),
+])
+def test_missing_japanese_font_stops_before_export(monkeypatch, exporter):
+    monkeypatch.setattr(pdf_export, "_LABEL_FONT", "Helvetica")
+    with pytest.raises(RuntimeError, match="日本語フォント"):
+        exporter()
+
+
 def test_jp_label_font_contains_every_character_the_pdf_actually_draws():
     # 実バグの再発防止テスト: A4分割PDF出力(render_a4_pdf)は、ページ情報の
     # 「枚」という文字や、パーツ左右/前後を示す漢字ラベル(PAIR_LABELS)、

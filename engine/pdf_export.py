@@ -103,9 +103,9 @@ A4_USABLE_H_CM = A4_HEIGHT_CM - 2 * A4_MARGIN_CM
 # 軽量サブセットフォント(engine/assets/pattern_label_ja_subset.ttf、
 # IPAゴシックからの派生。ライセンスは同ディレクトリの
 # PATTERN_LABEL_FONT_LICENSE.txt、再構築手順はscripts/build_pattern_label_font.py
-# を参照)を同梱・登録している。フォントファイルが万一読めない場合でも
-# クラッシュはさせず、Helveticaへフォールバックする(この場合、日本語部分は
-# 文字化けするがPDF自体は生成できる)。
+# を参照)を同梱・登録している。フォントファイルが万一読めない場合は
+# モジュールの読み込みだけは継続するが、PDF出力は明示的に停止する。
+# 日本語のパーツ名が欠けた紙を裁断に使わせないためである。
 _JP_FONT_NAME = "PatternForgeJP"
 
 #: round30: 基準線(バスト線・ウエスト線・ヒップ線・中心線・BP)の色。
@@ -125,6 +125,15 @@ def _register_jp_font() -> str:
 
 
 _LABEL_FONT = _register_jp_font()
+
+
+def _require_jp_label_font() -> None:
+    """Never export a cutting PDF whose Japanese part names can disappear."""
+    if _LABEL_FONT != _JP_FONT_NAME:
+        raise RuntimeError(
+            "型紙PDF用の日本語フォントを読み込めません。"
+            "engine/assets/pattern_label_ja_subset.ttf を確認し、"
+            "復旧してから再生成してください。")
 
 #: 貼り合わせ図で、枡の番号(R1-C1)に使う帯の高さ(pt)。round60で追加。
 #: 番号はこの帯に白地を敷いてから描き、パーツの名前はこの帯を避ける。
@@ -1589,6 +1598,7 @@ def render_combined_pdf(sections: list, output_path: str,
     縫う順番は全章に同じものを入れる。1着の服なので、片方の章にだけ
     工程が無いと、そちらの紙を見た人は作り方が分からなくなる。
     """
+    _require_jp_label_font()
     c = rl_canvas.Canvas(output_path, pagesize=paper.pagesize)
     for fabric_name, result, shopping_list in sections:
         _draw_fabric_section(c, result, seam_allowance_cm, hem_seam_allowance_cm,
@@ -1607,6 +1617,7 @@ def render_a4_pdf(result: NestingResult, output_path: str,
                    include_empty_tiles: bool = False,
                    paper: Paper = DEFAULT_PAPER) -> str:
     """ネスティング結果を、実寸1:1のA4(またはA3)分割PDFに書き出す。"""
+    _require_jp_label_font()
     c = rl_canvas.Canvas(output_path, pagesize=paper.pagesize)
     _draw_fabric_section(c, result, seam_allowance_cm, hem_seam_allowance_cm,
                           assembly_steps, shopping_list, fabric_name,
@@ -1693,6 +1704,7 @@ def render_projector_pdf(result: NestingResult, output_path: str,
         それは線が1種類の場合の話で、ここでは裁断線と縫い線を見分ける
         必要がある。両方実線にすると、どちらで裁つのか分からなくなる。
     """
+    _require_jp_label_font()
     width_cm = result.fabric_width_cm + 2 * PROJECTOR_PADDING_CM
     height_cm = max(result.used_length_cm, 1.0) + 2 * PROJECTOR_PADDING_CM
     c = rl_canvas.Canvas(output_path, pagesize=(width_cm * CM, height_cm * CM))
@@ -1854,6 +1866,10 @@ def export_pattern(result: NestingResult, output_dir: str, basename: str = "patt
     フッターは無い点に注意(DXF側は既にcut_line自体にその縫い代が反映済み
     のジオメトリとして出力されるため、数値表記は必須ではない判断)。
     """
+    # Fail before writing even the SVG if the paired cutting PDFs would lose
+    # their Japanese part labels.  A partial bundle is easy to mistake for a
+    # usable pattern set.
+    _require_jp_label_font()
     os.makedirs(output_dir, exist_ok=True)
     svg_path = os.path.join(output_dir, f"{basename}.svg")
     pdf_path = os.path.join(output_dir, f"{basename}.pdf")
