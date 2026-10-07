@@ -9,6 +9,7 @@
 - 三角メッシュ検査に、有限座標、面の重複・潰れ、非多様体の辺、孤立島、面の向き、縫い線輪郭との面積差・外周一致を追加。面積差は0.5%以内とし、異常データを拒否するテストを追加した。関連65テストが通過した。
 - B112体型の新しい型紙JSONで24フレームのBlender布試作を再実行。前A/B・後Cの紙辺長差95百分位は29.38/34.52/12.01%、暫定形状判定は不合格。正面では胸・前開きが崩れ、袖は型紙由来でなく参照造形からの借用。[レポート](../output/endministrator_lower_shell_flared_v2/drape_b112_fresh_export_regression/pattern_panel_drape_report.json)／[正面](../output/endministrator_lower_shell_flared_v2/drape_b112_fresh_export_regression/pattern_shell_smoothed_front.png)／[側面](../output/endministrator_lower_shell_flared_v2/drape_b112_fresh_export_regression/pattern_shell_smoothed_side.png)／[背面](../output/endministrator_lower_shell_flared_v2/drape_b112_fresh_export_regression/pattern_shell_smoothed_back.png)
 - 100寸法のうち裾ダーツ未縫合51件は、上身頃に20cm超の三角辺があり、最大49.778cm。境界を残すだけでは布計算用の面密度にはならない。単純な細分化は別の比較試験でひずみと見た目を悪化させたため、採用していない。
+- 前後袖ぐりの長さが違っても縫える肩合わせ位置を袖山に選び、印刷型紙へ4本目の合印を追加した。B87では前0.831cm・後0.674cmのいせ込みが残る。追加後の[近傍100寸法の2D検査](../output/endministrator_nearby100_printed_shoulder_20261007.json)は79/100通過・例外0で従来と同数。[3D入力監査](../output/endministrator_3d_export_printed_shoulder_20261007.json)は100/100書き出し、100/100で印刷肩印と3Dメッシュの肩位置差0.1cm以内、裾ダーツ未縫合51、入力形式対応49。合印の追加は、立体袖のひずみ・見た目の合格を意味しない。
 
 ## 市販品質との未達差
 
@@ -16,4 +17,4 @@
 
 次に必要な入力は、対象衣装の背面・側面・装飾拡大の参照、着用者の採寸と姿勢、実際に使う表地・裏地の試験片、仮縫いの前後左右写真と測定値である。それが揃うまでは、紙上の自動検査を通った型紙も本番布の裁断用として確定しない。
 
-実験の詳細と不採用の理由は[下身頃・縫合試験ログ](endministrator_lower_shell_trial.md)に記録した。公開・GitHubへの送信は行っていない。
+実験の詳細と不採用の理由は[下身頃・縫合試験ログ](endministrator_lower_shell_trial.md)に記録した。プログラム・試験・関連資料は`codex/patternforge-quality-20261007`ブランチへ送信した。`main`には未統合である。

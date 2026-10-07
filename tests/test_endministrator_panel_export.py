@@ -231,6 +231,13 @@ def test_front_contrast_boundary_fallback_preserves_attachment(measurements):
     if measurements[0] == 87:
         assert sum(host["pattern_mesh"]["boundary_gap_patch_faces"]
                    for host in data["bodice_hosts"]) >= 4
+        for station in data["sleeve_join_audit"][
+                "sleeve_shoulder_stations_for_3d_trial"].values():
+            assert station["3d_trial_station_available"]
+            assert station["front_cap_ease_cm"] >= 0
+            assert station["back_cap_ease_cm"] >= 0
+            assert station["printed_shoulder_mark_matches_3d_station"]
+            assert not station["not_marked_on_printed_pattern"]
     assert [part["mesh_strategy"] for part in data["front_details"]] == [
         "boundary_constrained_fallback", "boundary_constrained_fallback"]
     for detail in data["front_details"]:

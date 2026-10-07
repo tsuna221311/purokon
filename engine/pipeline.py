@@ -38,6 +38,9 @@ from .zip_front_geometry import (front_zip_armhole_length_cm,
                                  front_zip_armhole_path)
 from .endministrator_side_seam_truing import (
     _front_side_length, true_front_side_seam)
+from .endministrator_armhole import (
+    back_armhole_paths, choose_sleeve_shoulder_station, path_length_cm,
+    sleeve_cap_path)
 from .darts import (
     BUST_DART_ELIGIBLE_PART_TYPES, WAIST_DART_BELOW_BP_CM, waist_dart_share,
     _closed_points_from_segments, _x_span_at_y, waist_diamond_dart_lines,
@@ -1969,7 +1972,9 @@ def _princess_warnings(stats: dict[str, dict], failures: set[str]) -> list[str]:
 
 
 def _notch_points_by_type(scaled_by_type: dict[str, list[ScaledPart]],
-                           template_db: TemplateDB) -> dict[str, list]:
+                           template_db: TemplateDB, *,
+                           endministrator_shoulder_notch: bool = False
+                           ) -> dict[str, list]:
     """パーツ種ごとの合印座標を、実際に縫い合わせる相手から決める(round16)。
 
     `engine/notches.py`のモジュールdocstringに、round15までの合印が
@@ -2056,6 +2061,21 @@ def _notch_points_by_type(scaled_by_type: dict[str, list[ScaledPart]],
                 back_distance_cm=back_distance)
             if len(out["sleeve"]) != 3:
                 raise ValueError("前開き衣装の袖山合印を縫い線上に配置できません")
+            if endministrator_shoulder_notch:
+                cap = sleeve_cap_path(_poly(sleeves[0]))
+                back_length = path_length_cm(back_armhole_paths(
+                    back_poly, back_underarm)[1])
+                try:
+                    station = choose_sleeve_shoulder_station(
+                        cap, front_length, back_length,
+                        front_notch_cm=front_length * ARMHOLE_NOTCH_RATIO,
+                        back_notch_cm=back_distance)
+                except ValueError:
+                    # Keep the original three matching marks, but the coat
+                    # quality gate will reject a missing shoulder station.
+                    pass
+                else:
+                    out["sleeve"].append(cap[station])
 
     # 3. ウエストバンド: 縫い付け辺の上に、スカート/パンツの各パーツの
     #    継ぎ目(脇線)が来る位置を示す。
@@ -2155,7 +2175,12 @@ class PatternForgePipeline:
         sleeve_has_cuff = any(
             request.part_type == "cuffs" for request in garment_spec.parts)
         # round16: 合印を「実際に縫い合わせる相手」から決める。
-        notch_points_by_type = _notch_points_by_type(scaled_by_type, self.template_db)
+        brief = garment_spec.construction.get("costume_project_brief") or {}
+        notch_points_by_type = _notch_points_by_type(
+            scaled_by_type, self.template_db,
+            endministrator_shoulder_notch=(
+                isinstance(brief, dict) and
+                brief.get("key") == "endministrator_female"))
 
         # The unsplit front remains a proxy for neckline and shoulder lengths.
         # The armhole is instead measured on the actual scaled zip-panel seam;

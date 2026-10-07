@@ -201,7 +201,8 @@ def production_quality_report(result) -> dict[str, object]:
     if isinstance(brief, dict) and brief.get("key") == "endministrator_female":
         blockers.extend(
             f"袖付け合印: {message}" for message in
-            endministrator_notch_pairing_warnings(result.finalized_parts))
+            endministrator_notch_pairing_warnings(
+                result.finalized_parts, require_shoulder=True))
         blockers.extend(
             f"脇縫い線: {message}" for message in
             endministrator_side_seam_warnings(result.finalized_parts))

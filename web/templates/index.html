@@ -1531,7 +1531,7 @@
                  data-default-avatar-url="{{ url_for('static', filename='models/default-avatar.vrm') }}"
                  role="img" aria-label="服と小物を装着した影付き3Dアバター"></div>
             <canvas id="outfit-preview-canvas" tabindex="0"
-                    aria-label="生成した服と小物の完成イメージ。左右ドラッグで回転、ホイールで拡大縮小、矢印キーで向きを変更できます。"></canvas>
+                    aria-label="生成した服と小物の試作イメージ。左右ドラッグで回転、ホイールで拡大縮小、矢印キーで向きを変更できます。"></canvas>
             <div class="outfit-avatar-controls">
               <div>
                 <strong>アバター</strong>
@@ -1590,12 +1590,12 @@
               <button type="button" id="outfit-show-mannequin" class="is-on" aria-pressed="true">アバターを表示</button>
               <button type="button" id="outfit-reset-view">表示をリセット</button>
             </div>
-            <div class="outfit-color-controls" aria-label="完成イメージの配色">
+            <div class="outfit-color-controls" aria-label="試作イメージの配色">
               <span>配色</span>
               <label>服 <input type="color" id="outfit-garment-color" value="#4f46e5"></label>
               <label>小物 <input type="color" id="outfit-accessory-color" value="#16a34a"></label>
             </div>
-            <div class="outfit-preview-actions" aria-label="完成イメージの保存と拡大">
+            <div class="outfit-preview-actions" aria-label="試作イメージの保存と拡大">
               <button type="button" id="outfit-expand-preview" aria-pressed="false">大きく表示</button>
               <button type="button" id="outfit-save-image">この角度をPNG保存</button>
               <button type="button" id="outfit-save-four-views">正面・背面・左右を1枚に保存</button>

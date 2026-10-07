@@ -14,6 +14,7 @@ from engine.costume_projects import get_costume_project
 from engine.compatibility import armhole_length, sleeve_cap_length, underarm_y_of
 from engine.endministrator_armhole import (arc_of_point_cm, back_armhole_paths,
                                            back_side_paths,
+                                           choose_sleeve_shoulder_station,
                                            front_zip_armhole_path,
                                            front_effective_side_segments,
                                            endministrator_notch_pairing_warnings,
@@ -265,6 +266,7 @@ def export_panels(body: Measurements, *,
             per_path.append(distances)
         bodice_notch_arcs[host["code"]] = per_path
     sleeve_notch_arcs = {}
+    printed_shoulder_arcs = {}
     front_notch_distance = bodice_notch_arcs["A"][0][0]
     back_notch_distances = bodice_notch_arcs["C"][1]
     if abs(front_notch_distance - bodice_notch_arcs["B"][0][0]) > .05:
@@ -274,8 +276,8 @@ def export_panels(body: Measurements, *,
         cap_length = sleeve["sleeve_cap_stitch_length_cm"]
         arcs = [arc_of_point_cm(cap, point)
                 for point in sleeve["notches_cm"]]
-        if len(arcs) != 3 or any(arc is None for arc in arcs):
-            raise ValueError("The sleeve cap must have three sewing notches")
+        if len(arcs) not in (3, 4) or any(arc is None for arc in arcs):
+            raise ValueError("The sleeve cap needs three pairing notches and an optional shoulder mark")
         matched = [arcs[0], cap_length - arcs[1], cap_length - arcs[2]]
         if (abs(matched[0] - front_notch_distance) > .1 or
                 max(abs(actual - expected) for actual, expected in zip(
@@ -285,6 +287,52 @@ def export_panels(body: Measurements, *,
                 f"cap={matched}, front={front_notch_distance}, "
                 f"back={back_notch_distances}")
         sleeve_notch_arcs[sleeve["side"]] = matched
+        printed_shoulder_arcs[sleeve["side"]] = arcs[3] if len(arcs) == 4 else None
+    shoulder_stations = {}
+    for sleeve in sleeves:
+        cap_points = [sleeve["pattern_mesh"]["vertices_cm"][index]
+                      for index in sleeve["cap_mesh_indices"]]
+        front_code = "A" if sleeve["side"] == "左" else "B"
+        front_host = next(host for host in bodice_hosts
+                          if host["code"] == front_code)
+        back_host = next(host for host in bodice_hosts
+                         if host["code"] == "C")
+        front_length = path_length_cm(front_host[
+            "armhole_stitch_paths_cm"][0])
+        back_length = path_length_cm(back_host[
+            "armhole_stitch_paths_cm"][1 if front_code == "A" else 0])
+        try:
+            index = choose_sleeve_shoulder_station(
+                cap_points, front_length, back_length,
+                front_notch_cm=front_notch_distance,
+                back_notch_cm=max(back_notch_distances))
+        except ValueError as exc:
+            shoulder_stations[sleeve["side"]] = {
+                "3d_trial_station_available": False,
+                "reason": str(exc),
+            }
+            continue
+        geometric_apex = min(range(len(cap_points)),
+                             key=lambda candidate: cap_points[candidate][1])
+        front_cap = path_length_cm(cap_points[:index + 1])
+        back_cap = path_length_cm(cap_points[index:])
+        shoulder_stations[sleeve["side"]] = {
+            "3d_trial_station_available": True,
+            "sampled_cap_index": index,
+            "offset_from_geometric_apex_cm": round(
+                path_length_cm(cap_points[:index + 1]) -
+                path_length_cm(cap_points[:geometric_apex + 1]), 3),
+            "front_cap_ease_cm": round(front_cap - front_length, 3),
+            "back_cap_ease_cm": round(back_cap - back_length, 3),
+            "not_marked_on_printed_pattern": True,
+        }
+        printed_arc = printed_shoulder_arcs[sleeve["side"]]
+        shoulder_stations[sleeve["side"]][
+            "printed_shoulder_mark_matches_3d_station"] = (
+                printed_arc is not None and
+                abs(printed_arc - front_cap) <= .1)
+        shoulder_stations[sleeve["side"]][
+            "not_marked_on_printed_pattern"] = printed_arc is None
     sleeve_join_audit = {
         "bodice_armhole_per_arm_cm": per_arm_armhole_cm,
         "direct_contour_armhole_per_arm_cm": (
@@ -304,6 +352,7 @@ def export_panels(body: Measurements, *,
                   for host in bodice_hosts) / 2 for sleeve in sleeves},
         "bodice_notch_distances_from_underarm_cm_by_host": bodice_notch_arcs,
         "sleeve_notch_distances_from_underarm_cm_by_side": sleeve_notch_arcs,
+        "sleeve_shoulder_stations_for_3d_trial": shoulder_stations,
         "notch_pairing_verified_on_2d_stitch_lines": True,
         "3d_armhole_join_verified": False,
         "ease_requires_distribution_at_notches": True,
@@ -323,7 +372,14 @@ def export_panels(body: Measurements, *,
             "darted_hem_hosts_pending_3d_sewing": darted_hem_hosts,
             "bodice_boundary_incomplete": incomplete_bodice_boundaries,
             "simulation_input_ready": not (darted_hem_hosts or
-                                           incomplete_bodice_boundaries),
+                                           incomplete_bodice_boundaries or
+                                           any(not station[
+                                               "3d_trial_station_available"] or
+                                               not station.get(
+                                                   "printed_shoulder_mark_matches_3d_station",
+                                                   False)
+                                               for station in
+                                               shoulder_stations.values())),
             "cut_lines_used_for_simulation": False,
             "physical_materials_measured": False,
             "panels": panels, "bodice_hosts": bodice_hosts,

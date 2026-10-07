@@ -37,6 +37,8 @@ def audit(cases=STRESS_CASES) -> dict:
                     "darted_hem_hosts_pending_3d_sewing"],
                 "bodice_boundary_incomplete": data[
                     "bodice_boundary_incomplete"],
+                "sleeve_shoulder_stations_for_3d_trial": data[
+                    "sleeve_join_audit"]["sleeve_shoulder_stations_for_3d_trial"],
                 "do_not_cut_or_publish_as_ready": data[
                     "do_not_cut_or_publish_as_ready"],
                 "host_mesh_faces": {host["code"]: len(host["pattern_mesh"]["faces"])
@@ -70,6 +72,10 @@ def audit(cases=STRESS_CASES) -> dict:
             "darted_hem_hosts_pending_3d_sewing")) for row in rows),
         "incomplete_bodice_boundary_count": sum(bool(row.get(
             "bodice_boundary_incomplete")) for row in rows),
+        "sleeve_shoulder_station_unavailable_count": sum(any(
+            not station["3d_trial_station_available"] for station in
+            row.get("sleeve_shoulder_stations_for_3d_trial", {}).values())
+            for row in rows),
         "front_detail_boundary_fallback_count": sum(
             strategy == "boundary_constrained_fallback"
             for row in rows for strategy in
@@ -94,5 +100,6 @@ if __name__ == "__main__":
     print(json.dumps({key: report[key] for key in (
         "case_count", "exported_count", "simulation_input_ready_count",
         "dart_pending_count", "incomplete_bodice_boundary_count",
+        "sleeve_shoulder_station_unavailable_count",
         "front_detail_boundary_fallback_count",
         "bodice_boundary_gap_patch_faces")}))

@@ -35,7 +35,8 @@ def arc_of_point_cm(path, point, tolerance_cm=.05):
     return best[1] if best[0] <= tolerance_cm else None
 
 
-def endministrator_notch_pairing_warnings(parts) -> list[str]:
+def endministrator_notch_pairing_warnings(parts, *,
+                                         require_shoulder=False) -> list[str]:
     """Check actual printed front/back/sleeve notch stations before cutting.
 
     This check is intentionally costume-specific.  Other sleeves can use
@@ -84,7 +85,8 @@ def endministrator_notch_pairing_warnings(parts) -> list[str]:
             cap_length = path_length_cm(cap)
             stations = [arc_of_point_cm(cap, origin)
                         for origin, _end in sleeve.notches]
-            if len(stations) != 3 or any(station is None for station in stations):
+            if (len(stations) not in (3, 4) or
+                    any(station is None for station in stations)):
                 return [f"{sleeve.display_name}: 袖山に前1本・後ろ2本の合印が必要です"]
             from_underarm = [stations[0], cap_length - stations[1],
                              cap_length - stations[2]]
@@ -92,6 +94,23 @@ def endministrator_notch_pairing_warnings(parts) -> list[str]:
                     any(abs(a - b) > .1 for a, b in zip(
                         sorted(from_underarm[1:]), back_stations[1]))):
                 return [f"{sleeve.display_name}: 袖山の合印が身頃袖ぐりと対応しません"]
+            if len(stations) == 4:
+                front_length = path_length_cm(front_zip_armhole_path(
+                    fronts[0].stitch_line, underarm_y_of(fronts[0])))
+                back_length = path_length_cm(back_armhole_paths(
+                    back.stitch_line, underarm_y_of(back))[1])
+                try:
+                    index = choose_sleeve_shoulder_station(
+                        cap, front_length, back_length,
+                        front_notch_cm=front_stations[0],
+                        back_notch_cm=max(back_stations[1]))
+                except ValueError as exc:
+                    return [f"{sleeve.display_name}: 肩合わせ位置を決められません: {exc}"]
+                expected = path_length_cm(cap[:index + 1])
+                if abs(stations[3] - expected) > .1:
+                    return [f"{sleeve.display_name}: 肩合わせ印が袖山の縫い位置と一致しません"]
+            elif require_shoulder:
+                return [f"{sleeve.display_name}: 肩合わせ印がありません"]
     except (TypeError, ValueError, IndexError) as exc:
         return [f"袖ぐり・袖山の合印を検査できません: {exc}"]
     return []

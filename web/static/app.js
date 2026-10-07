@@ -3747,7 +3747,7 @@ form.addEventListener("submit", async (event) => {
       productionBox.classList.toggle("note-warn", !production.ready);
       productionBox.classList.toggle("note-info", production.ready);
       productionTitle.textContent = production.ready
-        ? "製作用データとして出力しました"
+        ? "デジタル型紙を出力しました（仮縫い前）"
         : "ラフ確認です — 本番生地を裁断しないでください";
       productionDetail.textContent = production.ready
         ? "確認入力と自動検査を通過しています。実物の仮縫い確認は別途必要です。"
