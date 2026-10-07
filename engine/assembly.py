@@ -475,7 +475,7 @@ def assembly_steps(finalized_parts: list,
     # 分からないことは分からないと書く。
     joined_customs = [p for p in finalized_parts if p.part_type == "custom_panel"
                       and any(label.startswith("接合")
-                              for label, _line in p.reference_lines)]
+                              for label, _line in getattr(p, "reference_lines", ()))]
     if (len(joined_customs) == 3
             and all("下身頃" in p.display_name for p in joined_customs)):
         steps.append((
@@ -486,7 +486,7 @@ def assembly_steps(finalized_parts: list,
         ))
     layered_customs = [p for p in finalized_parts if p.part_type == "custom_panel"
                        and any(label.startswith("重ね")
-                               for label, _line in p.reference_lines)
+                               for label, _line in getattr(p, "reference_lines", ()))
                        and p not in joined_customs]
     if layered_customs:
         steps.append((
