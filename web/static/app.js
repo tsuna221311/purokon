@@ -2064,7 +2064,7 @@ function renderFabricGroups(data) {
     //  同じ鍵で入れている)。
     const prefix = group.index === 0 ? "" : `fabric${group.index + 1}_`;
     const links = [
-      [`${prefix}pdf`, "A4分割PDF", "btn-solid"],
+      [`${prefix}pdf`, `${data.paper || "A4"}分割PDF`, "btn-solid"],
       [`${prefix}svg`, "SVGを開く", "btn-outline"],
       [`${prefix}dxf`, "DXF", "btn-outline"],
       [`${prefix}projector`, "プロジェクター投影用PDF", "btn-outline"],
@@ -3660,6 +3660,11 @@ form.addEventListener("submit", async (event) => {
     if (pdfLink) {
       pdfLink.classList.toggle("hidden", !data.download.pdf);
       if (data.download.pdf) pdfLink.href = data.download.pdf;
+      pdfLink.textContent = `${data.paper || "A4"}分割PDFをダウンロード`;
+    }
+    const liningPdfLink = document.getElementById("download-lining-pdf");
+    if (liningPdfLink) {
+      liningPdfLink.textContent = `裏地の${data.paper || "A4"}分割PDF`;
     }
     const specPdfLink = document.getElementById("download-spec-pdf");
     if (specPdfLink) {

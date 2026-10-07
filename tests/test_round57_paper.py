@@ -21,6 +21,7 @@ Claude APIの経路は tests/test_round57_api_path.py。
 """
 
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -221,6 +222,14 @@ def test_multifabric_a3_sheet_counts_use_selected_paper():
         assert group_result.paper_name == "A3"
         assert group["pdf_sheet_count"] == expected
         assert expected < a4_count
+
+
+def test_pdf_download_labels_use_selected_paper():
+    js = (Path(__file__).resolve().parents[1] / "web/static/app.js").read_text(
+        encoding="utf-8")
+    assert 'pdfLink.textContent = `${data.paper || "A4"}分割PDFをダウンロード`' in js
+    assert 'liningPdfLink.textContent = `裏地の${data.paper || "A4"}分割PDF`' in js
+    assert '[`${prefix}pdf`, `${data.paper || "A4"}分割PDF`' in js
 
 
 @pytest.mark.parametrize("paper, width_cm, height_cm", [
