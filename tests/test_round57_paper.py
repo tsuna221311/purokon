@@ -204,6 +204,25 @@ def test_a3_really_halves_the_number_of_sheets(tmp_path):
         a3.summary()["pdf_sheet_count"], a4.summary()["pdf_sheet_count"])
 
 
+def test_multifabric_a3_sheet_counts_use_selected_paper():
+    spec = build_garment_spec(neckline="round_neck", sleeve_style="straight",
+                              skirt_style="flare")
+    result = PatternForgePipeline(output_dir="output").generate_from_selection(
+        spec, MEAS, paper="a3", fabric_group_assignments={"skirt": "紺サテン"},
+        skip_export=True)
+    groups = result.summary()["fabric_groups"]
+    assert result.summary()["paper"] == "A3"
+    assert len(groups) == 2
+    for group_result, group in zip(result.fabric_groups, groups):
+        expected = len(printed_tile_cells(
+            group_result.nesting, paper=A3_PAPER)[2])
+        a4_count = len(printed_tile_cells(
+            group_result.nesting, paper=A4_PAPER)[2])
+        assert group_result.paper_name == "A3"
+        assert group["pdf_sheet_count"] == expected
+        assert expected < a4_count
+
+
 @pytest.mark.parametrize("paper, width_cm, height_cm", [
     (A4_PAPER, 21.0, 29.7),
     (A3_PAPER, 29.7, 42.0),

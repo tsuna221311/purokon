@@ -2053,7 +2053,7 @@ function renderFabricGroups(data) {
     need.textContent =
       `幅${group.fabric_width_cm}cm の生地を ${(buyCm / 100).toFixed(1)}m`
       + `（実際に使うのは ${group.used_length_cm}cm）／`
-      + `A4分割PDFは実寸の型紙が${group.pdf_sheet_count}枚`;
+      + `${data.paper || "A4"}分割PDFは実寸の型紙が${group.pdf_sheet_count}枚`;
     block.appendChild(need);
 
     const row = document.createElement("div");

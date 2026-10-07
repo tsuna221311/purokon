@@ -510,12 +510,14 @@ class FabricGroupResult:
     #: round57: 白紙の面も印刷する設定で作ったか。生地ごとの枚数も
     #: 同じ設定に従わせる(片方だけ別の数え方をすると食い違う)。
     include_empty_tiles: bool = False
+    paper_name: str = "A4"
 
     def sheet_count(self) -> int:
-        from engine.pdf_export import printed_tile_cells
+        from engine.pdf_export import get_paper, printed_tile_cells
 
         _rows, _cols, cells = printed_tile_cells(
-            self.nesting, include_empty_tiles=self.include_empty_tiles)
+            self.nesting, include_empty_tiles=self.include_empty_tiles,
+            paper=get_paper(self.paper_name))
         return len(cells)
 
     def as_dict(self) -> dict:
@@ -2931,7 +2933,8 @@ class PatternForgePipeline:
                     name=group.name, index=index, parts=list(group.parts),
                     part_labels=group.part_labels, nesting=group_nesting,
                     output_files=group_outputs, shopping_list=group_shopping,
-                    include_empty_tiles=include_empty_tiles))
+                    include_empty_tiles=include_empty_tiles,
+                    paper_name=paper_obj.name))
                 # 裏地と同じやり方で、2種類目以降を`output_files`にも載せる。
                 # ダウンロードのリンクは`output_files`の鍵から作られるので、
                 # ここに入れないと「生成できているのに取りに行けない」になる。
