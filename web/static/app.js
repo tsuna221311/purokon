@@ -1018,6 +1018,8 @@ function renderPartsList(parts) {
 // 組み直す確認用ビュー。外部3Dライブラリや通信を使わず、Canvasへ3D座標を
 // 透視投影するため、オフライン環境でもドラッグで360度確認できる。
 const outfitPreviewBox = document.getElementById("outfit-preview-3d");
+// プロコン版では3D表示を無効化。DOMは旧ジョブとの互換性のため残す。
+const outfitPreviewEnabled = Boolean(outfitPreviewBox && !outfitPreviewBox.hidden);
 const outfitCanvas = document.getElementById("outfit-preview-canvas");
 const outfitSummary = document.getElementById("outfit-preview-summary");
 const outfitAutoRotate = document.getElementById("outfit-auto-rotate");
@@ -1103,6 +1105,7 @@ async function inferOutfitPaletteFromReference() {
 }
 
 illustrationFileInput?.addEventListener("change", () => {
+  if (!outfitPreviewEnabled) return;
   inferredOutfitColor = null;
   inferOutfitPaletteFromReference().then((color) => {
     inferredOutfitColor = color;
@@ -1412,7 +1415,7 @@ function syncOutfitToggle(button, enabled) {
 }
 
 function renderOutfitPreview(data) {
-  if (!outfitPreviewBox || !outfitCanvas) return;
+  if (!outfitPreviewEnabled || !outfitCanvas) return;
   const parts = Array.isArray(data.parts) ? data.parts : [];
   outfitPreviewBox.classList.toggle("hidden", parts.length === 0);
   if (!parts.length) return;
@@ -3548,7 +3551,7 @@ form.addEventListener("submit", async (event) => {
 
   // 送信後は安全のためfile inputを空にするので、3D試着へ使う参照色は
   // 画像がまだ端末内にあるこの時点で確定させる。抽出失敗は生成を妨げない。
-  if (illustrationFileInput?.files?.length) {
+  if (outfitPreviewEnabled && illustrationFileInput?.files?.length) {
     try {
       inferredOutfitColor = await inferOutfitPaletteFromReference();
     } catch (_error) {

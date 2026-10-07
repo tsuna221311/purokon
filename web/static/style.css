@@ -156,7 +156,7 @@ body {
   color: var(--ink);
 }
 
-.hidden { display: none !important; }
+.hidden, [hidden] { display: none !important; }
 
 /* display:noneと違い、スクリーンリーダーには読み上げさせつつ画面上は
    見えなくする（アクセシビリティ用）。プレースホルダーだけでは入力欄の

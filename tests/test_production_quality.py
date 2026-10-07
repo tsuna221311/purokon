@@ -20,6 +20,17 @@ def test_paper_preflight_is_in_physical_checklist_without_generation():
     assert "裁断線" in checks[1].method
 
 
+def test_sleeve_fitting_check_uses_actual_pattern_notch_marks():
+    result = SimpleNamespace(
+        finalized_parts=[SimpleNamespace(part_type="sleeve")],
+        garment_spec=SimpleNamespace(construction={}),
+    )
+    sleeve_check = next(item for item in fitting_checklist(result)
+                        if item.code == "sleeve_cap_toile")
+    assert "前後・肩の合印" in sleeve_check.method
+    assert "前1本・後ろ2本" not in sleeve_check.method
+
+
 def _result(tmp_path, *, sleeve="straight", skirt="flare"):
     return PatternForgePipeline(output_dir=str(tmp_path)).generate_from_selection(
         build_garment_spec(sleeve_style=sleeve, skirt_style=skirt), MEASUREMENTS)

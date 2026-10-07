@@ -10,15 +10,18 @@ def _read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
 
 
-def test_result_contains_webgl_and_private_avatar_controls(client):
+def test_procon_result_does_not_load_unverified_webgl_preview(client):
     html = client.get("/").get_data(as_text=True)
+    assert 'id="outfit-preview-3d" class="outfit-preview-3d hidden" hidden' in html
     assert 'id="outfit-webgl-view"' in html
     assert 'id="outfit-avatar-file"' in html
     assert 'accept=".vrm,.glb,model/gltf-binary"' in html
     assert 'id="outfit-avatar-reset"' in html
     assert "アバターを表示" in html
     assert "サーバーへ送信されません" in html
-    assert 'type="module"' in html and "outfit3d.js" in html
+    assert 'src="/static/outfit3d.js"' not in html
+    assert 'id="field-generate-accessory-stl" disabled' in html
+    assert 'id="download-stl" href="#" class="btn-solid hidden" hidden' in html
 
 
 def test_webgl_viewer_has_pbr_lighting_shadows_and_orbit_controls():

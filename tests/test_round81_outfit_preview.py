@@ -10,22 +10,21 @@ def _js() -> str:
     return (ROOT / "web" / "static" / "app.js").read_text(encoding="utf-8")
 
 
-def test_result_has_accessible_360_degree_outfit_preview(client):
+def test_procon_result_hides_unverified_360_degree_outfit_preview(client):
     html = client.get("/").get_data(as_text=True)
-    assert 'id="outfit-preview-3d"' in html
+    assert 'id="outfit-preview-3d" class="outfit-preview-3d hidden" hidden' in html
     assert 'id="outfit-preview-canvas"' in html
-    assert 'tabindex="0"' in html
-    assert "服と小物を合わせた360°イメージ" in html
-    assert 'data-outfit-view="front"' in html
-    assert 'data-outfit-view="back"' in html
-    assert 'id="outfit-auto-rotate"' in html
+    assert "outfit3d.js" not in html
+    assert 'id="download-stl" href="#" class="btn-solid hidden" hidden' in html
 
 
-def test_preview_is_explicitly_separate_from_manufacturing_dimensions(client):
+def test_procon_result_promotes_2d_manufacturing_files(client):
     html = client.get("/").get_data(as_text=True)
-    assert "物理シミュレーションではありません" in html
-    assert "裁断寸法はPDF・DXF" in html
-    assert "3Dプリント寸法はSTL・3MF" in html
+    assert 'id="download-pdf"' in html
+    assert 'id="download-spec-pdf"' in html
+    assert 'id="download-dxf"' in html
+    assert 'id="download-projector"' in html
+    assert 'id="download-stl" href="#" class="btn-solid hidden" hidden' in html
 
 
 def test_preview_builds_clothing_and_accessories_from_generated_parts():

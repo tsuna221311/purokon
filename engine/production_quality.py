@@ -153,7 +153,7 @@ def fitting_checklist(result) -> list[QualityCheck]:
             "予定する最大動作で身頃が大きく持ち上がらず、血流を妨げない。"))
         checks.append(QualityCheck(
             "sleeve_cap_toile", "袖山のいせ込みと左右差",
-            "本番生地と同条件の仮縫いで前1本・後ろ2本の合印を合わせ、袖山の波打ち・つれと左右の形を正面・側面・背面で比較する。",
+            "本番生地と同条件の仮縫いで型紙の前後・肩の合印を合わせ、袖山の波打ち・つれと左右の形を正面・側面・背面で比較する。",
             "袖山に意図しないギャザー、縫い目の裂け、左右差がなく、腕を動かしても肩先に強いしわが出ない。"))
     construction = result.garment_spec.construction
     brief = construction.get("costume_project_brief")

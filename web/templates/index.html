@@ -902,7 +902,7 @@
             <button type="button" id="add-custom-panel-btn" class="btn-outline">＋ カスタムパーツを追加</button>
             <input type="hidden" name="custom_panels_json" id="custom-panels-json-input" value="[]">
 
-            <div class="field-box" style="margin-top:14px;">
+            <div class="field-box" style="margin-top:14px;" hidden>
               <label class="checkbox-row">
                 <input type="checkbox" name="generate_accessory_stl" id="field-generate-accessory-stl" disabled>
                 <span><strong>この輪郭から3Dプリンター用データも作る</strong></span>
@@ -1461,10 +1461,10 @@
             <a id="download-dxf" href="#" class="btn-outline">DXF（裁断機・CAD向け）</a>
             <!-- round39: プロジェクター投影用(実寸1枚もの)。A4分割とは別物。 -->
             <a id="download-projector" href="#" class="btn-outline">プロジェクター投影用PDF</a>
-            <a id="download-stl" href="#" class="btn-solid hidden">STL（3Dプリンター用）</a>
-            <a id="download-vendor-zip" href="#" class="btn-solid hidden">業者入稿用ZIP</a>
+            <a id="download-stl" href="#" class="btn-solid hidden" hidden>STL（3Dプリンター用）</a>
+            <a id="download-vendor-zip" href="#" class="btn-solid hidden" hidden>業者入稿用ZIP</a>
           </div>
-          <div id="accessory-3d-result" class="field-box note-info hidden" style="margin-top:10px;">
+          <div id="accessory-3d-result" class="field-box note-info hidden" style="margin-top:10px;" hidden>
             <p class="hint note-title">3D小物データを作成しました</p>
             <p class="hint" id="accessory-3d-summary" style="margin:0;"></p>
             <ul class="hint" id="accessory-3d-warnings" style="margin:6px 0 0; padding-left:1.2em;"></ul>
@@ -1519,7 +1519,7 @@
             <img id="preview-img" alt="生成された型紙のプレビュー">
           </div>
 
-          <section id="outfit-preview-3d" class="outfit-preview-3d hidden"
+          <section id="outfit-preview-3d" class="outfit-preview-3d hidden" hidden
                    aria-labelledby="outfit-preview-title">
             <div class="outfit-preview-head">
               <div>
@@ -1870,7 +1870,6 @@
 
   {% include "_footer.html" %}
 
-<script type="module" src="{{ url_for('static', filename='outfit3d.js') }}?v=20261003-garment32"></script>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>
