@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from engine.pdf_export import _shoulder_notch_label_point
+from engine.notch_labels import shoulder_notch_label_point
 
 
 def _placed(kind="sleeve", notch_count=4):
@@ -26,3 +27,6 @@ def test_label_stays_inside_when_placed_part_is_rotated():
         _placed(), 3, ((4.0, 2.0), (5.0, 2.0))) == pytest.approx((3.55, 2.0))
     assert _shoulder_notch_label_point(
         _placed(), 3, ((4.0, 2.0), (4.0, 2.0))) is None
+    assert shoulder_notch_label_point(
+        "sleeve", 4, 3, ((4.0, 2.0), (5.0, 2.0)),
+        inset_cm=1.0) == pytest.approx((3.0, 2.0))

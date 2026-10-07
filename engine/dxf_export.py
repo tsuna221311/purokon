@@ -144,10 +144,14 @@ def render_dxf(result: NestingResult, output_path: str) -> str:
                 msp.add_text("肩", dxfattribs={
                     "layer": "LABEL", "height": 0.35}).set_placement(
                         label_at, align=TextEntityAlignment.MIDDLE_CENTER)
-                msp.add_text("SHOULDER", dxfattribs={
-                    "layer": "LABEL_ID", "height": 0.25}).set_placement(
-                        (label_at[0], label_at[1] - 0.4),
-                        align=TextEntityAlignment.MIDDLE_CENTER)
+                ascii_label = shoulder_notch_label_point(
+                    placed.part.part_type, len(placed.part.notches),
+                    notch_index, (a, b), inset_cm=1.0)
+                if ascii_label is not None:
+                    msp.add_text("SHOULDER", dxfattribs={
+                        "layer": "LABEL_ID", "height": 0.25}).set_placement(
+                            _flip([ascii_label])[0],
+                            align=TextEntityAlignment.MIDDLE_CENTER)
 
         grain = placed.placed_grainline()
         (gx1, gy1), (gx2, gy2) = _flip(list(grain["line"]))
