@@ -2381,12 +2381,13 @@ function renderMultiSizeTotals(totals) {
   const lines = [];
   const width = totals.fabric_recommended_width_cm;
   const length = totals.fabric_recommended_length_cm;
+  const mainFabricLabel = totals.has_other_materials ? "主生地（別布・裏地は含まず）" : "表地";
   if (width && length) {
-    lines.push(`表地: 幅${width}cm を ${(length / 100).toFixed(1)}m`
+    lines.push(`${mainFabricLabel}: 幅${width}cm を ${(length / 100).toFixed(1)}m`
                + `（${totals.size_count}サイズ合わせて）`);
   } else if (totals.no_width_fits_every_size) {
     // 足りない数字を出すより、出せないと言う。
-    lines.push("表地: 全サイズが収まる生地幅がありませんでした"
+    lines.push(`${mainFabricLabel}: 全サイズが収まる生地幅がありませんでした`
                + "（下のサイズごとの欄と、各サイズのPDFの買い物メモを"
                + "見てください）。");
   }
@@ -2402,8 +2403,12 @@ function renderMultiSizeTotals(totals) {
     lines.push(`ファスナー: ${zippers.length}本（開き寸法は ${each}）`);
   }
   if (totals.pdf_sheet_count > 0) {
-    lines.push(`印刷: ${totals.paper || "A4"}で ${totals.pdf_sheet_count}枚`
-               + "（実寸の型紙のページ。貼り合わせ図などは別に付きます）");
+    const breakdown = Array.isArray(totals.pdf_sheet_breakdown)
+      ? totals.pdf_sheet_breakdown.map((item) => `${item.name} ${item.sheet_count}枚`).join(" / ")
+      : "";
+    lines.push(`印刷: ${totals.paper || "A4"}で合計 ${totals.pdf_sheet_count}枚`
+               + (breakdown ? `（${breakdown}）` : "")
+               + "。実寸の型紙ページのみ。貼り合わせ図などは別に付きます。");
   }
   for (const text of lines) {
     const li = document.createElement("li");
@@ -2416,7 +2421,10 @@ function renderMultiSizeTotals(totals) {
     "生地の長さは、サイズごとに別々に裁つ前提で足した値です"
     + "（1枚の布に全サイズを詰め合わせ直した値ではありません）。"
     + "幅は、合計がいちばん短くなるものを選んでいます"
-    + "（サイズごとのおすすめ幅とは違うことがあります）。";
+    + "（サイズごとのおすすめ幅とは違うことがあります）。"
+    + (totals.has_other_materials
+      ? "別布・裏地の必要長はこの主生地の合計に含まず、各サイズの買い物メモで確認してください。"
+      : "");
   box.classList.toggle("hidden", lines.length === 0);
 }
 
@@ -2506,9 +2514,9 @@ function renderMultiSizeResults(data) {
     // round69: 印刷枚数を足した。コンビニで刷る人にはそのまま代金と
     // 待ち時間になる数字で、単一サイズの画面ではround53から出している
     // のに、**サイズ展開だけ出ていなかった**(3サイズで実測143枚)。
-    const sheets = Number(result.pdf_sheet_count);
+    const sheets = Number(result.all_pdf_sheet_count ?? result.pdf_sheet_count);
     const sheetText = Number.isFinite(sheets) && sheets > 0
-      ? ` / ${result.paper || "A4"}で${sheets}枚` : "";
+      ? ` / ${result.paper || "A4"}で衣装全体の型紙${sheets}枚` : "";
     stats.textContent =
       `パーツ数 ${result.part_count} / 布ロス率 ${formatPercent(result.waste_ratio)} / ` +
       `幅${result.fabric_width_cm}cm の生地を ${(buyCm / 100).toFixed(1)}m` + sheetText;

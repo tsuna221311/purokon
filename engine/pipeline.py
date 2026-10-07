@@ -628,6 +628,7 @@ class PipelineResult:
             # 知りたい。PDFを開くまで分からないのは遅すぎる。
             # 数え方はPDFを作る側と同じ関数(printed_tile_cells)を使う。
             "pdf_sheet_count": self.pdf_sheet_count(),
+            "all_pdf_sheet_count": self.all_pdf_sheet_count(),
             # round57: どの用紙で数えた枚数かを、画面が言えるようにする。
             "paper": self.paper_name,
             "waste_ratio": round(self.nesting.waste_ratio, 4),
@@ -685,6 +686,8 @@ class PipelineResult:
                                     if self.lining_nesting else None),
                 "unplaced_count": (len(self.lining_nesting.unplaced)
                                     if self.lining_nesting else 0),
+                "pdf_sheet_count": (self.pdf_sheet_count(self.lining_nesting)
+                                    if self.lining_nesting else 0),
                 "notes": list(self.lining_notes),
             } if self.lining_parts else None,
             # round33: 縫製手順(engine/assembly.py)。型紙は出るが縫う順番が
@@ -734,17 +737,26 @@ class PipelineResult:
     #: これを生成履歴に残すと、画像を保存しなくても同じ型紙を作り直せる。
     resolved_design_lengths: dict[str, float] = field(default_factory=dict)
 
-    def pdf_sheet_count(self) -> int:
-        """A4分割PDFが実際に印刷する枚数(表紙・買い物メモ・縫う順番を除く)。
+    def pdf_sheet_count(self, nesting: NestingResult | None = None) -> int:
+        """選択用紙で実際に印刷する型紙枚数(案内ページを除く)。
 
         表紙に書く枚数と必ず同じ数にするため、PDFを作る側と同じ関数から出す。
         """
         from engine.pdf_export import printed_tile_cells
 
         _rows, _cols, cells = printed_tile_cells(
-            self.nesting, include_empty_tiles=self.include_empty_tiles,
+            nesting if nesting is not None else self.nesting,
+            include_empty_tiles=self.include_empty_tiles,
             paper=get_paper(self.paper_name))
         return len(cells)
+
+    def all_pdf_sheet_count(self) -> int:
+        """表地・別布・裏地の型紙ページ数。案内ページは含めない。"""
+        return (self.pdf_sheet_count()
+                + sum(group.sheet_count() for group in self.fabric_groups
+                      if group.index > 0)
+                + (self.pdf_sheet_count(self.lining_nesting)
+                   if self.lining_nesting is not None else 0))
 
     def _unplaced_warnings(self) -> list[str]:
         """配置できなかったパーツがある場合、その旨を明示する警告文を返す。
@@ -968,10 +980,33 @@ class MultiSizeResult:
                                   .get("front_opening_cm")}
                    for size, summary in summaries.items()
                    if (summary.get("shopping_list") or {}).get("front_opening_cm")]
+        sheet_breakdown: dict[tuple[str, int, str], int] = {}
+        for size in self.sizes:
+            result = self.results.get(size)
+            if result is None:
+                continue
+            if result.fabric_groups:
+                for group in result.fabric_groups:
+                    key = ("fabric", group.index, group.name)
+                    sheet_breakdown[key] = (sheet_breakdown.get(key, 0)
+                                            + group.sheet_count())
+            else:
+                key = ("fabric", 0, "表地")
+                sheet_breakdown[key] = (sheet_breakdown.get(key, 0)
+                                        + result.pdf_sheet_count())
+            if result.lining_nesting is not None:
+                key = ("lining", 0, "裏地")
+                sheet_breakdown[key] = (sheet_breakdown.get(key, 0)
+                                        + result.pdf_sheet_count(result.lining_nesting))
+        has_other_materials = any(kind == "lining" or index > 0
+                                  for kind, index, _name in sheet_breakdown)
         return {
             "size_count": len(summaries),
-            "pdf_sheet_count": sum(s.get("pdf_sheet_count") or 0
-                                    for s in summaries.values()),
+            "pdf_sheet_count": sum(sheet_breakdown.values()),
+            "pdf_sheet_breakdown": [
+                {"name": name, "sheet_count": count}
+                for (_kind, _index, name), count in sheet_breakdown.items()],
+            "has_other_materials": has_other_materials,
             "paper": next((s.get("paper") for s in summaries.values()), None),
             "fabric_by_width_cm": {str(w): total
                                     for w, total in sorted(candidates.items())},

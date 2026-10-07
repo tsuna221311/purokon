@@ -43,7 +43,7 @@ from pathlib import Path
 import pytest
 
 from engine.measurements import Measurements
-from engine.pipeline import PatternForgePipeline, build_garment_spec
+from engine.pipeline import MultiSizeResult, PatternForgePipeline, build_garment_spec
 
 ROOT = Path(__file__).resolve().parents[1]
 _APP_JS_RAW = (ROOT / "web" / "static" / "app.js").read_text(encoding="utf-8")
@@ -93,6 +93,35 @@ def test_the_total_sheet_count_is_the_sum_of_the_sizes(zipped):
     expected = sum(r.summary()["pdf_sheet_count"] for r in zipped.results.values())
     assert totals["pdf_sheet_count"] == expected
     assert totals["pdf_sheet_count"] > 0
+
+
+def test_a3_total_includes_accent_fabric_and_lining_without_double_counting():
+    pipeline = PatternForgePipeline(output_dir="output")
+    spec = build_garment_spec(skirt_style="flare")
+    results = {
+        size: pipeline.generate_from_selection(
+            spec, BASE, paper="a3", lining=True,
+            fabric_group_assignments={"skirt": "別布"}, skip_export=True)
+        for size in ("M", "L")
+    }
+    multi = MultiSizeResult(["M", "L"], BASE, results, "test", "")
+    totals = multi.totals()
+    expected = sum(
+        sum(group.sheet_count() for group in result.fabric_groups)
+        + result.pdf_sheet_count(result.lining_nesting)
+        for result in results.values())
+    assert totals["paper"] == "A3"
+    assert totals["has_other_materials"] is True
+    assert [item["name"] for item in totals["pdf_sheet_breakdown"]] == [
+        "表地", "別布", "裏地"]
+    assert totals["pdf_sheet_count"] == expected
+    assert sum(item["sheet_count"] for item in totals["pdf_sheet_breakdown"]) == expected
+    assert expected > sum(result.pdf_sheet_count() for result in results.values())
+    for result in results.values():
+        assert result.summary()["lining"]["pdf_sheet_count"] == result.pdf_sheet_count(
+            result.lining_nesting)
+        assert result.summary()["all_pdf_sheet_count"] == result.all_pdf_sheet_count()
+        assert result.all_pdf_sheet_count() > result.pdf_sheet_count()
 
 
 def test_the_fabric_total_at_each_width_is_the_sum_of_the_sizes(zipped):
