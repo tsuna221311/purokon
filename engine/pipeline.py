@@ -3278,7 +3278,9 @@ class PatternForgePipeline:
          lining_note_list, outer_hem_cm, lining_scope_notes) = self._draw_lining(
             finalized_parts, lining, effective_seam_cm, effective_hem_cm,
             fabric_width_candidates, allow_rotation, one_way_fabric,
-            garment_spec.construction.get("lining_scope"),
+            (garment_spec.construction.get("lining_scope") or
+             (garment_spec.construction.get("costume_project_brief") or {}).get(
+                 "lining_scope")),
             (garment_spec.construction.get("costume_project_brief") or {}).get(
                 "lined_custom_panel_scopes"))
         design_notes.extend(lining_scope_notes)

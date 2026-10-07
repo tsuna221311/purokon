@@ -2856,7 +2856,7 @@ def _api_generate_impl():
         lining = _bool_field(request.form, "lining")
         lining_scope = request.form.getlist("lining_scope") if lining else []
         allowed_lining_scope = {
-            "front_bodice", "back_bodice", "sleeve", "skirt",
+            "front_bodice", "back_bodice", "sleeve", "hood", "skirt",
             "front_pants", "back_pants",
         }
         unknown_lining_scope = sorted(set(lining_scope) - allowed_lining_scope)
@@ -3917,7 +3917,7 @@ def api_v1_generate():
         lining = _bool_field(request.form, "lining")
         lining_scope = request.form.getlist("lining_scope") if lining else []
         allowed_lining_scope = {
-            "front_bodice", "back_bodice", "sleeve", "skirt",
+            "front_bodice", "back_bodice", "sleeve", "hood", "skirt",
             "front_pants", "back_pants",
         }
         unknown_lining_scope = sorted(set(lining_scope) - allowed_lining_scope)

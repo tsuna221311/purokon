@@ -96,6 +96,7 @@ LINING_SCOPE_PART_TYPES = {
     "back_bodice": frozenset({"back_bodice", "back_bodice_center",
                                "back_bodice_side"}),
     "sleeve": frozenset({"sleeve"}),
+    "hood": frozenset({"hood"}),
     "skirt": frozenset({"skirt"}),
     "front_pants": frozenset({"front_pants"}),
     "back_pants": frozenset({"back_pants"}),
@@ -348,6 +349,7 @@ def lining_part(outer: FinalizedPart, *,
 #: 部分裏の対象部位の、画面に出す日本語名。
 LINING_SCOPE_LABELS = {
     "front_bodice": "前身頃", "back_bodice": "後ろ身頃", "sleeve": "袖",
+    "hood": "フード",
     "skirt": "スカート", "front_pants": "パンツ(前)", "back_pants": "パンツ(後ろ)",
 }
 

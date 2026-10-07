@@ -31,6 +31,7 @@ class CostumeProject:
     construction_plan: tuple[str, ...]
     limitations: tuple[str, ...]
     commercial_benchmark: tuple[str, ...] = ()
+    lining_scope: tuple[str, ...] = ()
     fabric_group_defaults: tuple[tuple[str, str], ...] = ()
     fabric_variant_area_overrides: tuple[tuple[str, str], ...] = ()
     lined_custom_panel_scopes: tuple[tuple[str, str], ...] = ()
@@ -52,6 +53,7 @@ class CostumeProject:
             "construction_plan": list(self.construction_plan),
             "limitations": list(self.limitations),
             "commercial_benchmark": list(self.commercial_benchmark),
+            "lining_scope": list(self.lining_scope),
             "fabric_group_defaults": dict(self.fabric_group_defaults),
             "fabric_variant_area_overrides": dict(self.fabric_variant_area_overrides),
             "lined_custom_panel_scopes": dict(self.lined_custom_panel_scopes),
@@ -156,6 +158,7 @@ def _endministrator_female(measurements: Measurements) -> CostumeProject:
         },
         custom_panel_specs=base_panels + overlays,
         lining=True,
+        lining_scope=("front_bodice", "back_bodice", "sleeve", "hood"),
         shoulder_drop_cm=5.0,
         worn_over_bust_cm=measurements.bust + 10.0,
         fabric_group_defaults=(("custom_panel", "外装パネル用生地"),),
@@ -211,6 +214,7 @@ def _endministrator_female(measurements: Measurements) -> CostumeProject:
         ),
         limitations=(
             "このプリセットは提供された正面イラストを基にした制作計画であり、公式衣装の複製型紙ではありません。",
+            "裏地はコート本体・袖・フード・下身頃だけに設定し、ショートパンツは総裏に含めません。必要なら裏地対象を別途指定してください。",
             "背面の形、金具の位置、黄色い肩当ての立体形状は正面資料だけでは確定できません。背面資料と実物合わせが必要です。",
             "裾オーバーレイの延長丈は正面イラストの比率からの推定です。裁断前に肩から裾までの希望丈を着用者に合わせて確認してください。",
             "連続した下身頃の裾広がりと後面の輪郭は推定です。仮縫い前に市販現物と同等の外観だと判断しないでください。",

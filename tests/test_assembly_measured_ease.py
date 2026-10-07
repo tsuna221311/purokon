@@ -88,6 +88,13 @@ def test_endministrator_real_pattern_and_sewing_step_agree():
     assert len(separate_notes) == len(project.separate_components)
     assert any("インナー" in note for note in separate_notes)
     assert any("タイツ" in note for note in separate_notes)
+    lining_types = {part.part_type for part in result.lining_parts}
+    assert {"front_bodice_zip_panel", "back_bodice", "sleeve", "hood",
+            "custom_panel"} <= lining_types
+    assert not {"front_pants", "back_pants"} & lining_types
+    assert len(result.lining_parts) == 10
+    assert len([part for part in result.lining_parts
+                if part.part_type == "custom_panel"]) == 3
     # A packed shopping page is only useful if every off-pattern item actually
     # survives PDF pagination and the Japanese glyph subset.
     from io import BytesIO
