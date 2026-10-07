@@ -156,6 +156,7 @@ def audit_pattern_derived_drape(report_path: Path) -> dict:
     return {
         "source_pattern_json": report.get("source_pattern_json"),
         "sleeve_cap_ease_distribution": report.get("sleeve_cap_ease_distribution"),
+        "sleeve_axis_mode": report.get("sleeve_axis_mode", "horizontal-sleeve"),
         "sleeve_p95_paper_edge_strain_percent": {
             side: result["p95_absolute_paper_edge_strain_percent"]
             for side, result in sleeves.items()},

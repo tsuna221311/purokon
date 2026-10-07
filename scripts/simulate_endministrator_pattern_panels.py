@@ -28,6 +28,7 @@ Run: blender -b -t 4 --python-exit-code 1 \
         [open-bust-darts|sewn-bust-darts-trial]
         [open-shoulders|sewn-shoulders-trial]
         [open-front-zip|sewn-front-zip-trial]
+        [horizontal-sleeve|down-26-sleeve-trial|down-35-sleeve-trial]
 """
 
 from __future__ import annotations
@@ -64,7 +65,7 @@ from engine.pattern_panel_bridge import (aligned_trapezoid_distance,
                                          xy_scale_for_polyline_length)
 
 args = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-if len(args) not in range(2, 27):
+if len(args) not in range(2, 28):
     raise SystemExit("Usage: -- PANELS_JSON OUTPUT_DIR [SOURCE_BLEND] "
                      "[with-body|measurement-standin|measurement-standin-with-sweater|free-hang] "
                      "[authored-guide|pattern-bodice] "
@@ -91,7 +92,8 @@ if len(args) not in range(2, 27):
                      "[borrowed-sleeves|pattern-sewn-sleeves-trial] "
                      "[render|sleeve-preflight-only] "
                      "[uniform|crown-localized|notch-anchored] [FRAMES] "
-                     "[open-front-zip|sewn-front-zip-trial]")
+                     "[open-front-zip|sewn-front-zip-trial] "
+                     "[horizontal-sleeve|down-26-sleeve-trial|down-35-sleeve-trial]")
 panel_file, output = Path(args[0]).resolve(), Path(args[1]).resolve()
 source = Path(args[2]).resolve() if len(args) >= 3 else (
     ROOT / "output/endministrator_commercial_sewn_v4/endministrator_sewn_costume.blend")
@@ -250,6 +252,13 @@ if front_zip_mode == "sewn-front-zip-trial" and (
         bodice_side_mode != "sewn-bodice-sides-trial" or
         join_mode != "fully-welded-shell"):
     raise ValueError("Front zip sewing trial needs a sewn welded bodice")
+sleeve_axis_mode = args[26] if len(args) >= 27 else "horizontal-sleeve"
+if sleeve_axis_mode not in {"horizontal-sleeve", "down-26-sleeve-trial",
+                            "down-35-sleeve-trial"}:
+    raise ValueError("Expected a horizontal or diagnostic downward sleeve axis")
+if (sleeve_axis_mode != "horizontal-sleeve"
+        and sleeve_mode != "pattern-sewn-sleeves-trial"):
+    raise ValueError("Downward sleeve axis needs the pattern sleeve trial")
 if shell_placement_mode == "paper-edge-relaxed-shell" and join_mode != "fully-welded-shell":
     raise ValueError("Paper-edge shell relaxation needs fully-welded-shell")
 if join_mode == "authored-guided-welded-shell" and guide_mode != "source-hem":
@@ -1421,10 +1430,16 @@ if shell_joined:
             for x_cm, y_cm in paper:
                 edge, cap_y = cap_cross_section(x_cm)
                 extension = max(0.0, y_cm - cap_y) * UNIT_M_PER_CM
-                column_guide = edge + Vector((sign * extension, 0, 0))
+                axis_x, axis_z = {
+                    "horizontal-sleeve": (1.0, 0.0),
+                    "down-26-sleeve-trial": (.9, -.436),
+                    "down-35-sleeve-trial": (.82, -.57),
+                }[sleeve_axis_mode]
+                sleeve_axis = Vector((sign * axis_x, 0, axis_z))
+                column_guide = edge + sleeve_axis * extension
                 distance_cm, nearest_edge, tangent = nearest_cap_projection(
                     x_cm, y_cm)
-                paper_normal_world = Vector((sign, 0, 0))
+                paper_normal_world = sleeve_axis.copy()
                 paper_normal_world -= tangent * paper_normal_world.dot(tangent)
                 if paper_normal_world.length < 1e-5:
                     paper_normal_world = Vector((0, 0, -1))
@@ -1492,6 +1507,7 @@ if shell_joined:
                     "source_pattern_json": str(panel_file),
                     "input_fingerprints": input_fingerprints,
                     "bodice_placement_mode": bodice_placement_mode,
+                    "sleeve_axis_mode": sleeve_axis_mode,
                     "guide_hem_geometry": guide_mode,
                     "inverted_face_count": len(inverted_faces),
                     "raw_p95_absolute_paper_edge_strain_percent": round(
@@ -1744,6 +1760,7 @@ if shell_joined:
                     }
             preflight["_unsewn_bodice_initial_gaps"] = seam_gaps
             preflight["_input_fingerprints"] = input_fingerprints
+            preflight["_sleeve_axis_mode"] = sleeve_axis_mode
             preflight_path = output / "sleeve_initial_geometry_report.json"
             preflight_path.write_text(json.dumps(preflight, ensure_ascii=False,
                                                 indent=2) + "\n", encoding="utf-8")
@@ -2886,6 +2903,7 @@ report = {"status": (
           "borrowed_source_sleeve_objects": borrowed_sleeve_names,
           "sleeve_drape_mode": sleeve_mode,
           "sleeve_cap_ease_distribution": cap_ease_mode,
+          "sleeve_axis_mode": sleeve_axis_mode,
           "sleeve_drape_report": sleeve_drape_report,
           "sleeve_topology_preflight": sleeve_topology_preflight,
           "sleeve_join_audit": data.get("sleeve_join_audit"),
