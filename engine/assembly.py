@@ -323,18 +323,33 @@ def assembly_steps(finalized_parts: list,
                          and sleeve_cap_ease_cm > 0) else
                      "袖山と袖ぐりの縫い線長を照合し、調整量を仮縫いで決めます。"
                      "自動計測値がないため、縮め量は指定しません。")
-        shoulder_mark_note = (
-            "袖山の4本目（頂点に近い単独印）が肩合わせ印です。"
-            "肩印は袖山の幾何学的な頂点と一致するとは限りません。"
-            if any(len(part.notches) == 4 for part in finalized_parts
-                   if part.part_type == "sleeve") else "")
+        sleeve_notch_counts = [
+            len(getattr(part, "notches", ()) or ())
+            for part in finalized_parts if part.part_type == "sleeve"]
+        has_shoulder_mark = all(count == 4 for count in sleeve_notch_counts)
+        has_front_back_marks = all(count >= 3 for count in sleeve_notch_counts)
+        if has_shoulder_mark:
+            shoulder_mark_note = (
+                "袖山の4本目（頂点に近い単独印）が肩合わせ印です。"
+                "肩印は袖山の幾何学的な頂点と一致するとは限りません。")
+            alignment_note = "肩合わせ印を肩線に、袖下の縫い目を脇線に合わせて"
+        elif has_front_back_marks:
+            shoulder_mark_note = (
+                "肩合わせの専用合印はありません。前後の合印を合わせて仮止めし、"
+                "肩線との位置を仮縫いで確認してください。")
+            alignment_note = "前後の合印を対応する袖ぐりの合印に、袖下の縫い目を脇線に合わせて"
+        else:
+            shoulder_mark_note = (
+                "肩合わせと前後の合印が不足しています。"
+                "袖山の頂点だけで位置を確定せず、前後と肩位置を仮縫いで確認してください。")
+            alignment_note = "袖下の縫い目を脇線に合わせて"
         steps.append((
             "袖を身頃に付ける",
             ease_note + shoulder_mark_note
             + "そのあと袖と身頃を中表に合わせ、"
-            "「袖山の合印を肩線に、袖下の縫い目を脇線に」合わせてしつけをしてから縫います。"
-            "袖ぐり側の合印は前が1本・後ろが2本なので、袖を前後逆に付ける心配が"
-            "ありません。",
+            + alignment_note + "しつけをしてから縫います。"
+            + ("袖ぐり側の合印は前が1本・後ろが2本なので、"
+               "その違いで前後を確認できます。" if has_front_back_marks else ""),
             _names(finalized_parts, {"sleeve"}),
         ))
 

@@ -54,6 +54,36 @@ def test_sewing_step_does_not_order_unmeasured_easing(ease):
     assert "少し縮めます" not in step.detail
 
 
+@pytest.mark.parametrize("notch_count, expected, absent", [
+    (4, "肩合わせ印を肩線に", "合印が不足"),
+    (3, "前後の合印を対応する袖ぐりの合印に", "肩合わせ印を肩線に"),
+    (0, "肩合わせと前後の合印が不足", "肩合わせ印を肩線に"),
+])
+def test_sewing_step_only_refers_to_marks_on_the_pattern(notch_count, expected, absent):
+    from engine.assembly import assembly_steps
+
+    parts = [SimpleNamespace(part_type=kind, display_name=kind,
+                             label_suffix="", dart_count=0,
+                             notches=[None] * (notch_count if kind == "sleeve" else 0))
+             for kind in ("front_bodice", "back_bodice", "sleeve")]
+    step = next(s for s in assembly_steps(parts)
+                if s.title == "袖を身頃に付ける")
+    assert expected in step.detail
+    assert absent not in step.detail
+
+
+def test_sewing_step_handles_a_sleeve_without_notch_metadata():
+    from engine.assembly import assembly_steps
+
+    parts = [SimpleNamespace(part_type=kind, display_name=kind,
+                             label_suffix="", dart_count=0)
+             for kind in ("front_bodice", "back_bodice", "sleeve")]
+    step = next(s for s in assembly_steps(parts)
+                if s.title == "袖を身頃に付ける")
+    assert "合印が不足" in step.detail
+    assert "合印を肩線に" not in step.detail
+
+
 def test_endministrator_real_pattern_and_sewing_step_agree():
     from engine.costume_projects import get_costume_project
     from engine.measurements import Measurements
