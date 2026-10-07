@@ -28,6 +28,20 @@ from .nesting import NestingResult, NestedPart
 
 Point = tuple[float, float]
 
+
+def _shoulder_notch_label_point(placed: NestedPart, index: int,
+                                notch: tuple[Point, Point]) -> Point | None:
+    """4本目の袖山肩印を、裁断線から型紙の内側へ表示する位置。"""
+    if (placed.part.part_type != "sleeve" or len(placed.part.notches) != 4
+            or index != 3):
+        return None
+    stitch, cut = notch
+    length = math.dist(stitch, cut)
+    if length <= 1e-6:
+        return None
+    return (stitch[0] + (stitch[0] - cut[0]) * 0.45 / length,
+            stitch[1] + (stitch[1] - cut[1]) * 0.45 / length)
+
 #: round57: 用紙。round53から「A3に対応していない」と限界に書き続けていた
 #: (用紙寸法が73か所に直書きされていたため)。コンビニのA3はA4と同じ単価で
 #: 面積は2倍なので、対応すると枚数と貼り合わせの手間がほぼ半分になる。
@@ -430,8 +444,15 @@ def render_layout_svg(result: NestingResult, output_path: str) -> str:
         content.add(dwg.polyline(points=stitch + [stitch[0]], fill="none",
                                   stroke="#666", stroke_width=0.05,
                                   stroke_dasharray="0.3,0.2"))
-        for a, b in placed.placed_notches():
+        for notch_index, (a, b) in enumerate(placed.placed_notches()):
             content.add(dwg.line(start=a, end=b, stroke="red", stroke_width=0.08))
+            shoulder_label = _shoulder_notch_label_point(
+                placed, notch_index, (a, b))
+            if shoulder_label is not None:
+                content.add(dwg.text("肩", insert=shoulder_label,
+                                     fill="#a20b0b", font_size="0.34cm",
+                                     text_anchor="middle",
+                                     font_family=_SVG_LABEL_FONT_FAMILY))
         # round27: パーツ内部の縫い線(ウエストのダイヤモンドダーツ等)。
         # 輪郭ではないので、裁断線と紛れないよう縫い線と同じ破線で描く。
         for line in placed.placed_internal_lines():
@@ -1389,13 +1410,24 @@ def _draw_fabric_section(c, result: NestingResult,
                         c.setFont(_LABEL_FONT, 5)
                         c.drawString(pts[0][0] + 2, pts[0][1] + 2, label)
 
-                for a, b in placed.placed_notches():
+                for notch_index, (a, b) in enumerate(placed.placed_notches()):
                     if _segment_in_tile(a, b, tile_x0, tile_y0, tile_x1, tile_y1):
                         pa = _to_page_xy(a[0] - tile_x0, a[1] - tile_y0, paper)
                         pb = _to_page_xy(b[0] - tile_x0, b[1] - tile_y0, paper)
                         c.setStrokeColorRGB(0.8, 0, 0)
                         c.setLineWidth(1.2)
                         c.line(*pa, *pb)
+                    shoulder_label = _shoulder_notch_label_point(
+                        placed, notch_index, (a, b))
+                    if (shoulder_label is not None
+                            and tile_x0 <= shoulder_label[0] < tile_x1
+                            and tile_y0 <= shoulder_label[1] < tile_y1):
+                        px, py = _to_page_xy(
+                            shoulder_label[0] - tile_x0,
+                            shoulder_label[1] - tile_y0, paper)
+                        c.setFillColorRGB(0.64, 0.05, 0.05)
+                        c.setFont(_LABEL_FONT, 9)
+                        c.drawCentredString(px, py, "肩")
 
                 # パーツ識別ラベル(SVGプレビューには元々あったが、実際に印刷
                 # する側には無かった機能不足の修正: 貼り合わせ後に「どの裁断
@@ -1728,12 +1760,18 @@ def render_projector_pdf(result: NestingResult, output_path: str,
                 path.lineTo(*_xy(px, py))
             c.drawPath(path, stroke=1, fill=0)
 
-        for notch in placed.placed_notches():
+        for notch_index, notch in enumerate(placed.placed_notches()):
             if len(notch) < 2:
                 continue
             c.setStrokeColorRGB(0.80, 0.09, 0.09)
             c.setLineWidth(PROJECTOR_STITCH_LINE_WIDTH_PT)
             c.line(*_xy(notch[0][0], notch[0][1]), *_xy(notch[1][0], notch[1][1]))
+            shoulder_label = _shoulder_notch_label_point(
+                placed, notch_index, notch)
+            if shoulder_label is not None:
+                c.setFillColorRGB(0.64, 0.05, 0.05)
+                c.setFont(_LABEL_FONT, 12)
+                c.drawCentredString(*_xy(*shoulder_label), "肩")
 
         # 布目線は {"line": (始点, 終点), "arrows": [(a, b), ...]} という形。
         grain = placed.placed_grainline()
