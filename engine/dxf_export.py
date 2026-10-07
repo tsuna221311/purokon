@@ -11,9 +11,8 @@ SVG(画面プレビュー)・PDF(家庭用プリンタでのA4分割印刷)に�
   NOTCH      : 合印。
   GRAINLINE  : 布目線(矢印は簡略化した2本の短い線分で表現。SVG/PDF同様)。
   LABEL      : パーツ名(display_name)のテキスト。日本語。
-  LABEL_ID   : 同じパーツのASCIIだけの識別子(round32で追加)。日本語グリフを
-               持たないCAD環境でも判別できるようにするための保険で、不要なら
-               レイヤーごと非表示にできる。
+  LABEL_ID   : 同じパーツのASCIIだけの識別子(round32で追加)と袖肩印の
+               SHOULDER。日本語グリフを持たないCAD環境でも判別できる保険。
   WARNING    : 配置できなかったパーツがある場合の警告テキスト。
 
 依存ライブラリとして`ezdxf`を使う。DXF自体はASCIIベースのテキスト形式
@@ -56,6 +55,7 @@ import ezdxf
 from ezdxf.enums import TextEntityAlignment
 
 from .nesting import NestingResult
+from .notch_labels import shoulder_notch_label_point
 
 Point = tuple[float, float]
 
@@ -133,9 +133,21 @@ def render_dxf(result: NestingResult, output_path: str) -> str:
                                 dxfattribs={"layer": "REFERENCE_LINE",
                                             "linetype": "DASHED"})
 
-        for a, b in placed.placed_notches():
+        for notch_index, (a, b) in enumerate(placed.placed_notches()):
             (ax, ay), (bx, by) = _flip([a, b])
             msp.add_line((ax, ay), (bx, by), dxfattribs={"layer": "NOTCH"})
+            shoulder_label = shoulder_notch_label_point(
+                placed.part.part_type, len(placed.part.notches),
+                notch_index, (a, b))
+            if shoulder_label is not None:
+                label_at = _flip([shoulder_label])[0]
+                msp.add_text("肩", dxfattribs={
+                    "layer": "LABEL", "height": 0.35}).set_placement(
+                        label_at, align=TextEntityAlignment.MIDDLE_CENTER)
+                msp.add_text("SHOULDER", dxfattribs={
+                    "layer": "LABEL_ID", "height": 0.25}).set_placement(
+                        (label_at[0], label_at[1] - 0.4),
+                        align=TextEntityAlignment.MIDDLE_CENTER)
 
         grain = placed.placed_grainline()
         (gx1, gy1), (gx2, gy2) = _flip(list(grain["line"]))

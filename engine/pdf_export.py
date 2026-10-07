@@ -25,22 +25,16 @@ from reportlab.pdfgen import canvas as rl_canvas
 
 from .dxf_export import render_dxf
 from .nesting import NestingResult, NestedPart
+from .notch_labels import shoulder_notch_label_point
 
 Point = tuple[float, float]
 
 
 def _shoulder_notch_label_point(placed: NestedPart, index: int,
                                 notch: tuple[Point, Point]) -> Point | None:
-    """4本目の袖山肩印を、裁断線から型紙の内側へ表示する位置。"""
-    if (placed.part.part_type != "sleeve" or len(placed.part.notches) != 4
-            or index != 3):
-        return None
-    stitch, cut = notch
-    length = math.dist(stitch, cut)
-    if length <= 1e-6:
-        return None
-    return (stitch[0] + (stitch[0] - cut[0]) * 0.45 / length,
-            stitch[1] + (stitch[1] - cut[1]) * 0.45 / length)
+    """Placed-part adapter for the shared PDF/SVG/DXF shoulder label."""
+    return shoulder_notch_label_point(
+        placed.part.part_type, len(placed.part.notches), index, notch)
 
 #: round57: 用紙。round53から「A3に対応していない」と限界に書き続けていた
 #: (用紙寸法が73か所に直書きされていたため)。コンビニのA3はA4と同じ単価で
