@@ -146,6 +146,10 @@ def audit_pattern_derived_drape(report_path: Path) -> dict:
              for item in report.get("panels", [])
              if "code" in item and
              "upper_final_p95_absolute_paper_edge_strain_percent" in item}
+    lower = {item["code"]: item["final_p95_absolute_paper_edge_strain_percent"]
+             for item in report.get("panels", [])
+             if "code" in item and
+             "final_p95_absolute_paper_edge_strain_percent" in item}
     shoulders = {side: item["final_gap_p95_cm"]
                  for side, item in (report.get("shoulder_seam_report") or {}).items()
                  if "final_gap_p95_cm" in item}
@@ -169,6 +173,9 @@ def audit_pattern_derived_drape(report_path: Path) -> dict:
             side: result["p95_absolute_paper_edge_strain_percent"]
             for side, result in sleeves.items()},
         "upper_bodice_p95_paper_edge_strain_percent": upper,
+        "lower_panel_p95_paper_edge_strain_percent": lower,
+        "provisional_geometry_screen_pass": (report.get(
+            "provisional_geometry_screen") or {}).get("passed", False),
         "shoulder_final_gap_p95_cm": shoulders,
         "front_zip_trial": {
             "mode": front_zip_mode,
@@ -201,6 +208,9 @@ def pattern_trial_blockers(pattern_drape: dict) -> list[str]:
     upper = pattern_drape.get("upper_bodice_p95_paper_edge_strain_percent") or {}
     if any(value > 8 for value in upper.values()):
         blockers.append("型紙由来の上身頃に試作内部目安8%を超す紙面辺長変形がある")
+    lower = pattern_drape.get("lower_panel_p95_paper_edge_strain_percent") or {}
+    if any(value > 5 for value in lower.values()):
+        blockers.append("型紙由来の下身頃に試作内部目安5%を超す紙面辺長変形がある")
     sleeves = pattern_drape.get("sleeve_p95_paper_edge_strain_percent") or {}
     if any(value > 10 for value in sleeves.values()):
         blockers.append("型紙由来の袖に試作内部目安10%を超す紙面辺長変形がある")
@@ -217,6 +227,8 @@ def pattern_trial_blockers(pattern_drape: dict) -> list[str]:
     if (front_zip.get("mode") == "sewn-front-zip-trial"
             and not front_zip.get("provisional_gap_pass", False)):
         blockers.append("前ファスナー仮接合に試作内部目安0.5cmを超す隙間が残る")
+    if pattern_drape.get("provisional_geometry_screen_pass") is False:
+        blockers.append("型紙由来3Dの暫定形状判定が不合格")
     return blockers
 
 

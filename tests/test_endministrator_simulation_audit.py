@@ -138,3 +138,15 @@ def test_pattern_only_audit_does_not_require_legacy_assets():
     assert report["commercial_equivalence_verified"] is False
     assert any("10%" in reason for reason in report["blockers"])
     assert any("実布" in reason for reason in report["blockers"])
+
+
+def test_lower_panel_strain_and_geometry_screen_are_not_hidden():
+    pattern = {
+        "sleeves_topologically_welded_to_bodice": True,
+        "fabric_inputs_measured": False,
+        "lower_panel_p95_paper_edge_strain_percent": {"A": 23.44},
+        "provisional_geometry_screen_pass": False,
+    }
+    blockers = audit.pattern_trial_blockers(pattern)
+    assert any("下身頃" in reason and "5%" in reason for reason in blockers)
+    assert any("暫定形状判定" in reason for reason in blockers)
