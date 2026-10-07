@@ -121,3 +121,20 @@ def test_unclosed_waist_dart_trial_is_an_explicit_blocker():
                for reason in report["blockers"])
     assert any("裾ダーツ" in reason and "一体メッシュ" in reason
                for reason in report["blockers"])
+
+
+def test_pattern_only_audit_does_not_require_legacy_assets():
+    pattern = {
+        "sleeves_topologically_welded_to_bodice": False,
+        "fabric_inputs_measured": False,
+        "sleeve_p95_paper_edge_strain_percent": {"left": 19.66},
+    }
+    with patch.object(audit, "audit_pattern_derived_drape",
+                      return_value=pattern):
+        report = audit.build_pattern_only_report(Path("trial.json"))
+    assert report["pattern_derived_drape_trial"] == pattern
+    assert report["scope"] == {"static_render_views": 3,
+                               "physical_wear_tests": 0}
+    assert report["commercial_equivalence_verified"] is False
+    assert any("10%" in reason for reason in report["blockers"])
+    assert any("実布" in reason for reason in report["blockers"])

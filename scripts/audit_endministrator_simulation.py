@@ -191,6 +191,53 @@ def audit_pattern_derived_drape(report_path: Path) -> dict:
     }
 
 
+def pattern_trial_blockers(pattern_drape: dict) -> list[str]:
+    """Keep an unfinished cloth trial from being mistaken for a fit approval."""
+    blockers = []
+    if not pattern_drape["sleeves_topologically_welded_to_bodice"]:
+        blockers.append("型紙由来の袖は身頃と共有頂点で連続していない")
+    if not pattern_drape["fabric_inputs_measured"]:
+        blockers.append("型紙由来の布計算にも実測した生地物性がない")
+    upper = pattern_drape.get("upper_bodice_p95_paper_edge_strain_percent") or {}
+    if any(value > 8 for value in upper.values()):
+        blockers.append("型紙由来の上身頃に試作内部目安8%を超す紙面辺長変形がある")
+    sleeves = pattern_drape.get("sleeve_p95_paper_edge_strain_percent") or {}
+    if any(value > 10 for value in sleeves.values()):
+        blockers.append("型紙由来の袖に試作内部目安10%を超す紙面辺長変形がある")
+    shoulders = pattern_drape.get("shoulder_final_gap_p95_cm") or {}
+    if any(value > .5 for value in shoulders.values()):
+        blockers.append("肩の縫い合わせに試作内部目安0.5cmを超す隙間が残る")
+    waist_darts = pattern_drape.get("waist_dart_trial") or {}
+    if waist_darts.get("present") and not waist_darts.get("closure_pass"):
+        blockers.append("裾ダーツの3D仮縫合が閉じていない")
+    if (waist_darts.get("present") and not waist_darts.get(
+            "topologically_welded_to_lower_shell", False)):
+        blockers.append("裾ダーツのある上身頃と下身頃は一体メッシュ接合されていない")
+    front_zip = pattern_drape.get("front_zip_trial") or {}
+    if (front_zip.get("mode") == "sewn-front-zip-trial"
+            and not front_zip.get("provisional_gap_pass", False)):
+        blockers.append("前ファスナー仮接合に試作内部目安0.5cmを超す隙間が残る")
+    return blockers
+
+
+def build_pattern_only_report(pattern_panel_report: Path) -> dict:
+    """Audit a current pattern-derived Blender run without legacy GLB assets."""
+    pattern_drape = audit_pattern_derived_drape(pattern_panel_report)
+    return {
+        "reference": "Arknights: Endfield female Endministrator",
+        "commercial_equivalence_verified": False,
+        "pattern_derived_drape_trial": pattern_drape,
+        "scope": {"static_render_views": len(VIEWS), "physical_wear_tests": 0},
+        "blockers": [
+            "側面・背面と素材物性は実測値がなく、正面資料からの推定",
+            "装飾の固定点・荷重・脱着疲労を布シミュレーションに含めていない",
+            "歩行・着座・腕上げ時の布変形と身体への干渉を検査していない",
+            "実布の仮縫い、耐久、質感の市販品との実物比較をしていない",
+            *pattern_trial_blockers(pattern_drape),
+        ],
+    }
+
+
 def build_report(simulation_dir: Path, glb_path: Path,
                  manifest_path: Path,
                  pattern_panel_report: Path | None = None) -> dict:
@@ -214,29 +261,7 @@ def build_report(simulation_dir: Path, glb_path: Path,
         "実布の仮縫い、耐久、質感の市販品との実物比較をしていない",
     ])
     if pattern_drape is not None:
-        if not pattern_drape["sleeves_topologically_welded_to_bodice"]:
-            blockers.append("型紙由来の袖は身頃と共有頂点で連続していない")
-        if not pattern_drape["fabric_inputs_measured"]:
-            blockers.append("型紙由来の布計算にも実測した生地物性がない")
-        upper = pattern_drape.get("upper_bodice_p95_paper_edge_strain_percent") or {}
-        if any(value > 8 for value in upper.values()):
-            blockers.append("型紙由来の上身頃に試作内部目安8%を超す紙面辺長変形がある")
-        sleeves = pattern_drape.get("sleeve_p95_paper_edge_strain_percent") or {}
-        if any(value > 10 for value in sleeves.values()):
-            blockers.append("型紙由来の袖に試作内部目安10%を超す紙面辺長変形がある")
-        shoulders = pattern_drape.get("shoulder_final_gap_p95_cm") or {}
-        if any(value > .5 for value in shoulders.values()):
-            blockers.append("肩の縫い合わせに試作内部目安0.5cmを超す隙間が残る")
-        waist_darts = pattern_drape.get("waist_dart_trial") or {}
-        if waist_darts.get("present") and not waist_darts.get("closure_pass"):
-            blockers.append("裾ダーツの3D仮縫合が閉じていない")
-        if (waist_darts.get("present") and not waist_darts.get(
-                "topologically_welded_to_lower_shell", False)):
-            blockers.append("裾ダーツのある上身頃と下身頃は一体メッシュ接合されていない")
-        front_zip = pattern_drape.get("front_zip_trial") or {}
-        if (front_zip.get("mode") == "sewn-front-zip-trial"
-                and not front_zip.get("provisional_gap_pass", False)):
-            blockers.append("前ファスナー仮接合に試作内部目安0.5cmを超す隙間が残る")
+        blockers.extend(pattern_trial_blockers(pattern_drape))
     return {
         "reference": "Arknights: Endfield female Endministrator",
         "commercial_equivalence_verified": False,
@@ -266,18 +291,29 @@ def main() -> None:
                         default=ROOT / "docs/endministrator_commercial_components.json")
     parser.add_argument("--pattern-panel-report", type=Path,
                         help="Optional newer sewn-pattern trial JSON and its three views")
+    parser.add_argument("--pattern-only", action="store_true",
+                        help="Audit only the current pattern-derived Blender trial")
+    parser.add_argument("--fail-on-blockers", action="store_true",
+                        help="Exit with status 2 when the audit has blockers")
     parser.add_argument("--output", type=Path,
                         default=ROOT / "output/endministrator_material_study_v3"
                                        "/commercial_gap_audit.json")
     args = parser.parse_args()
-    report = build_report(args.simulations, args.glb, args.manifest,
-                          args.pattern_panel_report)
+    if args.pattern_only:
+        if args.pattern_panel_report is None:
+            parser.error("--pattern-only needs --pattern-panel-report")
+        report = build_pattern_only_report(args.pattern_panel_report)
+    else:
+        report = build_report(args.simulations, args.glb, args.manifest,
+                              args.pattern_panel_report)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n",
                            encoding="utf-8")
     print(json.dumps({"output": str(args.output), "scope": report["scope"],
                       "commercial_equivalence_verified": False,
                       "blockers": report["blockers"]}, ensure_ascii=False))
+    if args.fail_on_blockers and report["blockers"]:
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":
