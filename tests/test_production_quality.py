@@ -31,6 +31,18 @@ def test_sleeve_fitting_check_uses_actual_pattern_notch_marks():
     assert "前1本・後ろ2本" not in sleeve_check.method
 
 
+def test_malformed_notch_is_a_blocker_instead_of_a_crash():
+    part = SimpleNamespace(
+        display_name="試験片", stitch_line=[(0, 0), (10, 0), (10, 10), (0, 10)],
+        cut_line=[(-1, -1), (11, -1), (11, 11), (-1, 11)],
+        grainline={"line": ((2, 2), (2, 8)), "arrows": []},
+        notches=[((0, 5),), ((0, 5), ("bad", 5))],
+    )
+    warnings = pattern_geometry_warnings([part])
+    assert "試験片: 合印1の座標が不正です" in warnings
+    assert "試験片: 合印2の座標が不正です" in warnings
+
+
 def _result(tmp_path, *, sleeve="straight", skirt="flare"):
     return PatternForgePipeline(output_dir=str(tmp_path)).generate_from_selection(
         build_garment_spec(sleeve_style=sleeve, skirt_style=skirt), MEASUREMENTS)

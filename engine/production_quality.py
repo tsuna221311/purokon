@@ -63,8 +63,11 @@ def pattern_geometry_warnings(parts) -> list[str]:
             if not inside:
                 warnings.append(f"{label}: 布目線が型紙本体の外に出ています")
             stitch_interior = stitch.buffer(-0.01)
-            for index, (origin, end) in enumerate(part.notches, start=1):
+            for index, notch in enumerate(part.notches or (), start=1):
                 try:
+                    origin, end = notch
+                    if len(origin) != 2 or len(end) != 2:
+                        raise ValueError("notch endpoints must be 2D")
                     if not all(isfinite(float(value)) for point in (origin, end)
                                for value in point):
                         raise ValueError("non-finite notch coordinate")
@@ -76,7 +79,7 @@ def pattern_geometry_warnings(parts) -> list[str]:
                     if (not stitch_interior.is_empty
                             and mark.intersection(stitch_interior).length > 0.05):
                         warnings.append(f"{label}: 合印{index}が型紙本体を横切っています")
-                except (TypeError, ValueError, GEOSException):
+                except (TypeError, ValueError, OverflowError, GEOSException):
                     warnings.append(f"{label}: 合印{index}の座標が不正です")
     return warnings
 
