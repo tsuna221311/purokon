@@ -51,6 +51,7 @@
 
 from __future__ import annotations
 from dataclasses import dataclass
+from math import isfinite
 
 from .cutting import part_interfacing_note, part_needs_interfacing
 from .hood import HOOD_FRONT_FOLD_CM
@@ -317,8 +318,11 @@ def assembly_steps(finalized_parts: list,
                 _names(finalized_parts, {"cuffs"}),
             ))
         ease_note = (_SLEEVE_EASE_NOTE.format(ease=sleeve_cap_ease_cm)
-                     if sleeve_cap_ease_cm else
-                     "袖山を袖ぐりの寸法まで少し縮めます。")
+                     if (sleeve_cap_ease_cm is not None
+                         and isfinite(sleeve_cap_ease_cm)
+                         and sleeve_cap_ease_cm > 0) else
+                     "袖山と袖ぐりの縫い線長を照合し、調整量を仮縫いで決めます。"
+                     "自動計測値がないため、縮め量は指定しません。")
         shoulder_mark_note = (
             "袖山の4本目（頂点に近い単独印）が肩合わせ印です。"
             "肩印は袖山の幾何学的な頂点と一致するとは限りません。"

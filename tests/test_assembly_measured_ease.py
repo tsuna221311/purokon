@@ -41,6 +41,19 @@ def test_does_not_print_negative_or_unmeasurable_ease():
         assert _sleeve_cap_ease_for(parts) is None
 
 
+@pytest.mark.parametrize("ease", [None, -1.0, 0.0, float("nan"), float("inf")])
+def test_sewing_step_does_not_order_unmeasured_easing(ease):
+    from engine.assembly import assembly_steps
+
+    parts = [SimpleNamespace(part_type=kind, display_name=kind,
+                             label_suffix="", dart_count=0, notches=[])
+             for kind in ("front_bodice", "back_bodice", "sleeve")]
+    step = next(s for s in assembly_steps(parts, sleeve_cap_ease_cm=ease)
+                if s.title == "袖を身頃に付ける")
+    assert "縮め量は指定しません" in step.detail
+    assert "少し縮めます" not in step.detail
+
+
 def test_endministrator_real_pattern_and_sewing_step_agree():
     from engine.costume_projects import get_costume_project
     from engine.measurements import Measurements
