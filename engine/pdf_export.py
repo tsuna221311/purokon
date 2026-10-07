@@ -213,6 +213,8 @@ def unprintable_characters(text: str) -> list[str]:
 #: (パーツ名など利用者入力を含む動的な文字列は対象外。これらはASCII+かなの
 #:  範囲を前提とする従来通りの扱い。)
 PDF_STATIC_TEXTS: tuple[str, ...] = (
+    # パイプラインから買い物メモへ転記する固定文言
+    "型紙外の同梱物: この型紙と生地量には含まれず、別途制作・調達が必要です。",
     # 警告ページ
     "▲ 警告: 型紙が不完全です",
     "▲ 警告: 型紙に含まれていないパーツ: ",
@@ -1036,6 +1038,24 @@ def _wrap_ja(text: str, width: int) -> list[str]:
     return lines
 
 
+def _wrap_pdf_line_to_width(text: str, max_width_pt: float,
+                            size_pt: float) -> list[str]:
+    """Split long URLs by actual print width instead of clipping the margin."""
+    lines: list[str] = []
+    current = ""
+    for character in text:
+        candidate = current + character
+        if current and pdfmetrics.stringWidth(
+                candidate, _LABEL_FONT, size_pt) > max_width_pt:
+            lines.append(current)
+            current = character
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return lines
+
+
 def _draw_assembly_pages(c, steps: list, paper: Paper = DEFAULT_PAPER) -> None:
     """縫製手順のページを描く(round33で追加)。
 
@@ -1117,6 +1137,19 @@ def _draw_shopping_page(c, memo, paper: Paper = DEFAULT_PAPER) -> None:
                  "この型紙を裁つのに必要な量です。店でこのページを見せられます。")
     y_cm = margin + 2.0
 
+    def _continue_page() -> float:
+        c.showPage()
+        c.setFillColorRGB(0.1, 0.1, 0.1)
+        c.setFont(_LABEL_FONT, 15)
+        c.drawString(margin * CM, (paper.height_cm - margin - 0.5) * CM,
+                     "買い物メモ（続き）")
+        return margin + 1.5
+
+    def _make_room(height_cm: float) -> None:
+        nonlocal y_cm
+        if y_cm + height_cm > paper.height_cm - margin:
+            y_cm = _continue_page()
+
     # --- 生地幅ごとの表 ---
     c.setFillColorRGB(0.1, 0.1, 0.1)
     c.setFont(_LABEL_FONT, 11)
@@ -1192,17 +1225,21 @@ def _draw_shopping_page(c, memo, paper: Paper = DEFAULT_PAPER) -> None:
     # --- 注記 ---
     for note in memo.notes:
         lines = _wrap_ja(note, _ASSEMBLY_WRAP_CHARS + 12)
-        if y_cm + len(lines) * 0.42 + 0.4 > paper.height_cm - margin:
-            break      # 1ページに収まらない分は画面側で読める
+        _make_room(min(len(lines) * 0.42 + 0.25,
+                       paper.height_cm - 2 * margin - 1.5))
         c.setFillColorRGB(0.25, 0.25, 0.25)
         c.setFont(_LABEL_FONT, 8.5)
         for line in lines:
+            _make_room(0.42)
+            c.setFillColorRGB(0.25, 0.25, 0.25)
+            c.setFont(_LABEL_FONT, 8.5)
             c.drawString((margin + 0.3) * CM, (paper.height_cm - y_cm) * CM, line)
             y_cm += 0.42
         y_cm += 0.25
 
     # --- 向いている生地 ---
-    if memo.suggestions and y_cm + 1.5 < paper.height_cm - margin:
+    if memo.suggestions:
+        _make_room(1.5)
         y_cm += 0.3
         c.setFillColorRGB(0.1, 0.1, 0.1)
         c.setFont(_LABEL_FONT, 11)
@@ -1211,20 +1248,27 @@ def _draw_shopping_page(c, memo, paper: Paper = DEFAULT_PAPER) -> None:
         for item in memo.suggestions:
             lines = _wrap_ja(f"{item.part_label}: {item.text}",
                               _ASSEMBLY_WRAP_CHARS + 12)
+            source_lines = _wrap_pdf_line_to_width(
+                f"出典: {item.source_url}",
+                (paper.width_cm - 2 * margin - 0.9) * CM, 7)
+            _make_room(min((len(lines) + len(source_lines)) * 0.42 + 0.3,
+                           paper.height_cm - 2 * margin - 1.5))
             # 出典は必ず添える。どこから来た助言なのかが分からないと、
-            # 利用者は自分で確かめようがない。URLはASCIIなので折り返さない。
-            if y_cm + (len(lines) + 1) * 0.42 + 0.3 > paper.height_cm - margin:
-                break
-            c.setFillColorRGB(0.25, 0.25, 0.25)
-            c.setFont(_LABEL_FONT, 8.5)
+            # 利用者は自分で確かめようがない。長いURLは実寸幅で折り返す。
             for line in lines:
+                _make_room(0.42)
+                c.setFillColorRGB(0.25, 0.25, 0.25)
+                c.setFont(_LABEL_FONT, 8.5)
                 c.drawString((margin + 0.3) * CM, (paper.height_cm - y_cm) * CM, line)
                 y_cm += 0.42
-            c.setFillColorRGB(0.5, 0.5, 0.5)
-            c.setFont(_LABEL_FONT, 7)
-            c.drawString((margin + 0.6) * CM, (paper.height_cm - y_cm) * CM,
-                         f"出典: {item.source_url}")
-            y_cm += 0.55
+            for source_line in source_lines:
+                _make_room(0.42)
+                c.setFillColorRGB(0.5, 0.5, 0.5)
+                c.setFont(_LABEL_FONT, 7)
+                c.drawString((margin + 0.6) * CM,
+                             (paper.height_cm - y_cm) * CM, source_line)
+                y_cm += 0.42
+            y_cm += 0.13
 
     c.showPage()
 

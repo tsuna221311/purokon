@@ -83,3 +83,25 @@ def test_endministrator_real_pattern_and_sewing_step_agree():
     step = next(s for s in result.assembly_steps() if s.title == "袖を身頃に付ける")
     assert f"約{measured_ease:.1f}cm" in step.detail
     assert "4本目" in step.detail
+    separate_notes = [note for note in result.shopping_list.notes
+                      if note.startswith("型紙外の同梱物:")]
+    assert len(separate_notes) == len(project.separate_components)
+    assert any("インナー" in note for note in separate_notes)
+    assert any("タイツ" in note for note in separate_notes)
+    # A packed shopping page is only useful if every off-pattern item actually
+    # survives PDF pagination and the Japanese glyph subset.
+    from io import BytesIO
+    from pypdf import PdfReader
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas
+    from engine.pdf_export import _draw_shopping_page
+
+    stream = BytesIO()
+    pdf = canvas.Canvas(stream, pagesize=A4)
+    _draw_shopping_page(pdf, result.shopping_list)
+    pdf.save()
+    rendered = "".join("".join(page.extract_text().split())
+                       for page in PdfReader(BytesIO(stream.getvalue())).pages)
+    assert rendered.count("型紙外の同梱物") == len(project.separate_components)
+    for component in project.separate_components:
+        assert "".join(component.split()) in rendered

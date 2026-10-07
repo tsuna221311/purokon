@@ -2899,6 +2899,9 @@ class PatternForgePipeline:
                         front_opening_cm=(shopping_list.front_opening_cm
                                           if group_has_zip else None),
                         front_opening_bottom=shopping_list.front_opening_bottom)
+                    group_shopping.notes.extend(
+                        note for note in shopping_list.notes
+                        if note.startswith("型紙外の同梱物:"))
                     group_outputs = {} if skip_export else export_pattern(
                         group_nesting, self.output_dir,
                         basename=f"{job_id}_fabric{index + 1}",
@@ -3292,6 +3295,12 @@ class PatternForgePipeline:
             lining_parts=lining_parts_list,
             front_opening_cm=front_opening_cm,
             front_opening_bottom=_front_opening_bottom(finalized_parts))
+        costume_brief = garment_spec.construction.get("costume_project_brief")
+        if isinstance(costume_brief, dict):
+            for component in costume_brief.get("separate_components") or []:
+                shopping_list.notes.append(
+                    f"型紙外の同梱物: {component}。この型紙と生地量には含まれず、"
+                    "別途制作・調達が必要です。")
         closure = str(garment_spec.construction.get("closure") or "")
         closure_length = garment_spec.construction.get("closure_length_cm")
         if closure in {"back_zip", "side_zip"} and closure_length:

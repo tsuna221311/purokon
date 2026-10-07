@@ -231,6 +231,28 @@ def _costume_panel_label_chars() -> set:
     return chars
 
 
+def _costume_separate_component_chars() -> set:
+    """Collect built-in costume items copied verbatim into the shopping PDF.
+
+    These are not arbitrary user labels: the application itself prints them,
+    so a missing glyph must be fixed in the bundled font, not merely warned.
+    """
+    import ast
+
+    path = Path(__file__).resolve().parent.parent / "engine" / "costume_projects.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    chars: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        if node.func.id != "CostumeProject":
+            continue
+        for keyword in node.keywords:
+            if keyword.arg == "separate_components":
+                chars.update("".join(ast.literal_eval(keyword.value)))
+    return chars
+
+
 def _static_text_chars() -> set:
     """engine/pdf_export.py の PDF_STATIC_TEXTS に出てくる文字を集める。
 
@@ -270,6 +292,7 @@ def _build_char_set() -> str:
     chars.update(_cutting_note_chars())
     chars.update(_printed_module_chars())
     chars.update(_costume_panel_label_chars())
+    chars.update(_costume_separate_component_chars())
     return "".join(sorted(chars))
 
 
