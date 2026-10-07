@@ -2,6 +2,8 @@
 
 この文書は正面画像を基にしたPatternForgeのローカル試作について、**確認したことと未確認のことを分ける**。市販品同等の認証ではない。背面・側面形状、生地物性、着用者へのフィット、縫製・装飾の耐久性は実測していない。
 
+`../output/`へのリンクはローカルで再生成した検証ファイルを指す。容量と作業環境のためGitHubには含めていない。GitHub上では数値要約と再現用スクリプトを参照すること。
+
 ## 今回の改善と確認
 
 - 近傍100寸法のデジタル製図検査では79件が通過、21件は肩幅・胸ダーツ等の根拠ある停止条件を保持した。脇線補正なしの対照は72件通過で、補正による通過増は7件、例外0件。これは人口の着用合格率ではない。[結果](../output/endministrator_lower_shell_flared_v2/size_grid_nearby100_20261007.json)
@@ -10,6 +12,7 @@
 - B112体型の新しい型紙JSONで24フレームのBlender布試作を再実行。前A/B・後Cの紙辺長差95百分位は29.38/34.52/12.01%、暫定形状判定は不合格。正面では胸・前開きが崩れ、袖は型紙由来でなく参照造形からの借用。[レポート](../output/endministrator_lower_shell_flared_v2/drape_b112_fresh_export_regression/pattern_panel_drape_report.json)／[正面](../output/endministrator_lower_shell_flared_v2/drape_b112_fresh_export_regression/pattern_shell_smoothed_front.png)／[側面](../output/endministrator_lower_shell_flared_v2/drape_b112_fresh_export_regression/pattern_shell_smoothed_side.png)／[背面](../output/endministrator_lower_shell_flared_v2/drape_b112_fresh_export_regression/pattern_shell_smoothed_back.png)
 - 100寸法のうち裾ダーツ未縫合51件は、上身頃に20cm超の三角辺があり、最大49.778cm。境界を残すだけでは布計算用の面密度にはならない。単純な細分化は別の比較試験でひずみと見た目を悪化させたため、採用していない。
 - 前後袖ぐりの長さが違っても縫える肩合わせ位置を袖山に選び、印刷型紙へ4本目の合印を追加した。B87では前0.831cm・後0.674cmのいせ込みが残る。追加後の[近傍100寸法の2D検査](../output/endministrator_nearby100_printed_shoulder_20261007.json)は79/100通過・例外0で従来と同数。[3D入力監査](../output/endministrator_3d_export_printed_shoulder_20261007.json)は100/100書き出し、100/100で印刷肩印と3Dメッシュの肩位置差0.1cm以内、裾ダーツ未縫合51、入力形式対応49。合印の追加は、立体袖のひずみ・見た目の合格を意味しない。
+- B87の印刷PDF（83枚）で肩印と縫製手順を目視確認した。袖山いせ込みは概算2.2cmでなく、完成型紙の縫い線差約1.5cmを手順に記す。関連59テストは通過した。実寸印刷・貼り合わせ・仮縫いは未実施。
 
 ## 市販品質との未達差
 

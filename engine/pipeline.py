@@ -30,6 +30,7 @@ from PIL import Image
 from .compatibility import (
     COLLAR_EASE_CM, CUFFS_EASE_CM, CompatibilityWarning, SLEEVE_CAP_DESIGN_GATHER_CM,
     SLEEVE_CAP_EASE_CM, WAISTBAND_CLOSURE_EASE_CM, armhole_length, sleeve_cap_ease_cm,
+    sleeve_cap_length,
     check_seam_compatibility, hem_or_wrist_opening_length, neckline_length,
     shoulder_seam_length, shoulder_seams_match, side_seam_length, unchecked_seams,
     waist_opening_length,
@@ -1586,22 +1587,28 @@ def _split_oversized_part(base_part, scaled, request, measurements,
 
 
 def _sleeve_cap_ease_for(finalized_parts: list) -> float | None:
-    """この型紙のいせ込み量(cm)。身頃が揃っていなければNone(round33)。
+    """完成した袖山と袖ぐりの縫い線から求めるいせ込み量(cm)。
 
     縫製手順に「袖山を約○cm縮めます」と書くために使う。
-    `PipelineResult.assembly_steps()`と同じ値になるよう、計算はここ1か所。
+    設計時の目標値ではなく、ドロップショルダー等の補正後の実測値を使う。
+    いずれかの縫い線が測れなければ、安全側で数値を表示しない。
     """
     fronts = [p for p in finalized_parts if p.part_type == "front_bodice"]
     if not fronts:
         fronts = [p for p in finalized_parts
                   if p.part_type == "front_bodice_zip_panel"]
     backs = [p for p in finalized_parts if p.part_type == "back_bodice"]
-    if not fronts or not backs:
+    sleeves = [p for p in finalized_parts if p.part_type == "sleeve"]
+    if not fronts or not backs or not sleeves:
         return None
-    lengths = [armhole_length(p) for p in fronts + backs]
-    if not all(v is not None for v in lengths):
+    armhole_lengths = [armhole_length(p) for p in fronts + backs]
+    cap_lengths = [sleeve_cap_length(p) for p in sleeves]
+    if any(v is None or v <= 0 for v in armhole_lengths + cap_lengths):
         return None
-    return sleeve_cap_ease_cm(sum(lengths) / 2.0)
+    armhole_per_arm = sum(armhole_lengths) / 2.0
+    cap_per_sleeve = sum(cap_lengths) / len(cap_lengths)
+    ease = cap_per_sleeve - armhole_per_arm
+    return ease if ease > 0 else None
 
 
 def _chest_width_notes(scaled_parts: list, measurements: Measurements) -> list[str]:

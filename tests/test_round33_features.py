@@ -101,13 +101,13 @@ def test_the_sleeve_step_carries_the_measured_ease(tmp_path):
     このエンジンは袖ぐりを測っていて、いせ量を知っている(round31)ので、
     数字で書ける。ここがこの手順書の存在意義なので、失われたら気づきたい。
     """
-    from engine.compatibility import armhole_length, sleeve_cap_ease_cm
+    from engine.compatibility import armhole_length, sleeve_cap_length
 
     result = _generate(tmp_path)
     parts = {p.part_type: p for p in result.finalized_parts}
     per_arm = (armhole_length(parts["front_bodice"])
                + armhole_length(parts["back_bodice"])) / 2.0
-    expected = f"{sleeve_cap_ease_cm(per_arm):.1f}cm"
+    expected = f"{sleeve_cap_length(parts['sleeve']) - per_arm:.1f}cm"
     step = next(s for s in result.assembly_steps() if s.title == "袖を身頃に付ける")
     assert expected in step.detail, (expected, step.detail)
 

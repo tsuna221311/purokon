@@ -13,7 +13,7 @@
   * どのパーツが何枚あるか(`FinalizedPart`)
   * どのパーツにダーツが何本入ったか(`dart_count`)
   * 縫い代が何cmか(`seam_allowance_cm` / 裾だけ別なら裾の値も)
-  * 袖山をいくつ縮めるか(いせ込み量。`compatibility.sleeve_cap_ease_cm`)
+  * 袖山をいくつ縮めるか(完成型紙の袖山・袖ぐり縫い線長の差)
   * 合印が前1本・後ろ2本で打ってあること(`engine/notches.py`)
   * 接着芯を貼るパーツはどれか(`engine/cutting.py`)
 
@@ -79,7 +79,7 @@ class AssemblyStep:
 
 
 #: 袖山のいせ込みを縮めるときの、ぐし縫いの範囲を表す文言に使う。
-#: (量そのものは`compatibility.sleeve_cap_ease_cm`が実測から返す。)
+#: (量そのものは`pipeline._sleeve_cap_ease_for`が完成縫い線から実測する。)
 _SLEEVE_EASE_NOTE = (
     "袖山の合印から合印までをぐし縫いし、糸を引いて約{ease:.1f}cm縮めます"
     "(この分が肩先の丸みになります)。"
@@ -319,9 +319,14 @@ def assembly_steps(finalized_parts: list,
         ease_note = (_SLEEVE_EASE_NOTE.format(ease=sleeve_cap_ease_cm)
                      if sleeve_cap_ease_cm else
                      "袖山を袖ぐりの寸法まで少し縮めます。")
+        shoulder_mark_note = (
+            "袖山の4本目（頂点に近い単独印）が肩合わせ印です。"
+            "肩印は袖山の幾何学的な頂点と一致するとは限りません。"
+            if any(len(part.notches) == 4 for part in finalized_parts
+                   if part.part_type == "sleeve") else "")
         steps.append((
             "袖を身頃に付ける",
-            ease_note
+            ease_note + shoulder_mark_note
             + "そのあと袖と身頃を中表に合わせ、"
             "「袖山の合印を肩線に、袖下の縫い目を脇線に」合わせてしつけをしてから縫います。"
             "袖ぐり側の合印は前が1本・後ろが2本なので、袖を前後逆に付ける心配が"
