@@ -259,6 +259,13 @@ if sleeve_axis_mode not in {"horizontal-sleeve", "down-26-sleeve-trial",
 if (sleeve_axis_mode != "horizontal-sleeve"
         and sleeve_mode != "pattern-sewn-sleeves-trial"):
     raise ValueError("Downward sleeve axis needs the pattern sleeve trial")
+sleeve_axis_degrees = {
+    "horizontal-sleeve": 0,
+    "down-26-sleeve-trial": 26,
+    "down-35-sleeve-trial": 35,
+}[sleeve_axis_mode]
+sleeve_axis_x = math.cos(math.radians(sleeve_axis_degrees))
+sleeve_axis_z = -math.sin(math.radians(sleeve_axis_degrees))
 if shell_placement_mode == "paper-edge-relaxed-shell" and join_mode != "fully-welded-shell":
     raise ValueError("Paper-edge shell relaxation needs fully-welded-shell")
 if join_mode == "authored-guided-welded-shell" and guide_mode != "source-hem":
@@ -549,11 +556,19 @@ elif collision_mode in {"measurement-standin", "measurement-standin-with-sweater
             vertices = []
             columns = 32
             for x, z, circumference_cm in rings:
+                # The unmeasured arm fixture must follow the same trial pose
+                # as the sleeve.  Leaving it horizontal would make the cloth
+                # collide with a different pose than the one being tested.
+                offset_x, offset_z = x - rings[0][0], z - rings[0][1]
+                posed_x = (rings[0][0] + sleeve_axis_x * offset_x
+                           - sleeve_axis_z * offset_z)
+                posed_z = (rings[0][1] + sleeve_axis_z * offset_x
+                           + sleeve_axis_x * offset_z)
                 radius = circumference_cm / math.tau * UNIT_M_PER_CM
                 for column in range(columns):
                     angle = math.tau * column / columns
-                    vertices.append((side * x, radius * math.sin(angle),
-                                     z + radius * math.cos(angle)))
+                    vertices.append((side * posed_x, radius * math.sin(angle),
+                                     posed_z + radius * math.cos(angle)))
             faces = []
             for row in range(len(rings) - 1):
                 for column in range(columns):
@@ -1430,12 +1445,8 @@ if shell_joined:
             for x_cm, y_cm in paper:
                 edge, cap_y = cap_cross_section(x_cm)
                 extension = max(0.0, y_cm - cap_y) * UNIT_M_PER_CM
-                axis_x, axis_z = {
-                    "horizontal-sleeve": (1.0, 0.0),
-                    "down-26-sleeve-trial": (.9, -.436),
-                    "down-35-sleeve-trial": (.82, -.57),
-                }[sleeve_axis_mode]
-                sleeve_axis = Vector((sign * axis_x, 0, axis_z))
+                sleeve_axis = Vector((sign * sleeve_axis_x, 0,
+                                      sleeve_axis_z))
                 column_guide = edge + sleeve_axis * extension
                 distance_cm, nearest_edge, tangent = nearest_cap_projection(
                     x_cm, y_cm)
@@ -2904,6 +2915,10 @@ report = {"status": (
           "sleeve_drape_mode": sleeve_mode,
           "sleeve_cap_ease_distribution": cap_ease_mode,
           "sleeve_axis_mode": sleeve_axis_mode,
+          "nominal_arm_fixture_pose_degrees": (
+              sleeve_axis_degrees if collision_mode in {
+                  "measurement-standin", "measurement-standin-with-sweater"}
+              and sleeve_mode == "pattern-sewn-sleeves-trial" else None),
           "sleeve_drape_report": sleeve_drape_report,
           "sleeve_topology_preflight": sleeve_topology_preflight,
           "sleeve_join_audit": data.get("sleeve_join_audit"),
