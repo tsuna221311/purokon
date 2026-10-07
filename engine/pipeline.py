@@ -592,7 +592,13 @@ class PipelineResult:
             "seam_allowance_cm": self.seam_allowance_cm,
             "hem_seam_allowance_cm": self.hem_seam_allowance_cm,
             "part_count": len(self.finalized_parts),
-            "unplaced_count": len(self.nesting.unplaced),
+            # 表地だけでなく裏地・別布も、裁断に必要な全パーツで数える。
+            # fabric_groups[0] は self.nesting と同一なので二重計上しない。
+            "unplaced_count": (len(self.nesting.unplaced)
+                               + (len(self.lining_nesting.unplaced)
+                                  if self.lining_nesting else 0)
+                               + sum(len(g.nesting.unplaced)
+                                     for g in self.fabric_groups if g.index > 0)),
             # `nesting.py`はunplaced(配置できなかったパーツ)を検出できる作りに
             # なっている一方、以前はSVG/PDF側がresult.placedしか描画しないため
             # 配置できなかったパーツは出力から完全に消え、画面上も他の統計と
@@ -744,8 +750,19 @@ class PipelineResult:
         `measurement_clamp_warnings`と同じ位置づけの、利用者へ正直に開示する
         ための文言。空リストなら配置できなかったパーツは無い(通常はこちら)。
         """
+        warnings = []
+        if self.lining_nesting and self.lining_nesting.unplaced:
+            warnings.append(
+                f"裏地の型紙が{len(self.lining_nesting.unplaced)}枚、配置できず出力から"
+                "欠けています。裏地の型紙を確認し、本番生地を裁断しないでください。")
+        for group in self.fabric_groups:
+            if group.index > 0 and group.nesting.unplaced:
+                warnings.append(
+                    f"生地「{group.name}」の型紙が{len(group.nesting.unplaced)}枚、"
+                    "配置できず出力から欠けています。生地幅やパーツ構成を見直し、"
+                    "本番生地を裁断しないでください。")
         if not self.nesting.unplaced:
-            return []
+            return warnings
         names = "・".join(p.display_name for p in self.nesting.unplaced)
         # round56: 「最大」に**選ばれた幅**を書いていたので、150cmまで
         # 試して全部だめだった場合でも「最大110cm」と出ていた。
@@ -778,7 +795,7 @@ class PipelineResult:
             f"{names}は、どの生地幅(最大{widest:.0f}cm)にも"
             "収まらず型紙に含まれていません。この型紙のSVG/PDFには上記のパーツが"
             f"描かれていないため、そのまま裁断すると衣服が完成しません。{advice}"
-        ]
+        ] + warnings
 
     def naive_baseline_length_cm(self) -> float:
         """比較用の素朴なベースライン: 各パーツを1枚ずつ縦に積んだだけの

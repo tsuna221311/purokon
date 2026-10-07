@@ -63,6 +63,32 @@ def test_unplaced_lining_and_second_fabric_block_digital_release():
                for item in report["blockers"])
 
 
+def test_summary_counts_and_warns_for_unplaced_lining_and_accent_fabric():
+    result = PatternForgePipeline(output_dir="output").generate_from_selection(
+        build_garment_spec(), MEASUREMENTS, lining=True,
+        fabric_group_assignments={"skirt": "別布"}, skip_export=True)
+    assert len(result.fabric_groups) == 2
+    assert result.summary()["unplaced_count"] == 0
+
+    result.lining_nesting.unplaced.append(result.lining_parts[0])
+    accent = result.fabric_groups[1]
+    accent.nesting.unplaced.append(accent.parts[0])
+    summary = result.summary()
+    assert summary["unplaced_count"] == 2
+    assert summary["lining"]["unplaced_count"] == 1
+    assert summary["fabric_groups"][1]["unplaced_count"] == 1
+    assert any("裏地の型紙が1枚" in item for item in summary["unplaced_warnings"])
+    assert any("生地「別布」の型紙が1枚" in item
+               for item in summary["unplaced_warnings"])
+    assert summary["production_quality"]["digital_ready"] is False
+
+    # 1種類目の生地は result.nesting と同じ配置を参照する。二重に数えない。
+    result.nesting.unplaced.append(result.fabric_groups[0].parts[0])
+    summary = result.summary()
+    assert summary["unplaced_count"] == 3
+    assert len(summary["unplaced_warnings"]) == 3
+
+
 def test_missing_lining_layout_blocks_digital_release():
     result = PatternForgePipeline(output_dir="output").generate_from_selection(
         build_garment_spec(), MEASUREMENTS, lining=True, skip_export=True)
