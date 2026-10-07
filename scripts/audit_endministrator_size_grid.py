@@ -17,7 +17,8 @@ from engine.endministrator_side_seam_truing import (
     _front_side_length, true_front_side_seam)
 from engine.measurements import Measurements
 from engine.pipeline import (PatternForgePipeline, build_custom_panel_requests,
-                             build_garment_spec, merge_custom_panel_requests)
+                             build_garment_spec, merge_custom_panel_requests,
+                             _sleeve_cap_ease_for)
 from engine.production_quality import production_quality_report
 
 
@@ -76,6 +77,12 @@ def run_case(dimensions: tuple[int, ...], output_dir: Path,
         worn_over_bust_cm=project.worn_over_bust_cm,
         shoulder_drop_cm=project.shoulder_drop_cm, skip_export=True)
     audit = production_quality_report(result)
+    sleeve_ease = _sleeve_cap_ease_for(result.finalized_parts)
+    sleeve_step = next((step for step in result.assembly_steps()
+                        if step.title == "袖を身頃に付ける"), None)
+    sleeve_instruction_matches_pattern = (
+        sleeve_ease is not None and sleeve_step is not None
+        and f"約{sleeve_ease:.1f}cm" in sleeve_step.detail)
     fronts = [part for part in result.finalized_parts
               if part.part_type == "front_bodice_zip_panel"]
     backs = [part for part in result.finalized_parts
@@ -107,6 +114,9 @@ def run_case(dimensions: tuple[int, ...], output_dir: Path,
     return {"measurements_cm": body.as_dict(),
             "digital_ready": audit["digital_ready"],
             "blockers": audit["blockers"],
+            "measured_sleeve_ease_cm": sleeve_ease,
+            "sleeve_instruction_matches_pattern":
+                sleeve_instruction_matches_pattern,
             "side_seam_stitch_lengths": seam_lengths,
             "side_seam_stitch_segments": seam_segments,
             "side_seam_truing_independent_diagnostic": trial,

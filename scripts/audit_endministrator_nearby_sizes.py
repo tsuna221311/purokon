@@ -43,6 +43,10 @@ def main() -> None:
             results.append({"measurements_cm": case["measurements_cm"],
                             "digital_ready": case["digital_ready"],
                             "blockers": case["blockers"],
+                            "measured_sleeve_ease_cm":
+                                case["measured_sleeve_ease_cm"],
+                            "sleeve_instruction_matches_pattern":
+                                case["sleeve_instruction_matches_pattern"],
                             "side_seam_stitch_lengths":
                                 case["side_seam_stitch_lengths"]})
         except Exception as exc:
@@ -55,12 +59,16 @@ def main() -> None:
               "case_count": len(results),
               "digital_ready_count": sum(row["digital_ready"] for row in results),
               "exception_count": sum("exception" in row for row in results),
+              "sleeve_instruction_match_count": sum(
+                  bool(row.get("sleeve_instruction_matches_pattern"))
+                  for row in results),
               "cases": results}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n",
                            encoding="utf-8")
     print(json.dumps({key: report[key] for key in (
-        "case_count", "digital_ready_count", "exception_count")}))
+        "case_count", "digital_ready_count", "exception_count",
+        "sleeve_instruction_match_count")}))
 
 
 if __name__ == "__main__":
