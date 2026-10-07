@@ -98,3 +98,26 @@ def test_front_zip_trial_gap_is_an_explicit_blocker():
     assert any("前ファスナー" in item and "0.5cm" in item
                for item in report["blockers"])
     assert report["commercial_equivalence_verified"] is False
+
+
+def test_unclosed_waist_dart_trial_is_an_explicit_blocker():
+    pattern = {
+        "sleeves_topologically_welded_to_bodice": False,
+        "fabric_inputs_measured": False,
+        "waist_dart_trial": {
+            "present": True,
+            "closure_pass": False,
+            "topologically_welded_to_lower_shell": False,
+        },
+    }
+    with (patch.object(audit, "audit_pattern_sizes", return_value=[]),
+          patch.object(audit, "audit_drape", return_value=[]),
+          patch.object(audit, "audit_components", return_value={
+              "missing_groups": []}),
+          patch.object(audit, "audit_pattern_derived_drape", return_value=pattern)):
+        report = audit.build_report(Path("unused"), Path("unused"),
+                                    Path("unused"), Path("trial.json"))
+    assert any("裾ダーツ" in reason and "閉じていない" in reason
+               for reason in report["blockers"])
+    assert any("裾ダーツ" in reason and "一体メッシュ" in reason
+               for reason in report["blockers"])

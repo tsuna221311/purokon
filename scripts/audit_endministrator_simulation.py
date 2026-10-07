@@ -157,6 +157,12 @@ def audit_pattern_derived_drape(report_path: Path) -> dict:
         "source_pattern_json": report.get("source_pattern_json"),
         "sleeve_cap_ease_distribution": report.get("sleeve_cap_ease_distribution"),
         "sleeve_axis_mode": report.get("sleeve_axis_mode", "horizontal-sleeve"),
+        "waist_dart_trial": {
+            "present": report.get("waist_dart_3d_trial", False),
+            "closure_pass": report.get("waist_dart_trial_closure_pass"),
+            "topologically_welded_to_lower_shell": report.get(
+                "bodice_to_panel_seam_topologically_welded", False),
+        },
         "sleeve_p95_paper_edge_strain_percent": {
             side: result["p95_absolute_paper_edge_strain_percent"]
             for side, result in sleeves.items()},
@@ -219,6 +225,12 @@ def build_report(simulation_dir: Path, glb_path: Path,
         shoulders = pattern_drape.get("shoulder_final_gap_p95_cm") or {}
         if any(value > .5 for value in shoulders.values()):
             blockers.append("肩の縫い合わせに試作内部目安0.5cmを超す隙間が残る")
+        waist_darts = pattern_drape.get("waist_dart_trial") or {}
+        if waist_darts.get("present") and not waist_darts.get("closure_pass"):
+            blockers.append("裾ダーツの3D仮縫合が閉じていない")
+        if (waist_darts.get("present") and not waist_darts.get(
+                "topologically_welded_to_lower_shell", False)):
+            blockers.append("裾ダーツのある上身頃と下身頃は一体メッシュ接合されていない")
         front_zip = pattern_drape.get("front_zip_trial") or {}
         if (front_zip.get("mode") == "sewn-front-zip-trial"
                 and not front_zip.get("provisional_gap_pass", False)):
