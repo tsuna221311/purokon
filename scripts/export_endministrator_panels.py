@@ -37,6 +37,7 @@ from engine.pattern_panel_bridge import (sample_bodice_from_stitch_line,
                                          sample_panel, validate_cloth_panel_mesh)
 from engine.pipeline import (PatternForgePipeline, build_custom_panel_requests,
                              build_garment_spec, merge_custom_panel_requests)
+from engine.zip_front_geometry import front_zip_center_path
 
 
 def export_panels(body: Measurements, *,
@@ -134,6 +135,8 @@ def export_panels(body: Measurements, *,
             host.stitch_line, underarm_y, right, hem_y, darts)
             if darts else back_side_paths(
                 host.stitch_line, underarm_y, left, right, hem_y))
+        front_opening = (front_zip_center_path(host.stitch_line, hem_y)
+                         if host_type == "front_bodice_zip_panel" else None)
         outline = matches[0].stitch_line
         mesh = sample_panel(outline)
         if abs(sewn_hem_width - mesh["top_width_cm"]) > 0.1:
@@ -164,6 +167,11 @@ def export_panels(body: Measurements, *,
             "side_seam_segments_cm": side_paths,
             "side_mesh_paths": [mesh_indices_for_contour_path(
                 bodice_mesh, host.stitch_line, path) for path in side_paths],
+            "front_opening_stitch_path_cm": front_opening,
+            "front_opening_mesh_path": (
+                mesh_indices_for_contour_path(
+                    bodice_mesh, host.stitch_line, front_opening)
+                if front_opening else None),
             "armhole_contour_length_cm": sum(
                 path_length_cm(path) for path in armhole_paths),
             "side_bust_darts": darts,

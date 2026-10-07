@@ -75,3 +75,26 @@ def test_pattern_derived_geometry_failures_are_explicit_blockers():
     assert any("上身頃" in item and "8%" in item for item in report["blockers"])
     assert any("袖" in item and "10%" in item for item in report["blockers"])
     assert any("肩" in item and "0.5cm" in item for item in report["blockers"])
+
+
+def test_front_zip_trial_gap_is_an_explicit_blocker():
+    pattern = {
+        "sleeves_topologically_welded_to_bodice": True,
+        "fabric_inputs_measured": False,
+        "front_zip_trial": {
+            "mode": "sewn-front-zip-trial",
+            "initial_gap_p95_cm": 36.531,
+            "final_gap_p95_cm": 22.475,
+            "provisional_gap_pass": False,
+        },
+    }
+    with (patch.object(audit, "audit_pattern_sizes", return_value=[]),
+          patch.object(audit, "audit_drape", return_value=[]),
+          patch.object(audit, "audit_components", return_value={
+              "missing_groups": []}),
+          patch.object(audit, "audit_pattern_derived_drape", return_value=pattern)):
+        report = audit.build_report(Path("unused"), Path("unused"),
+                                    Path("unused"), Path("trial.json"))
+    assert any("前ファスナー" in item and "0.5cm" in item
+               for item in report["blockers"])
+    assert report["commercial_equivalence_verified"] is False

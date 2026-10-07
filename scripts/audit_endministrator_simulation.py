@@ -149,6 +149,10 @@ def audit_pattern_derived_drape(report_path: Path) -> dict:
     shoulders = {side: item["final_gap_p95_cm"]
                  for side, item in (report.get("shoulder_seam_report") or {}).items()
                  if "final_gap_p95_cm" in item}
+    front_zip_mode = report.get("front_zip_seam_mode", "open-front-zip")
+    front_zip = report.get("front_zip_seam_report") or {}
+    if front_zip_mode == "sewn-front-zip-trial" and "final_gap_p95_cm" not in front_zip:
+        raise ValueError("Front-zip trial lacks measured closure gaps")
     return {
         "source_pattern_json": report.get("source_pattern_json"),
         "sleeve_cap_ease_distribution": report.get("sleeve_cap_ease_distribution"),
@@ -157,6 +161,15 @@ def audit_pattern_derived_drape(report_path: Path) -> dict:
             for side, result in sleeves.items()},
         "upper_bodice_p95_paper_edge_strain_percent": upper,
         "shoulder_final_gap_p95_cm": shoulders,
+        "front_zip_trial": {
+            "mode": front_zip_mode,
+            "initial_gap_p95_cm": front_zip.get("initial_gap_p95_cm"),
+            "final_gap_p95_cm": front_zip.get("final_gap_p95_cm"),
+            "provisional_gap_pass": (
+                front_zip_mode == "sewn-front-zip-trial"
+                and front_zip.get("final_gap_p95_cm", float("inf")) <= .5),
+            "real_zipper_fit_validated": False,
+        },
         "sleeves_topologically_welded_to_bodice": all(
             item.get("topologically_welded_to_bodice", False)
             for item in sleeves.values()),
@@ -205,6 +218,10 @@ def build_report(simulation_dir: Path, glb_path: Path,
         shoulders = pattern_drape.get("shoulder_final_gap_p95_cm") or {}
         if any(value > .5 for value in shoulders.values()):
             blockers.append("肩の縫い合わせに試作内部目安0.5cmを超す隙間が残る")
+        front_zip = pattern_drape.get("front_zip_trial") or {}
+        if (front_zip.get("mode") == "sewn-front-zip-trial"
+                and not front_zip.get("provisional_gap_pass", False)):
+            blockers.append("前ファスナー仮接合に試作内部目安0.5cmを超す隙間が残る")
     return {
         "reference": "Arknights: Endfield female Endministrator",
         "commercial_equivalence_verified": False,

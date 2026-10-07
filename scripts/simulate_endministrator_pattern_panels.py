@@ -27,6 +27,7 @@ Run: blender -b -t 4 --python-exit-code 1 \
         [raw-paper-height|dart-taken-up-height-trial]
         [open-bust-darts|sewn-bust-darts-trial]
         [open-shoulders|sewn-shoulders-trial]
+        [open-front-zip|sewn-front-zip-trial]
 """
 
 from __future__ import annotations
@@ -63,7 +64,7 @@ from engine.pattern_panel_bridge import (aligned_trapezoid_distance,
                                          xy_scale_for_polyline_length)
 
 args = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-if len(args) not in range(2, 26):
+if len(args) not in range(2, 27):
     raise SystemExit("Usage: -- PANELS_JSON OUTPUT_DIR [SOURCE_BLEND] "
                      "[with-body|measurement-standin|measurement-standin-with-sweater|free-hang] "
                      "[authored-guide|pattern-bodice] "
@@ -89,7 +90,8 @@ if len(args) not in range(2, 26):
                      "[open-bodice-sides|sewn-bodice-sides-trial] "
                      "[borrowed-sleeves|pattern-sewn-sleeves-trial] "
                      "[render|sleeve-preflight-only] "
-                     "[uniform|crown-localized|notch-anchored] [FRAMES]")
+                     "[uniform|crown-localized|notch-anchored] [FRAMES] "
+                     "[open-front-zip|sewn-front-zip-trial]")
 panel_file, output = Path(args[0]).resolve(), Path(args[1]).resolve()
 source = Path(args[2]).resolve() if len(args) >= 3 else (
     ROOT / "output/endministrator_commercial_sewn_v4/endministrator_sewn_costume.blend")
@@ -241,6 +243,13 @@ if cap_ease_mode != "uniform" and sleeve_mode != "pattern-sewn-sleeves-trial":
 frame_count = int(args[24]) if len(args) >= 25 else 48
 if not 24 <= frame_count <= 240:
     raise ValueError("Frames must be between 24 and 240")
+front_zip_mode = args[25] if len(args) >= 26 else "open-front-zip"
+if front_zip_mode not in {"open-front-zip", "sewn-front-zip-trial"}:
+    raise ValueError("Expected open-front-zip or sewn-front-zip-trial")
+if front_zip_mode == "sewn-front-zip-trial" and (
+        bodice_side_mode != "sewn-bodice-sides-trial" or
+        join_mode != "fully-welded-shell"):
+    raise ValueError("Front zip sewing trial needs a sewn welded bodice")
 if shell_placement_mode == "paper-edge-relaxed-shell" and join_mode != "fully-welded-shell":
     raise ValueError("Paper-edge shell relaxation needs fully-welded-shell")
 if join_mode == "authored-guided-welded-shell" and guide_mode != "source-hem":
@@ -282,6 +291,10 @@ if sleeve_mode == "pattern-sewn-sleeves-trial" and (
         len(data.get("sleeves", [])) != 2 or not all(
             "tube_side_mesh_paths" in sleeve for sleeve in data["sleeves"])):
     raise ValueError("Pattern sleeve trial needs two exported cap and tube boundaries")
+if front_zip_mode == "sewn-front-zip-trial" and any(
+        not host.get("front_opening_mesh_path") for host in
+        trial_panel_data["bodice_hosts"] if host["code"] in {"A", "B"}):
+    raise ValueError("Front zip sewing trial needs both exported centre-front paths")
 if [panel["code"] for panel in data["panels"]] != ["A", "B", "C"]:
     raise ValueError("Expected the generated A/B/C stitch panels")
 panel_topology_preflight = {
@@ -891,6 +904,7 @@ dart_spring_paths = {}
 waist_dart_spring_paths = {}
 shoulder_spring_paths = {}
 bodice_side_spring_paths = {}
+front_zip_spring_path = []
 sleeve_components = {}
 side_initial_gap_report = {}
 fully_welded_seam_edge_report = {}
@@ -1064,6 +1078,31 @@ if shell_joined:
                                              max_gap_cm=40.0)
             bodice_side_spring_paths[code] = springs
             all_springs.extend(springs)
+
+    if front_zip_mode == "sewn-front-zip-trial":
+        hosts_by_code = {host["code"]: host for host in data["bodice_hosts"]}
+
+        def centre_arc(host):
+            paper = host["pattern_mesh"]["vertices_cm"]
+            indices = host["front_opening_mesh_path"]
+            lengths = [0.0]
+            for a, b in zip(indices, indices[1:]):
+                lengths.append(lengths[-1] + math.dist(paper[a], paper[b]))
+            return indices, lengths
+
+        left_indices, left_arc = centre_arc(hosts_by_code["A"])
+        right_indices, right_arc = centre_arc(hosts_by_code["B"])
+        pairs = pair_seam_vertices(left_arc, right_arc,
+                                   max_length_mismatch_cm=.1)
+        left_start = component_starts["A"][0]
+        right_start = component_starts["B"][0]
+        front_zip_spring_path = [
+            (left_start + left_indices[a], right_start + right_indices[b])
+            for a, b in pairs]
+        require_initial_sewing_clearance(all_vertices, front_zip_spring_path,
+                                         unit_m_per_cm=UNIT_M_PER_CM,
+                                         max_gap_cm=40.0)
+        all_springs.extend(front_zip_spring_path)
 
     if topology_welded:
         weld_pairs = [edge for edges in side_spring_paths.values()
@@ -1839,6 +1878,7 @@ dart_seam_report = {}
 waist_dart_seam_report = {}
 shoulder_seam_report = {}
 bodice_side_seam_report = {}
+front_zip_seam_report = {}
 sleeve_drape_report = {}
 overlay_trial_report = {}
 body_contact_report = {}
@@ -2136,6 +2176,19 @@ if shell_trial:
             "final_gap_p95_cm": round(percentile(final_gaps, .95), 3),
             "final_gap_max_cm": round(max(final_gaps), 3),
             "topologically_welded": False,
+        }
+    if front_zip_spring_path:
+        initial_gaps = [math.dist(initial[index_map[a]], initial[index_map[b]])
+                        / UNIT_M_PER_CM for a, b in front_zip_spring_path]
+        final_gaps = [math.dist(final[index_map[a]], final[index_map[b]])
+                      / UNIT_M_PER_CM for a, b in front_zip_spring_path]
+        front_zip_seam_report = {
+            "sewing_springs": len(front_zip_spring_path),
+            "initial_gap_p95_cm": round(percentile(initial_gaps, .95), 3),
+            "final_gap_p95_cm": round(percentile(final_gaps, .95), 3),
+            "final_gap_max_cm": round(max(final_gaps), 3),
+            "provisional_gap_pass": percentile(final_gaps, .95) <= .5,
+            "is_real_zipper_hardware_or_fit_validation": False,
         }
     for code, (start, overlay, rest, springs) in sewn_overlay_components.items():
         positions = final[start:start + len(rest)]
@@ -2854,6 +2907,8 @@ report = {"status": (
           "shoulder_seam_report": shoulder_seam_report,
           "bodice_side_seam_mode": bodice_side_mode,
           "bodice_side_seam_report": bodice_side_seam_report,
+          "front_zip_seam_mode": front_zip_mode,
+          "front_zip_seam_report": front_zip_seam_report,
           "dart_height_shift_is_inferred_not_sewn": (
               dart_height_mode == "dart-taken-up-height-trial"),
           "upper_anchor_counts": upper_anchor_counts,
@@ -2908,6 +2963,8 @@ report = {"status": (
              "final_p95_absolute_paper_edge_strain_limit_percent": 5.0,
               "passed": (shell_joined and
                          self_collision_mode == "self-collision" and
+                         (front_zip_mode == "open-front-zip" or
+                          front_zip_seam_report.get("provisional_gap_pass", False)) and
                          (not darted_hem_hosts or
                           (bool(waist_dart_seam_report) and
                            all(item["final_gap_p95_cm"] <= 0.2
