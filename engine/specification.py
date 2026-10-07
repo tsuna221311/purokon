@@ -329,11 +329,11 @@ def export_specification_pdf(result, output_path: str) -> str:
     # The costume-specific notes may continue onto a second page.  Do not
     # force another break here: that used to strand two short caveats on an
     # otherwise empty page before the fitting checklist.
-    story += [Spacer(1, 6 * mm), _p("仮縫い・実物検査票", title)]
+    story += [Spacer(1, 6 * mm), _p("印刷・仮縫い・実物検査票", title)]
     story.append(_p(
-        "デジタル検査を通過しても、生地の伸び・姿勢・動作時のつれは実物でしか"
-        "確定できません。測った補正量は画面の「着てみて合わなかったら」へ入力し、"
-        "再生成後にもう一度確認してください。", normal))
+        "デジタル検査を通過しても、印刷倍率や貼り合わせ、生地の伸び・姿勢・"
+        "動作時のつれは実物でしか確定できません。測った補正量は画面の"
+        "「着てみて合わなかったら」へ入力し、再生成後にもう一度確認してください。", normal))
     fitting_rows = [["確認部位", "測り方", "合格条件", "記録"]]
     for item in fitting_checklist(result):
         correction = (f"入力先: {item.correction_field}" if item.correction_field

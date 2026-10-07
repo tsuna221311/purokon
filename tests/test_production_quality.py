@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from engine.measurements import Measurements
 from engine.pipeline import PatternForgePipeline, build_garment_spec
 from engine.production_quality import (fitting_checklist, pattern_geometry_warnings,
@@ -5,6 +7,17 @@ from engine.production_quality import (fitting_checklist, pattern_geometry_warni
 
 
 MEASUREMENTS = Measurements(84, 68, 92, 160, 54, 37)
+
+
+def test_paper_preflight_is_in_physical_checklist_without_generation():
+    result = SimpleNamespace(
+        finalized_parts=[],
+        garment_spec=SimpleNamespace(construction={}),
+    )
+    checks = fitting_checklist(result)
+    assert [item.code for item in checks[:2]] == ["print_scale", "tile_assembly"]
+    assert "5.0cm" in checks[0].pass_condition
+    assert "裁断線" in checks[1].method
 
 
 def _result(tmp_path, *, sleeve="straight", skirt="flare"):
@@ -17,6 +30,8 @@ def test_quality_report_separates_digital_pass_from_physical_signoff(tmp_path):
     assert report["digital_ready"] is True
     assert report["status"] == "physical_verification_required"
     assert report["physical_signoff_required"] is True
+    assert {"print_scale", "tile_assembly"}.issubset(
+        {item["code"] for item in report["fitting_checklist"]})
     assert any(item["code"] == "final_toile"
                for item in report["fitting_checklist"])
 

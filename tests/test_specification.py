@@ -27,6 +27,8 @@ def test_pipeline_exports_manufacturing_specification(tmp_path):
     assert "採寸" in text
     assert "型紙パーツ一覧" in text
     assert "縫製順" in text
+    assert "印刷倍率の実測" in text
+    assert "分割紙面" in text
 
 
 def test_unconfirmed_image_fields_make_specification_not_ready(tmp_path):

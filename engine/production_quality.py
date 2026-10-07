@@ -100,9 +100,18 @@ class QualityCheck:
 
 
 def fitting_checklist(result) -> list[QualityCheck]:
-    """生成物に存在する部位だけを含む仮縫い検査票を返す。"""
+    """印刷から仮縫いまで、生成物に必要な実物検査票を返す。"""
     kinds = {part.part_type for part in result.finalized_parts}
-    checks: list[QualityCheck] = []
+    checks: list[QualityCheck] = [
+        QualityCheck(
+            "print_scale", "印刷倍率の実測",
+            "各型紙PDFを実物大・倍率100%で試し印刷し、校正用の5cm枠を定規で測る。表地・別布・裏地を別々に出す場合は各PDFで確認する。",
+            "すべての校正枠が実測5.0cmで、印刷時の自動拡大・縮小が無効である。"),
+        QualityCheck(
+            "tile_assembly", "分割紙面の貼り合わせ",
+            "行列番号に従って全ページを仮配置し、紙面の境界をまたぐ裁断線・縫い線・合印を突き合わせる。",
+            "欠けたページ、線の段差、重複がなく、裁断する全パーツが揃っている。"),
+    ]
     bodice = bool(kinds & {
         "front_bodice", "back_bodice", "front_bodice_zip_panel",
         "front_bodice_center", "front_bodice_side",
@@ -225,7 +234,7 @@ def production_quality_report(result) -> dict[str, object]:
         "physical_signoff_required": True,
         "fitting_checklist": [item.as_dict() for item in checklist],
         "summary": (
-            "デジタル検査は通過しました。本番裁断前に試験片と仮縫いの承認が必要です。"
+            "デジタル検査は通過しました。本番裁断前に印刷倍率・貼り合わせ・試験片・仮縫いの確認が必要です。"
             if not blockers else
             "未確認または不整合があります。解消するまで本番生地を裁断しないでください。"
         ),
