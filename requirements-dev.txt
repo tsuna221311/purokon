@@ -9,14 +9,7 @@ cairosvg>=2.7,<3   # SVGをPNGへレンダリングして目視確認する場�
 # (むしろ実際には文字化けしない文字まで文字化けして見えることがある)。
 # その種の確認をしたい場合は、実際のブラウザ(例: Playwright経由のChromium)で
 # 開いて確認すること。
-# tests/test_pdf_export.pyが生成したPDFから実際にテキストを抽出して検証する
-# のに使用。以前はここに宣言されておらず、たまたまこのサンドボックスに
-# 他の目的でプリインストールされていたために気付かれていなかったが、
-# READMEの手順通り(venv作成→requirements-dev.txtのみをインストール)で
-# 実際にクリーンな仮想環境を作って`pytest`を実行したところ、
-# `ModuleNotFoundError: No module named 'pypdf'`でこのテストだけが失敗する
-# ことを確認した(=クイックスタートの手順が実際には通らない状態だった)。
-pypdf>=3,<4
+# pypdfは検査不合格PDFの警告印字にも使うため、実行用requirements.txtに含める。
 # round66: `tests/test_round51_illustration_inputs.py`のExif回転のテストが
 # 使う。宣言されていなかったため、このファイルだけを入れた環境では
 # そのテストが**静かにskip**されていた(pypdfのときとまったく同じ形。

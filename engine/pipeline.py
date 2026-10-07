@@ -3472,6 +3472,12 @@ class PatternForgePipeline:
                 self.output_dir, f"{job_id}_specification.pdf")
             export_specification_pdf(result, specification_path)
             result.output_files["spec_pdf"] = specification_path
+            # PDFだけを単独で受け取っても、停止した型紙を裁断用と誤認しない。
+            # 仕様書の判定だけでは型紙本体・裏地・別布の紙に届かない。
+            if not production_quality_report(result)["digital_ready"]:
+                from .pdf_draft import mark_blocked_pdfs
+
+                mark_blocked_pdfs(result.output_files)
         return result
 
     def _build_from_spec(self, *args, **kwargs) -> PipelineResult:
