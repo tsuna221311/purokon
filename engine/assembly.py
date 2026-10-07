@@ -266,7 +266,7 @@ def assembly_steps(finalized_parts: list,
     if _has(finalized_parts, {"hood"}):
         steps.append((
             "フードを作る",
-            "フード2枚を中表に合わせ、**中心後(まっすぐな辺)**を縫って"
+            "フード2枚を中表に合わせ、中心後（まっすぐな辺）を縫って"
             "1つにします。次に顔の開きになる前端を、縫い代"
             f"{HOOD_FRONT_FOLD_CM:g}cmで裏側へ折ってステッチをかけます"
             "(裏フードを付ける場合は、表と裏を中表に合わせて前端を縫い、"

@@ -262,8 +262,8 @@ def hood_notes(plan: HoodPlan | None) -> list[str]:
     ]
     if plan.head_estimated:
         out.append(
-            f"**頭囲を測っていないので、成人女性の平均{DEFAULT_HEAD_CIRCUMFERENCE_CM:.0f}cm"
-            "で引きました**(出典: 帽子店ライオン堂の記事)。頭囲を測って"
+            f"頭囲を測っていないので、成人女性の平均{DEFAULT_HEAD_CIRCUMFERENCE_CM:.0f}cm"
+            "で引きました(出典: 帽子店ライオン堂の記事)。頭囲を測って"
             "入れると、そちらで引き直します。")
     if plan.length_estimated:
         out.append(

@@ -84,6 +84,16 @@ def test_sewing_step_handles_a_sleeve_without_notch_metadata():
     assert "合印を肩線に" not in step.detail
 
 
+def test_printed_hood_step_does_not_contain_markdown_markup():
+    from engine.assembly import assembly_steps
+
+    hood = SimpleNamespace(part_type="hood", display_name="hood",
+                           label_suffix="", dart_count=0)
+    step = next(s for s in assembly_steps([hood]) if s.title == "フードを作る")
+    assert "中心後（まっすぐな辺）" in step.detail
+    assert "**" not in step.detail
+
+
 def test_endministrator_real_pattern_and_sewing_step_agree():
     from engine.costume_projects import get_costume_project
     from engine.measurements import Measurements
