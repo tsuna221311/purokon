@@ -1710,6 +1710,21 @@ function renderPdfSheetCount(data) {
     + "（型紙の載らない面は省いてあります）。";
 }
 
+function renderDigitalQualityAlert(quality) {
+  const box = document.getElementById("digital-quality-alert");
+  const list = document.getElementById("digital-quality-alert-list");
+  if (!box || !list) return;
+  const blocked = Boolean(quality && quality.digital_ready === false);
+  box.classList.toggle("hidden", !blocked);
+  list.replaceChildren();
+  if (!blocked) return;
+  for (const message of quality.blockers || []) {
+    const item = document.createElement("li");
+    item.textContent = message;
+    list.appendChild(item);
+  }
+}
+
 // round65: ダーツが「どのパーツに」入ったかを、実際のパーツから書く。
 //
 // round64まで、この文はHTMLに手書きしてあった——
@@ -2521,6 +2536,24 @@ function renderMultiSizeResults(data) {
       `パーツ数 ${result.part_count} / 布ロス率 ${formatPercent(result.waste_ratio)} / ` +
       `幅${result.fabric_width_cm}cm の生地を ${(buyCm / 100).toFixed(1)}m` + sheetText;
     box.appendChild(stats);
+
+    const sizeQuality = result.production_quality;
+    if (sizeQuality && sizeQuality.digital_ready === false) {
+      const warning = document.createElement("div");
+      warning.className = "field-box note-danger";
+      const title = document.createElement("p");
+      title.className = "hint note-title";
+      title.textContent = "⚠ 自動検査で停止。PDFは検証用です。本番生地を裁断しないでください。";
+      warning.appendChild(title);
+      const reasons = document.createElement("ul");
+      for (const message of sizeQuality.blockers || []) {
+        const item = document.createElement("li");
+        item.textContent = message;
+        reasons.appendChild(item);
+      }
+      warning.appendChild(reasons);
+      box.appendChild(warning);
+    }
 
     // round36: サイズごとの警告・注記を、単一サイズと同じ強さで出す。
     //
@@ -3634,7 +3667,14 @@ form.addEventListener("submit", async (event) => {
       scrollResultIntoView();
       // round46: 「右のパネル」は2段組のときだけの話で、スマホでは
       // 結果はフォームの**下**に出る。画面の作りに依らない言い方にする。
+      const blockedSizes = Object.entries(data.results || {})
+        .filter(([_size, result]) => result.production_quality
+                 && result.production_quality.digital_ready === false)
+        .map(([size]) => size);
       announce(`${Object.keys(data.results || {}).length}サイズ分の型紙ができました。`
+               + (blockedSizes.length
+                 ? `ただし${blockedSizes.join("・")}は自動検査で停止しています。裁断しないでください。`
+                 : "")
                + "「生成結果」に一覧が出ています。");
       endGenerating();
       return;
@@ -3652,6 +3692,8 @@ form.addEventListener("submit", async (event) => {
     document.getElementById("stat-time").textContent = data.elapsed_seconds;
     document.getElementById("stat-unplaced").textContent = data.unplaced_count;
     renderPdfSheetCount(data);
+    const quality = data.production_quality;
+    renderDigitalQualityAlert(quality);
     renderFabricGroups(data);
 
     const cacheBust = `?t=${Date.now()}`;
@@ -3869,7 +3911,6 @@ form.addEventListener("submit", async (event) => {
       compatibilityWarningList.appendChild(li);
     }
 
-    const quality = data.production_quality;
     const qualityBox = document.getElementById("production-quality-result");
     if (qualityBox) {
       qualityBox.classList.toggle("hidden", !quality);
@@ -3955,7 +3996,9 @@ form.addEventListener("submit", async (event) => {
       const warnings = (data.measurement_warnings || []).length
                         + (data.unplaced_warnings || []).length
                         + (data.compatibility_warnings || []).length;
-      announce(`型紙ができました。パーツ${data.part_count}枚、`
+      announce(`${quality && quality.digital_ready === false
+                 ? "自動検査で停止しました。出力は検証用で、本番生地を裁断しないでください。"
+                 : "型紙ができました。"}パーツ${data.part_count}枚、`
                + `幅${data.fabric_width_cm}cmの生地を`
                + `${(data.used_length_cm / 100).toFixed(1)}メートル使います。`
                + (warnings ? `確認してほしい注意が${warnings}件あります。` : ""));

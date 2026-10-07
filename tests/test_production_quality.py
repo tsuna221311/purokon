@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from pathlib import Path
 
 from engine.measurements import Measurements
 from engine.pipeline import PatternForgePipeline, build_garment_spec
@@ -7,6 +8,17 @@ from engine.production_quality import (fitting_checklist, pattern_geometry_warni
 
 
 MEASUREMENTS = Measurements(84, 68, 92, 160, 54, 37)
+
+
+def test_blocked_digital_pattern_is_flagged_before_download_and_per_size():
+    root = Path(__file__).resolve().parents[1]
+    html = (root / "web/templates/index.html").read_text(encoding="utf-8")
+    js = (root / "web/static/app.js").read_text(encoding="utf-8")
+    assert html.index('id="digital-quality-alert"') < html.index('id="download-pdf"')
+    assert 'renderDigitalQualityAlert(quality)' in js
+    assert 'quality.digital_ready === false' in js
+    assert 'sizeQuality.digital_ready === false' in js
+    assert '本番生地を裁断しないでください。' in js
 
 
 def test_paper_preflight_is_in_physical_checklist_without_generation():
