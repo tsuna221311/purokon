@@ -4554,10 +4554,22 @@ function restoreSessionDraft() {
     return false;
   }
 
+  applyDraftFields(draft);
+  if (sessionDraftStatus) {
+    sessionDraftStatus.dataset.restored = "true";
+    sessionDraftStatus.textContent = "前回の入力をこのタブから復元しました（画像は再選択してください）";
+  }
+  return true;
+}
+
+function applyDraftFields(draft) {
   const changed = [];
   Object.entries(draft.fields).forEach(([name, saved]) => {
+    if (!saved || typeof saved !== "object") return;
     const controls = _draftControlsByName(name);
     controls.forEach((control) => {
+      const type = (control.type || "").toLowerCase();
+      if (["file", "hidden", "submit", "button", "password"].includes(type)) return;
       if (saved.type === "radio") {
         const selected = control.value === saved.value;
         control.checked = selected;
@@ -4590,11 +4602,7 @@ function restoreSessionDraft() {
   // 表示を確定する。保存データの列挙順や他項目のchange順に依存させない。
   const restoredMode = form.querySelector('input[name="mode"]:checked');
   if (restoredMode) setMode(restoredMode.value);
-  if (sessionDraftStatus) {
-    sessionDraftStatus.dataset.restored = "true";
-    sessionDraftStatus.textContent = "前回の入力をこのタブから復元しました（画像は再選択してください）";
-  }
-  return true;
+  syncGenerationSummary();
 }
 
 function selectedStyleLabel(name) {
@@ -4637,11 +4645,205 @@ form.addEventListener("change", () => {
 });
 sessionDraftClear?.addEventListener("click", () => {
   const confirmed = window.confirm(
-    "このタブに一時保存した入力と、選択中の画像を消して最初の状態に戻しますか？");
+    "このタブの入力と選択中の画像を消して最初の状態に戻しますか？「この端末に保存」した内容は残ります。");
   if (!confirmed) return;
   try { sessionStorage.removeItem(SESSION_DRAFT_KEY); } catch (_error) {}
   window.location.reload();
 });
+
+// 公開デモのサーバーディスクは永続化されない。明示操作で入力だけを
+// localStorage に残し、画像を含む再開用データは利用者の端末へ書き出す。
+// 生成物そのものは含めず、PDF/SVG/DXF は別途ダウンロードする。
+const LOCAL_PROJECT_KEY = "patternforge:local-project:v1";
+const PROJECT_FILE_FORMAT = "patternforge-project";
+const MAX_PROJECT_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_PROJECT_JSON_BYTES = 16 * 1024 * 1024;
+const projectSaveStatus = document.getElementById("project-save-status");
+const projectImportFile = document.getElementById("project-import-file");
+
+function projectSaveMessage(message) {
+  if (projectSaveStatus) projectSaveStatus.textContent = message;
+}
+
+if (projectSaveStatus) {
+  const markLocalProjectDirty = () => {
+    try {
+      if (localStorage.getItem(LOCAL_PROJECT_KEY)) {
+        projectSaveMessage("保存後に入力を変更しました。端末の保存を更新するか、プロジェクトファイルを保存してください。");
+      }
+    } catch (_error) { /* 保存が無効なブラウザでは手動保存時に案内する。 */ }
+  };
+  form.addEventListener("input", markLocalProjectDirty);
+  form.addEventListener("change", markLocalProjectDirty);
+}
+
+function validProjectDraft(draft) {
+  return Boolean(draft && draft.version === 1 && draft.fields
+    && typeof draft.fields === "object" && !Array.isArray(draft.fields)
+    && Object.keys(draft.fields).length <= 200);
+}
+
+function clearProjectFiles() {
+  form.querySelectorAll('input[type="file"][name]').forEach((input) => {
+    replaceInputFiles(input, []);
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
+function applySavedProject(draft, message) {
+  clearProjectFiles();
+  applyDraftFields(draft);
+  workflowResultReady = false;
+  syncWorkflowProgress();
+  if (content) content.classList.add("hidden");
+  if (multiSizeContent) multiSizeContent.classList.add("hidden");
+  if (placeholder) placeholder.classList.remove("hidden");
+  saveSessionDraft();
+  projectSaveMessage(message);
+}
+
+document.getElementById("project-save-local")?.addEventListener("click", () => {
+  try {
+    localStorage.setItem(LOCAL_PROJECT_KEY, JSON.stringify(collectSessionDraft()));
+    projectSaveMessage("このブラウザに入力を保存しました。画像は含まれません。共有端末では保存を消してください。");
+  } catch (_error) {
+    projectSaveMessage("端末への保存に失敗しました。ブラウザの保存設定または空き容量を確認してください。");
+  }
+});
+
+document.getElementById("project-load-local")?.addEventListener("click", () => {
+  let draft;
+  try { draft = JSON.parse(localStorage.getItem(LOCAL_PROJECT_KEY) || "null"); }
+  catch (_error) { draft = null; }
+  if (!validProjectDraft(draft)) {
+    projectSaveMessage("このブラウザに開ける保存データがありません。");
+    return;
+  }
+  if (!window.confirm("現在の入力を、端末に保存した内容で置き換えますか？画像は再選択が必要です。")) return;
+  applySavedProject(draft, "端末の保存から入力を開きました。資料画像は再選択してください。");
+});
+
+document.getElementById("project-clear-local")?.addEventListener("click", () => {
+  try {
+    if (!localStorage.getItem(LOCAL_PROJECT_KEY)) {
+      projectSaveMessage("このブラウザに保存データはありません。");
+      return;
+    }
+    if (!window.confirm("このブラウザに保存した入力を消しますか？現在開いている入力やダウンロード済みファイルは残ります。")) return;
+    localStorage.removeItem(LOCAL_PROJECT_KEY);
+    projectSaveMessage("このブラウザの保存データを消しました。");
+  } catch (_error) {
+    projectSaveMessage("保存データを消せませんでした。ブラウザの保存設定を確認してください。");
+  }
+});
+
+function fileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("画像を読み取れませんでした。"));
+    reader.readAsDataURL(file);
+  });
+}
+
+document.getElementById("project-export-file")?.addEventListener("click", async () => {
+  const button = document.getElementById("project-export-file");
+  button.disabled = true;
+  try {
+    const files = Array.from(form.querySelectorAll('input[type="file"][name]'))
+      .flatMap((input) => Array.from(input.files || []).map((file) => ({ field: input.name, file })));
+    const totalBytes = files.reduce((sum, item) => sum + item.file.size, 0);
+    if (totalBytes > MAX_PROJECT_IMAGE_BYTES) {
+      throw new Error("画像の合計が10MBを超えています。小さくしてから保存してください。");
+    }
+    if (files.some(({ file }) => !["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type))) {
+      throw new Error("画像はPNG・JPEG・WebP・GIF形式で保存してください。");
+    }
+    const images = [];
+    for (const { field, file } of files) {
+      images.push({ field, name: file.name, type: file.type, dataUrl: await fileAsDataUrl(file) });
+    }
+    const project = { format: PROJECT_FILE_FORMAT, version: 1,
+      savedAt: new Date().toISOString(), draft: collectSessionDraft(), images };
+    const blob = new Blob([JSON.stringify(project)], { type: "application/json" });
+    if (blob.size > MAX_PROJECT_JSON_BYTES) throw new Error("保存ファイルが大きすぎます。画像を減らしてください。");
+    const rawName = form.elements.namedItem("project_name")?.value?.trim() || "PatternForge-project";
+    const safeName = rawName.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").slice(0, 60) || "PatternForge-project";
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${safeName}.patternforge.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    projectSaveMessage(`プロジェクトファイルを保存しました（画像${images.length}枚）。生成済みPDF等は別途ダウンロードしてください。`);
+  } catch (error) {
+    projectSaveMessage(error.message || "プロジェクトファイルを保存できませんでした。");
+  } finally {
+    button.disabled = false;
+  }
+});
+
+function imageFileFromRecord(record) {
+  const allowed = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+  if (!record || !allowed.includes(record.type) || typeof record.dataUrl !== "string"
+      || record.dataUrl.length > MAX_PROJECT_JSON_BYTES) throw new Error("保存画像の形式または容量が正しくありません。");
+  const prefix = `data:${record.type};base64,`;
+  if (!record.dataUrl.startsWith(prefix)) throw new Error("保存画像のデータが正しくありません。");
+  const binary = atob(record.dataUrl.slice(prefix.length));
+  if (binary.length > MAX_PROJECT_IMAGE_BYTES) throw new Error("保存画像が大きすぎます。");
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  const name = String(record.name || "image").replace(/[\\/\x00-\x1f]/g, "_").slice(0, 100);
+  return new File([bytes], name, { type: record.type });
+}
+
+projectImportFile?.addEventListener("change", async () => {
+  const file = projectImportFile.files?.[0];
+  if (!file) return;
+  try {
+    if (file.size > MAX_PROJECT_JSON_BYTES) throw new Error("プロジェクトファイルが16MBを超えています。");
+    const project = JSON.parse(await file.text());
+    if (project?.format !== PROJECT_FILE_FORMAT || project.version !== 1
+        || !validProjectDraft(project.draft) || !Array.isArray(project.images)
+        || project.images.length > maxReferenceImages + 1) {
+      throw new Error("PatternForgeの保存ファイル形式ではありません。");
+    }
+    const inputs = new Map(Array.from(form.querySelectorAll('input[type="file"][name]'))
+      .map((input) => [input.name, input]));
+    const restored = new Map();
+    let imageBytes = 0;
+    for (const record of project.images) {
+      if (!inputs.has(record.field)) throw new Error("保存ファイルに未知の画像欄があります。");
+      const image = imageFileFromRecord(record);
+      imageBytes += image.size;
+      if (imageBytes > MAX_PROJECT_IMAGE_BYTES) throw new Error("保存画像の合計が10MBを超えています。");
+      if (!restored.has(record.field)) restored.set(record.field, []);
+      restored.get(record.field).push(image);
+    }
+    if (!window.confirm("現在の入力と選択中の画像を、このプロジェクトファイルの内容で置き換えますか？")) return;
+    applySavedProject(project.draft, "プロジェクトを開いています…");
+    restored.forEach((files, field) => {
+      const input = inputs.get(field);
+      replaceInputFiles(input, files);
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    saveSessionDraft();
+    syncGenerationSummary();
+    projectSaveMessage(`プロジェクトファイルを開きました（画像${project.images.length}枚）。生成済みPDF等は含まれません。`);
+  } catch (error) {
+    projectSaveMessage(error.message || "プロジェクトファイルを開けませんでした。");
+  } finally {
+    projectImportFile.value = "";
+  }
+});
+
+if (projectSaveStatus) {
+  try {
+    const draft = JSON.parse(localStorage.getItem(LOCAL_PROJECT_KEY) || "null");
+    if (validProjectDraft(draft)) projectSaveMessage("このブラウザに保存済みの入力があります。「端末の保存を開く」で再開できます（画像は別）。");
+  } catch (_error) { /* ブラウザの保存領域が使えない場合は手動保存時に案内する。 */ }
+}
 
 // -- 採寸プロフィール（ログイン時のみ表示。複数顧客・家族分の採寸値を
 //    名前付きで保存・呼び出しできるようにする） -----------------------

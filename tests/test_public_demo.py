@@ -9,7 +9,12 @@ def test_demo_allows_pattern_workflow_and_explains_limits(client, monkeypatch):
     assert home.status_code == 200
     body = home.get_data(as_text=True)
     assert "公開デモ（試作版）" in body
-    assert "保存は保証されません" in body
+    assert "サーバー上の生成ファイルは消える" in body
+    assert 'id="project-save-local"' in body
+    assert 'id="project-load-local"' in body
+    assert 'id="project-export-file"' in body
+    assert 'id="project-import-file"' in body
+    assert "生成済みのPDF／SVG／DXFは別途ダウンロード" in body
     assert 'href="/signup"' not in body
     assert 'href="/pricing"' not in body
     assert client.get("/guide").status_code == 200
@@ -33,6 +38,7 @@ def test_demo_opt_in_does_not_change_normal_site(client, monkeypatch):
     monkeypatch.setattr(app_module, "DEMO_MODE", False)
     assert client.get("/signup").status_code == 200
     assert client.get("/pricing").status_code == 200
+    assert 'id="project-save-local"' not in client.get("/").get_data(as_text=True)
 
 
 def test_demo_generates_and_downloads_pattern(client, monkeypatch):

@@ -14,7 +14,7 @@
 
   <main id="main-content" class="container">
     {% if demo_mode %}
-    <div class="demo-notice" role="note"><strong>公開デモ（試作版）</strong> — 会員登録・決済は停止中です。入力した画像・採寸値や生成ファイルの保存は保証されません。個人情報や公開できない資料は入力せず、裁断・縫製前に寸法と縫い合わせを確認してください。</div>
+    <div class="demo-notice" role="note"><strong>公開デモ（試作版）</strong> — 会員登録・決済は停止中です。入力は下の「保存・再開」から端末内またはプロジェクトファイルに保存できます。サーバー上の生成ファイルは消えるため、PDF等は生成後にダウンロードしてください。個人情報や公開できない資料は入力せず、共有端末では保存しないでください。裁断・縫製前に寸法と縫い合わせを確認してください。</div>
     {% endif %}
     <div class="layout">
       <!-- 入力フォーム -->
@@ -50,6 +50,22 @@
                    autocomplete="off" placeholder="例：文化祭用・黒コート">
             <p class="hint">生成結果と履歴を見分けるための名前です。型紙の寸法やファイル形式には影響しません。</p>
           </div>
+
+          {% if demo_mode %}
+          <details class="project-save-box" id="project-save-box">
+            <summary>保存・再開 <span>無料デモ／この端末またはファイル</span></summary>
+            <p>「この端末に保存」は採寸値と選択項目だけをこのブラウザに残します（画像は含みません）。画像も残す場合は「プロジェクトファイルを保存」を選んでください。生成済みのPDF／SVG／DXFは別途ダウンロードが必要です。</p>
+            <div class="project-save-actions">
+              <button type="button" id="project-save-local">この端末に保存</button>
+              <button type="button" id="project-load-local">端末の保存を開く</button>
+              <button type="button" id="project-clear-local">端末の保存を消す</button>
+              <button type="button" id="project-export-file">プロジェクトファイルを保存（画像も含む）</button>
+              <label for="project-import-file" class="project-import-label">プロジェクトファイルを開く</label>
+              <input type="file" id="project-import-file" accept=".json,application/json" aria-label="PatternForgeのプロジェクトファイルを開く">
+            </div>
+            <p id="project-save-status" role="status" aria-live="polite">まだ端末に保存されていません。共有端末では保存を使わないでください。</p>
+          </details>
+          {% endif %}
 
           <div class="workflow-overview" id="illustration-workflow-overview" aria-label="画像から作る流れ">
             <div><span>1</span><strong>資料を追加</strong><small>まずは正面1枚</small></div>
@@ -1381,7 +1397,7 @@
           <p id="form-readiness" class="form-readiness" aria-live="polite"></p>
           <button type="submit" class="primary">型紙を生成する</button>
           <div class="session-draft-row">
-            <span id="session-draft-status">入力はこのタブ内だけに自動保存されます（画像を除く）</span>
+            <span id="session-draft-status">入力はこのタブ内だけに一時保存されます（画像を除く）</span>
             <button type="button" id="session-draft-clear">最初から入力</button>
           </div>
           <p class="hint usage-note">
