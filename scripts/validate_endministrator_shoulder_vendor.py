@@ -24,16 +24,16 @@ sys.path.insert(0, str(ROOT))
 
 from engine.accessory3d import export_vendor_package
 from engine.custom_panel import CustomPanelSpec
+from engine.endministrator_accessory_trace import (
+    SOURCE_SHA256, TRACE_POINTS_PX, silhouette_for_provisional_width_cm,
+)
 
 
-LABEL = "管理人・黄色肩タブの芯材試作"
-# The previous 110 x 60 mm plate conflated the shoulder tab, its two metal
-# ornaments and a hanging charm.  These are now separate components.  Neither
-# outline is pixel traced: sizes remain quotation-only design hypotheses.
-OUTLINE_CM = [
-    (0.3, 0.0), (3.2, 0.0), (4.5, 0.5), (4.5, 8.1),
-    (3.7, 9.0), (1.0, 9.0), (0.0, 8.1), (0.0, 0.6),
-]
+LABEL = "管理人・原画輪郭比の黄色肩装飾芯材試作"
+# The silhouette was traced from the known front artwork.  110 mm is a
+# quotation-only width, not a measured garment dimension.
+TRIAL_WIDTH_MM = 110.0
+OUTLINE_CM = silhouette_for_provisional_width_cm(TRIAL_WIDTH_MM / 10.0)
 CHARM_LABEL = "管理人・黒いしずく形飾り芯材試作"
 CHARM_OUTLINE_CM = [
     (1.0, 0.0), (0.2, 1.4), (0.0, 2.2), (0.3, 2.8),
@@ -43,6 +43,8 @@ CHARM_OUTLINE_CM = [
 SOURCE_IMAGE = "User-supplied female Endministrator front illustration (side/back unavailable)"
 OFFICIAL_REFERENCE = "https://endfield.gryphline.com/en-us/operator"
 COMMERCIAL_DETAIL = "https://www.ccosplay.com/arknights-endfield-costume-endministrator-women-cosplay-suit"
+SCREW_POST_URL = "https://item.rakuten.co.jp/lc-palette/c1018-05/"
+JUMP_RING_URL = "https://kiwaseisakujo.jp/products/g-metalfittings-base-jumpring-0a-0a-007"
 SLS_GUIDE = "https://formlabs.com/jp/white-papers/fuse-series-sls-design-guide/"
 VENDOR_GUIDE = "https://www.protolabs.com/en-gb/resources/design-tips/how-to-design-for-nylon-3d-printing/"
 
@@ -50,7 +52,7 @@ VENDOR_GUIDE = "https://www.protolabs.com/en-gb/resources/design-tips/how-to-des
 def _order_review(manifest: dict) -> str:
     part = manifest["files"][0]
     size = part["dimensions_mm"]
-    return f"""PatternForge 管理人（女性）黄色肩タブ芯材 試作見積確認票
+    return f"""PatternForge 管理人（女性）黄色肩装飾芯材 試作見積確認票
 ======================================================
 図面: DIMENSIONED_DRAWINGS.pdf / {part['label']}
 状態: 試作見積・装着確認専用。量産／完成衣装用の確定発注ではありません。
@@ -58,34 +60,41 @@ def _order_review(manifest: dict) -> str:
 参照: {SOURCE_IMAGE}
 公式キャラクター資料: {OFFICIAL_REFERENCE}
 市販衣装の拡大写真: {COMMERCIAL_DETAIL}
-注意: 正面画像に縮尺線がなく、側面・背面・身体への装着寸法は未取得です。
-      以下は図面機能と業者入稿手順を試すための設計仮説です。
+注意: 黄色領域の輪郭比は上記正面原画の画素から抽出しました。
+      画像に縮尺線がなく、側面・背面・身体への装着寸法は未取得です。
+      幅110 mmは仮値で、図面機能と業者入稿手順を試す設計仮説です。
       拡大写真で見える銀色金具2個と黒い垂れ飾りは別部品です。
 
 仮の造形指定
 - 数量: 1個。反転・左右対称コピーなし。
 - 方式/材料候補: PA12ナイロンのSLS。業者が対応可否と代替を回答する。
-- 曲げ前輪郭: 最大45 x 90 mm、非対称。実物の輪郭寸法ではない。
+- 曲げ前輪郭: 幅110 mm × 高さ約81 mm。輪郭比は原画、実寸は仮値。
 - 内側曲率半径: 160 mm（仮）。実際の肩・袖の曲率ではない。
 - CAD厚さ: 2.0 mm（仮）。表面は合皮等で覆う芯材案。
 - 取付孔: なし。銀色の金具の位置・裏構造を写真から決め打ちしない。
 - 出力メッシュ外接寸法: X={size['x']} / Y={size['y']} / Z={size['z']} mm。
 - 色/表面: 市販品は光沢のある黄色の表面。芯材の見積には塗装を含めず、
   黄色合皮などの被覆と白い縁取りは縫製側で別途試す。
-- 金具: 銀色装飾2個、吊り金具1個は別途調達。サイズ・取付位置は未確定。
+- 固定方式の候補: クラフト社C1018-05 ネジ式カシメ2組（頭径9mm、
+  軸径4mm、足5mm）。意匠上の銀色C字＋短いバーは別の外装として検討。
+  現物の層厚を測るまで、この5mm足長の適合も孔径・中心位置も確定しない。
+- 吊り方の候補: 貴和製作所10654705 マットブラック丸カン0.8×5mm。
+  しずく側の吊り輪、落下防止の二重固定と動作干渉は現物で確認する。
+  金具はいずれも購入・装着していない。
+  金具候補: {SCREW_POST_URL} / {JUMP_RING_URL}
 
 業者へ確認する公差・仕上げ（まだ承認値ではない）
-- この材料・工法で達成可能な外形、孔径、孔位置の公差をそれぞれ見積回答してもらう。
+- この材料・工法で達成可能な外形公差と、孔追加後の孔径・孔位置公差を見積回答してもらう。
 - 金具を選定後に孔または縫い留め位置を確定する。現CADへ穴を推定追加しない。
 - 肌／生地に触れる縁を丸める。CADには縁Rがまだ存在しないので、
   仕上げで保証できなければ、縁Rをモデルに追加して再入稿する。
-- 造形方向、反り、サポート/粉抜き、塗装工程、費用と納期を回答してもらう。
+- 造形方向、反り、サポート/粉抜き、表面被覆との相性、費用と納期を回答してもらう。
 
 試作品の受入・着用確認
-1. ノギスで外形X/Y/Zと孔径・孔中心間隔を測り、業者回答の公差と照合する。
+1. ノギスで外形X/Y/Zを測り、業者回答の公差と照合する。孔は現試作品にない。
 2. 固定具を仮組みし、裏側が肌に当たらないことを確認する。
 3. 衣装に仮止めし、腕を前後・上へ動かして袖／フードと干渉しないか確認する。
-4. 角、バリ、塗装剥離、曲げ時の白化・割れを確認する。
+4. 角、バリ、被覆の剥離、曲げ時の白化・割れを確認する。
 5. EVAフォーム＋黄色合皮の現行案と重量・追従性・見た目を比較し、
    硬質版を採用するか決める。
 
@@ -168,29 +177,64 @@ def generate(output_dir: Path) -> dict:
     charm_pdf = pdf_dir / "PatternForge_Endministrator_waterdrop_trial_drawing.pdf"
     charm_pdf.write_bytes(charm_pdf_data)
     components = {
-        "status": "reference_features_compared; dimensions_and_attachments_unverified",
+        "status": "front_color_region_traced; dimensions_and_attachments_unverified",
         "reference": COMMERCIAL_DETAIL,
+        "front_image_sha256": SOURCE_SHA256,
+        "front_trace_points_px": TRACE_POINTS_PX,
+        "front_trace_is_color_region_not_outer_hardware_edge": True,
+        "trial_width_mm_is_estimate": TRIAL_WIDTH_MM,
+        "selected_hardware_for_fit_trial": [
+            {"part": "reversible screw post", "model": "Craftsha C1018-05", "count": 2,
+             "head_diameter_mm": 9, "shaft_diameter_mm": 4, "post_length_mm": 5,
+             "source": SCREW_POST_URL, "installed_or_measured": False},
+            {"part": "matte black jump ring", "model": "Kiwa 10654705", "count": 1,
+             "wire_diameter_mm": 0.8, "catalogue_size_mm": 5,
+             "source": JUMP_RING_URL, "installed_or_measured": False},
+        ],
         "observed": [
-            {"feature": "glossy yellow shoulder tab", "route": "flexible fabric/faux leather over optional printed core", "cad": "shoulder trial"},
+            {"feature": "glossy yellow asymmetric shoulder accent", "route": "flexible fabric/faux leather over optional printed core", "cad": "front color-region trace at provisional scale"},
             {"feature": "two silver exposed fasteners", "route": "source separate metal hardware; do not print as plate surface", "cad": "not generated"},
             {"feature": "black dangling teardrop", "route": "separate printed-core trial plus separately chosen hanger", "cad": "waterdrop trial"},
             {"feature": "white edged yellow patch in second close-up", "route": "separate sewn/fabric part", "cad": "not generated"},
         ],
-        "unresolved": ["front illustration pixel trace", "real scale", "back and side", "hardware type and hole centers", "charm connector", "wearer fit", "fabrication tolerance"],
+        "unresolved": ["physical scale", "back and side", "actual hardware fit and hole centers", "charm connector", "wearer fit", "fabrication tolerance"],
         "ready_for_fabrication_order": False,
     }
+    measurements = {
+        "purpose": "Complete with calipers and a wearable mock-up before finalising CAD or placing an order",
+        "units": "mm",
+        "shoulder_yellow_visible_width": None,
+        "shoulder_yellow_visible_height": None,
+        "shoulder_inner_curvature_radius": None,
+        "cover_core_backing_total_stack_thickness": None,
+        "fastener_centres_on_flat_outline_xy": None,
+        "fastener_shank_measured_diameter": None,
+        "fastener_post_measured_usable_length": None,
+        "charm_hanger_measured_inner_diameter": None,
+        "charm_loop_or_hole_measured_xy": None,
+        "wearer_front_and_side_fit_confirmed": False,
+        "arm_motion_and_skin_contact_checked": False,
+        "printer_tolerances_and_edge_finish_agreed": False,
+    }
+    measurement_path = output_dir / "endministrator_measurements_required.json"
+    measurement_path.write_text(json.dumps(measurements, ensure_ascii=False, indent=2) + "\n",
+                                encoding="utf-8")
     component_path = output_dir / "endministrator_accessory_component_review.json"
     component_path.write_text(json.dumps(components, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     with ZipFile(zip_path, "a") as archive:
         archive.writestr("COMPONENT_REVIEW.json", json.dumps(components, ensure_ascii=False, indent=2))
+        archive.writestr("MEASUREMENTS_REQUIRED.json", json.dumps(measurements, ensure_ascii=False, indent=2))
     with ZipFile(charm_zip, "a") as archive:
         archive.writestr("COMPONENT_REVIEW.json", json.dumps(components, ensure_ascii=False, indent=2))
+        archive.writestr("MEASUREMENTS_REQUIRED.json", json.dumps(measurements, ensure_ascii=False, indent=2))
     audit = {
-        "status": "digital_vendor_package_validated; visual_match_and_physical_fit_unverified",
+        "status": "front_color_trace_and_digital_package_validated; physical_scale_and_fit_unverified",
         "source": SOURCE_IMAGE,
         "official_reference": OFFICIAL_REFERENCE,
         "design_values_are_estimates": True,
         "visual_match_checked_against_source_pixels": False,
+        "front_color_region_traced_from_source_pixels": True,
+        "front_image_sha256": SOURCE_SHA256,
         "fabrication_order_approved": False,
         "piece_count": 2,
         "stl_watertight": True,
@@ -198,6 +242,7 @@ def generate(output_dir: Path) -> dict:
         "through_holes": manifest["mounting_holes"],
         "component_features_checked": 4,
         "missing_source_dimensions": len(components["unresolved"]),
+        "measurement_gate_complete": False,
         "material_request": manifest["material_request"],
         "pdf_pages": 2,
         "vendor_zip_sha256": hashlib.sha256(zip_path.read_bytes()).hexdigest(),
@@ -207,7 +252,8 @@ def generate(output_dir: Path) -> dict:
                   "order_review": str(review_path.resolve()),
                   "charm_vendor_zip": str(charm_zip.resolve()),
                   "charm_drawing_pdf": str(charm_pdf.resolve()),
-                  "component_review": str(component_path.resolve())},
+                  "component_review": str(component_path.resolve()),
+                  "measurements_required": str(measurement_path.resolve())},
     }
     audit_path = output_dir / "endministrator_shoulder_trial_audit.json"
     audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n",
