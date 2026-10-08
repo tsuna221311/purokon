@@ -1,10 +1,11 @@
-"""Mark digitally blocked pattern PDFs as inspection copies, not cutting masters."""
+"""Keep digitally blocked exports usable for inspection, not cutting."""
 
 from __future__ import annotations
 
 from io import BytesIO
 import os
 from pathlib import Path
+import re
 
 from pypdf import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
@@ -36,8 +37,8 @@ def _warning_overlay(width: float, height: float) -> BytesIO:
 def mark_blocked_pdfs(output_files: dict[str, str]) -> None:
     """Atomically replace each generated PDF with a visibly blocked copy.
 
-    Stage every replacement before changing any original.  SVG and DXF remain
-    diagnostic exports and must be treated as blocked by their callers too.
+    Stage every replacement before changing any original. SVG and DXF are
+    handled separately by :func:`block_cutting_exports`.
     """
     paths = list(dict.fromkeys(
         Path(path) for path in output_files.values()
@@ -67,3 +68,75 @@ def mark_blocked_pdfs(output_files: dict[str, str]) -> None:
         for _path, temp in staged:
             if temp.exists():
                 temp.unlink()
+
+
+def _blocked_svg_markup(source: str) -> str:
+    """Add a prominent, scale-aware inspection watermark to a generated SVG."""
+    if 'id="patternforge-draft-watermark"' in source:
+        return source
+    closing = source.rfind("</svg>")
+    view_box = re.search(r'viewBox="([\d.]+) ([\d.]+) ([\d.]+) ([\d.]+)"',
+                         source[:1000])
+    if closing < 0 or view_box is None:
+        raise ValueError("Generated SVG has no closing tag or viewBox")
+    x, y, width, height = (float(value) for value in view_box.groups())
+    if width <= 0 or height <= 0:
+        raise ValueError("Generated SVG has an invalid viewBox")
+    middle_x, middle_y = x + width / 2, y + height / 2
+    font = min(4.0, width / 24)
+    english_font = font * 0.75
+    band_height = font * 5
+    banner = f'''<g id="patternforge-draft-watermark" pointer-events="none">
+  <rect x="{x}" y="{y}" width="{width}" height="{height}"
+        fill="#fff" fill-opacity="0.18" />
+  <rect x="{x}" y="{middle_y - band_height / 2}"
+        width="{width}" height="{band_height}" fill="#fff" fill-opacity="0.88" />
+  <text x="{middle_x}" y="{middle_y - font * 0.1}" text-anchor="middle"
+        font-family="PatternForgeJP,sans-serif" font-weight="700" font-size="{font}"
+        fill="#b00020">検査不合格・裁断禁止</text>
+  <text x="{middle_x}" y="{middle_y + font * 1.15}" text-anchor="middle"
+        font-family="sans-serif" font-weight="700" font-size="{english_font}"
+        fill="#b00020">DRAFT - NOT FOR CUTTING</text>
+  <rect x="{x}" y="{y}" width="{width}" height="{font * 3.0}"
+        fill="#fff" fill-opacity="0.94" />
+  <text x="{middle_x}" y="{y + font * 1.25}" text-anchor="middle"
+        font-family="PatternForgeJP,sans-serif" font-weight="700" font-size="{font}"
+        fill="#b00020">検査不合格・裁断禁止</text>
+  <text x="{middle_x}" y="{y + font * 2.35}" text-anchor="middle"
+        font-family="sans-serif" font-weight="700" font-size="{english_font}"
+        fill="#b00020">DRAFT - NOT FOR CUTTING</text>
+</g>'''
+    return source[:closing] + banner + source[closing:]
+
+
+def block_cutting_exports(output_files: dict[str, str], output_dir: str) -> None:
+    """Watermark generated SVGs and withhold generated DXFs after a failed gate.
+
+    DXF geometry has no dependable human-visible warning in CAD/cutting tools.
+    Only files directly inside this pipeline's output directory are touched.
+    """
+    root = Path(output_dir).resolve()
+    svg_paths = list(dict.fromkeys(Path(path) for key, path in output_files.items()
+                                   if key.endswith("svg")))
+    dxf_items = [(key, Path(path)) for key, path in output_files.items()
+                 if key.endswith("dxf")]
+    for path in svg_paths + [path for _key, path in dxf_items]:
+        resolved = path.resolve()
+        if resolved.parent != root or resolved.suffix.lower() not in {".svg", ".dxf"}:
+            raise ValueError(f"Unsafe generated export path: {path}")
+    staged: list[tuple[Path, Path]] = []
+    try:
+        for path in svg_paths:
+            marked = _blocked_svg_markup(path.read_text(encoding="utf-8"))
+            temp = path.with_name(path.name + ".quality.tmp")
+            staged.append((path, temp))
+            temp.write_text(marked, encoding="utf-8")
+        for path, temp in staged:
+            os.replace(temp, path)
+    finally:
+        for _path, temp in staged:
+            if temp.exists():
+                temp.unlink()
+    for key, path in dxf_items:
+        path.unlink(missing_ok=True)
+        output_files.pop(key, None)
