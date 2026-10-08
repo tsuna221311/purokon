@@ -362,6 +362,24 @@ def _fit_label_to_width(text: str, max_width_pt: float,
     return text[:1] + _PART_LABEL_ELLIPSIS, size
 
 
+def _clamp_tile_label_anchor(x: float, y: float, label_width: float,
+                             note_width: float, label_size: float,
+                             note_size: float, paper: Paper) -> tuple[float, float]:
+    """Keep both lines of a part label inside the tile's printable frame."""
+    padding = 4.0  # points; leave air between text and the alignment border
+    left = paper.margin_cm * CM + padding
+    right = (paper.width_cm - paper.margin_cm) * CM - padding
+    bottom = paper.margin_cm * CM + padding
+    top = (paper.height_cm - paper.margin_cm) * CM - padding
+    half_width = max(label_width, note_width) / 2
+    x_min, x_max = left + half_width, right - half_width
+    y_min = bottom + label_size * 1.15 + note_size
+    y_max = top - label_size
+    x = (left + right) / 2 if x_min > x_max else min(max(x, x_min), x_max)
+    y = (bottom + top) / 2 if y_min > y_max else min(max(y, y_min), y_max)
+    return x, y
+
+
 def _build_embedded_jp_font_face_css() -> str | None:
     """SVGプレビュー用に、PDFと同じ日本語サブセットフォントをdata URIとして
     埋め込む@font-face CSSを組み立てる。失敗したら None を返す(呼び出し側で
@@ -1525,16 +1543,26 @@ def _draw_fabric_section(c, result: NestingResult,
                                                cy_pt, cx_pt)
                     if usable_cm is None:
                         usable_cm = max_x - min_x
+                    # パーツ全体の幅に収まっても、ラベルを載せる*1枚*の紙の
+                    # 端からはみ出すことがある。長いパーツの中心がタイル境界に
+                    # 近いと、文字の前半が印刷されない。
+                    usable_pt = min(usable_cm * CM,
+                                    paper.usable_w_cm * CM - 8.0)
                     fitted_text, fitted_size = _fit_label_to_width(
-                        label_text, usable_cm * CM)
-                    c.setFont(_LABEL_FONT, fitted_size)
-                    c.drawCentredString(lx, ly, fitted_text)
+                        label_text, usable_pt)
                     # round31: 裁ち方の指示(生地・枚数・わ裁ち・接着芯)を
                     # パーツ名の下の行に書く。パーツ名と別々に幅へ収めるので、
                     # こちらが長くてもパーツ名が削られない。
                     note_text, note_size = _fit_label_to_width(
-                        placed.part.cutting_note, usable_cm * CM,
+                        placed.part.cutting_note, usable_pt,
                         base_size=_CUTTING_NOTE_FONT_SIZE)
+                    lx, ly = _clamp_tile_label_anchor(
+                        lx, ly,
+                        pdfmetrics.stringWidth(fitted_text, _LABEL_FONT, fitted_size),
+                        pdfmetrics.stringWidth(note_text, _LABEL_FONT, note_size),
+                        fitted_size, note_size, paper)
+                    c.setFont(_LABEL_FONT, fitted_size)
+                    c.drawCentredString(lx, ly, fitted_text)
                     c.setFont(_LABEL_FONT, note_size)
                     c.drawCentredString(lx, ly - fitted_size * 1.15, note_text)
 

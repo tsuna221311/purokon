@@ -6,6 +6,8 @@ import re
 
 from engine import pdf_export
 from engine.pdf_export import (
+    A4_PAPER,
+    _clamp_tile_label_anchor,
     _clip_contour_edges_to_rect,
     _clip_segment_to_rect,
     clip_polygon_to_rect,
@@ -40,6 +42,19 @@ def test_clipped_contour_does_not_invent_a_cut_line_on_the_tile_edge():
     assert len(edges) == 3
     assert not any(a[0] == b[0] == 5 for a, b in edges)
     assert _clip_contour_edges_to_rect(square, 2, 2, 4, 4) == []
+
+
+def test_part_label_and_cutting_note_stay_inside_printable_tile():
+    x, y = _clamp_tile_label_anchor(0, 0, 150, 80, 9, 7, A4_PAPER)
+    left = A4_PAPER.margin_cm * pdf_export.CM + 4
+    bottom = left
+    assert x - 75 >= left
+    assert y - 9 * 1.15 - 7 >= bottom
+    x, y = _clamp_tile_label_anchor(9999, 9999, 150, 80, 9, 7, A4_PAPER)
+    right = (A4_PAPER.width_cm - A4_PAPER.margin_cm) * pdf_export.CM - 4
+    top = (A4_PAPER.height_cm - A4_PAPER.margin_cm) * pdf_export.CM - 4
+    assert x + 75 <= right
+    assert y + 9 <= top
 
 
 def test_export_pattern_writes_svg_and_pdf(tmp_path):
