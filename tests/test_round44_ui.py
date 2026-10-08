@@ -167,8 +167,9 @@ def test_the_finished_announcement_says_what_to_buy():
     画面のいちばん上に置いてある情報(round34で決めた並び)と揃える。
     """
     # 「サイズ分の型紙ができました」(複数サイズ)ではなく、単サイズの方を見る。
-    tail = APP_JS.split("`型紙ができました。")[1][:400]
-    assert "part_count" in tail and "fabric_width_cm" in tail and "used_length_cm" in tail
+    tail = APP_JS.split("const buyCm = recommendedBuyLengthCm(data.used_length_cm);")[-1][:600]
+    assert "part_count" in tail and "fabric_width_cm" in tail
+    assert "(buyCm / 100).toFixed(1)" in tail and "買う目安" in tail
 
 
 # --- 入力の検証 --------------------------------------------------------------

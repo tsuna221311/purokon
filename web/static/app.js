@@ -1689,6 +1689,11 @@ outfitAutoRotate?.addEventListener("click", () => {
 // (足りなければ作れない。多い分は残るだけ)。
 const FABRIC_ROUND_UP_CM = 10;
 
+function recommendedBuyLengthCm(usedLengthCm) {
+  return Math.ceil((Number(usedLengthCm) || 0) / FABRIC_ROUND_UP_CM)
+    * FABRIC_ROUND_UP_CM;
+}
+
 function renderPdfSheetCount(data) {
   // round53: A4分割PDFが何枚になるかを、ダウンロードする前に出す。
   //
@@ -1759,7 +1764,7 @@ function renderFabricNeed(data) {
   if (!widthEl || !lengthEl) return;
 
   const usedCm = Number(data.used_length_cm) || 0;
-  const buyCm = Math.ceil(usedCm / FABRIC_ROUND_UP_CM) * FABRIC_ROUND_UP_CM;
+  const buyCm = recommendedBuyLengthCm(usedCm);
   widthEl.textContent = data.fabric_width_cm;
   lengthEl.textContent = (buyCm / 100).toFixed(1);
 
@@ -2063,8 +2068,7 @@ function renderFabricGroups(data) {
     const need = document.createElement("p");
     need.className = "hint";
     need.style.margin = "0 0 8px";
-    const buyCm = Math.ceil((Number(group.used_length_cm) || 0) / FABRIC_ROUND_UP_CM)
-                  * FABRIC_ROUND_UP_CM;
+    const buyCm = recommendedBuyLengthCm(group.used_length_cm);
     need.textContent =
       `幅${group.fabric_width_cm}cm の生地を ${(buyCm / 100).toFixed(1)}m`
       + `（実際に使うのは ${group.used_length_cm}cm）／`
@@ -2524,8 +2528,7 @@ function renderMultiSizeResults(data) {
     const stats = document.createElement("p");
     stats.className = "hint";
     stats.style.margin = "0 0 8px";
-    const buyCm = Math.ceil((Number(result.used_length_cm) || 0) / FABRIC_ROUND_UP_CM)
-                  * FABRIC_ROUND_UP_CM;
+    const buyCm = recommendedBuyLengthCm(result.used_length_cm);
     // round69: 印刷枚数を足した。コンビニで刷る人にはそのまま代金と
     // 待ち時間になる数字で、単一サイズの画面ではround53から出している
     // のに、**サイズ展開だけ出ていなかった**(3サイズで実測143枚)。
@@ -3996,11 +3999,12 @@ form.addEventListener("submit", async (event) => {
       const warnings = (data.measurement_warnings || []).length
                         + (data.unplaced_warnings || []).length
                         + (data.compatibility_warnings || []).length;
+      const buyCm = recommendedBuyLengthCm(data.used_length_cm);
       announce(`${quality && quality.digital_ready === false
                  ? "自動検査で停止しました。出力は検証用で、本番生地を裁断しないでください。"
                  : "型紙ができました。"}パーツ${data.part_count}枚、`
                + `幅${data.fabric_width_cm}cmの生地を`
-               + `${(data.used_length_cm / 100).toFixed(1)}メートル使います。`
+               + `${(buyCm / 100).toFixed(1)}メートル買う目安です。`
                + (warnings ? `確認してほしい注意が${warnings}件あります。` : ""));
     }
     endGenerating();
