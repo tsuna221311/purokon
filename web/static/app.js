@@ -4026,7 +4026,7 @@ form.addEventListener("submit", async (event) => {
       accessorySummary.textContent = `${accessory.piece_count}個・厚み${accessory.thickness_mm}mm・`
         + `配置サイズ ${accessory.arranged_width_mm}×${accessory.arranged_depth_mm}mm`
         + `${curveText}${holeText}${slotText}${magnetText}${attachmentText}。`
-        + "自宅印刷はSTL、業者への見積依頼は入稿用ZIPを使ってください。";
+        + "自宅印刷はSTL、業者への見積依頼は寸法図PDF入りの入稿用ZIPを使ってください。";
     }
     if (accessoryWarnings) {
       accessoryWarnings.innerHTML = "";

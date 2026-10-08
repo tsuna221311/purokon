@@ -1018,6 +1018,7 @@ def export_vendor_package(specs: Iterable[CustomPanelSpec], output_path: str,
     material_note = _MATERIAL_NOTES[profile]
 
     individual_files: list[tuple[str, bytes, dict]] = []
+    drawing_rows: list[dict] = []
     for index, (label, polygon) in enumerate(pieces, start=1):
         min_x, min_y, max_x, max_y = polygon.bounds
         from shapely.affinity import translate
@@ -1049,6 +1050,15 @@ def export_vendor_package(specs: Iterable[CustomPanelSpec], output_path: str,
             "watertight": _open_edge_count(triangles) == 0,
             "sha256": hashlib.sha256(data).hexdigest(),
         }))
+        drawing_rows.append({
+            "label": label,
+            "drawing_id": f"PF-ACC-{index:03d}-{hashlib.sha256(data).hexdigest()[:8].upper()}",
+            "polygon": origin_polygon,
+            "triangles": triangles,
+            "pockets": _magnet_recesses(origin_polygon, label, magnet_pattern,
+                                         magnet_diameter, magnet_inset),
+            "dimensions_mm": {"x": mesh_x, "y": mesh_y, "z": mesh_z},
+        })
 
     three_mf = _three_mf_bytes(
         arranged, thickness, curvature_radius, curve_axis,
@@ -1091,6 +1101,7 @@ def export_vendor_package(specs: Iterable[CustomPanelSpec], output_path: str,
     manifest = {
         "schema": "patternforge.vendor-package.v1",
         "units": "mm",
+        "dimensioned_drawing": "DIMENSIONED_DRAWINGS.pdf",
         "piece_count": len(pieces),
         "thickness_mm": thickness,
         "curvature": curvature_manifest,
@@ -1136,6 +1147,12 @@ def export_vendor_package(specs: Iterable[CustomPanelSpec], output_path: str,
         ],
     }
     manifest_bytes = json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8")
+    from .accessory_drawing import build_dimensioned_drawings
+    drawing_pdf = build_dimensioned_drawings(
+        drawing_rows, thickness_mm=thickness,
+        curvature_radius_mm=curvature_radius,
+        curvature_height_radius_mm=curvature_height_radius,
+        curve_axis=curve_axis, magnet_depth_mm=magnet_depth)
     notes = [
         "PatternForge 3D小物　業者入稿票",
         "================================",
@@ -1161,6 +1178,7 @@ def export_vendor_package(specs: Iterable[CustomPanelSpec], output_path: str,
         "推奨入稿ファイル:",
         "- 一括確認: all_parts_mm.3mf（単位情報あり）",
         "- 個別見積: individual/ 内の1パーツ1ファイルのバイナリSTL",
+        "- 寸法確認: DIMENSIONED_DRAWINGS.pdf（1パーツ1ページ・図面上の縮尺は実寸ではありません）",
         "- STLは形式上単位を保持しないため、必ずmmとして読み込んでください。",
         "",
         "業者様への確認事項:",
@@ -1182,6 +1200,7 @@ def export_vendor_package(specs: Iterable[CustomPanelSpec], output_path: str,
     try:
         with zipfile.ZipFile(temp_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("all_parts_mm.3mf", three_mf)
+            archive.writestr("DIMENSIONED_DRAWINGS.pdf", drawing_pdf)
             archive.writestr("manifest.json", manifest_bytes)
             archive.writestr("ORDER_NOTES_JA.txt", notes_bytes)
             for filename, data, _metadata in individual_files:
@@ -1191,7 +1210,7 @@ def export_vendor_package(specs: Iterable[CustomPanelSpec], output_path: str,
         if os.path.exists(temp_path):
             os.remove(temp_path)
     return VendorPackageResult(
-        output_path, len(pieces), len(individual_files) + 3, os.path.getsize(output_path))
+        output_path, len(pieces), len(individual_files) + 4, os.path.getsize(output_path))
 
 
 def export_accessories_stl(specs: Iterable[CustomPanelSpec], output_path: str,

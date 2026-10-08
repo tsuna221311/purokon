@@ -8,6 +8,7 @@ from xml.etree import ElementTree as ET
 
 import pytest
 from PIL import Image, ImageDraw
+from pypdf import PdfReader
 
 from engine.accessory3d import (
     Accessory3DError, export_accessories_stl, export_vendor_package,
@@ -294,18 +295,32 @@ def test_vendor_package_contains_mm_3mf_individual_binary_stl_and_order_sheet(tm
     assert result.piece_count == 4
     with zipfile.ZipFile(target) as package:
         names = set(package.namelist())
-        assert {"all_parts_mm.3mf", "manifest.json", "ORDER_NOTES_JA.txt"} <= names
+        assert {"all_parts_mm.3mf", "manifest.json", "ORDER_NOTES_JA.txt",
+                "DIMENSIONED_DRAWINGS.pdf"} <= names
         stl_names = sorted(name for name in names if name.endswith(".stl"))
         assert len(stl_names) == 4
         manifest = json.loads(package.read("manifest.json"))
         assert manifest["units"] == "mm"
         assert manifest["piece_count"] == 4
+        assert manifest["dimensioned_drawing"] == "DIMENSIONED_DRAWINGS.pdf"
         assert manifest["files"][0]["shell_count"] == 1
         assert manifest["files"][0]["watertight"] is True
         assert "PA12" in manifest["material_request"]
         assert manifest["finish_request"] == "つや消し黒、塗装済み希望"
         notes = package.read("ORDER_NOTES_JA.txt").decode("utf-8-sig")
         assert "STLは形式上単位を保持しない" in notes
+        drawings = PdfReader(io.BytesIO(package.read("DIMENSIONED_DRAWINGS.pdf")))
+        assert len(drawings.pages) == 4
+        first_page = drawings.pages[0].extract_text()
+        assert "FLAT OUTLINE" in first_page
+        assert "DWG PF-ACC-001-" in first_page
+        assert "REV: AUTO DRAFT" in first_page
+        assert "FRONT / final mesh" in first_page
+        assert "SIDE / final mesh" in first_page
+        assert "X 40 mm" in first_page
+        assert "Y 20 mm" in first_page
+        assert "Z 2.5 mm" in first_page
+        assert "Fit, tolerances" in first_page
 
         first_stl = package.read(stl_names[0])
         triangle_count = struct.unpack("<I", first_stl[80:84])[0]
@@ -334,6 +349,11 @@ def test_vendor_package_records_user_specified_curvature(tmp_path):
         notes = package.read("ORDER_NOTES_JA.txt").decode("utf-8-sig")
         assert "内側半径100mm" in notes
         assert "縦方向" in notes
+        drawing = PdfReader(io.BytesIO(package.read("DIMENSIONED_DRAWINGS.pdf")))
+        text = drawing.pages[0].extract_text()
+        assert "FLAT OUTLINE (before bending)" in text
+        assert "Bend axis: height; inner R=100 mm" in text
+        assert f"Z {manifest['files'][0]['dimensions_mm']['z']:g} mm" in text
 
 
 def test_vendor_package_records_mounting_holes(tmp_path):
@@ -350,6 +370,10 @@ def test_vendor_package_records_mounting_holes(tmp_path):
         notes = package.read("ORDER_NOTES_JA.txt").decode("utf-8-sig")
         assert "直径4mm" in notes
         assert "丸い貫通穴" in notes
+        drawing = PdfReader(io.BytesIO(package.read("DIMENSIONED_DRAWINGS.pdf")))
+        text = drawing.pages[0].extract_text()
+        assert "C1 THROUGH dia 4; center X=10, Y=20" in text
+        assert "C2 THROUGH dia 4; center X=70, Y=20" in text
 
 
 def test_commercial_hardware_interfaces_map_to_dimensioned_holes():
@@ -398,6 +422,9 @@ def test_vendor_package_records_strap_slots(tmp_path):
         notes = package.read("ORDER_NOTES_JA.txt").decode("utf-8-sig")
         assert "20×5mm" in notes
         assert "縦向き" in notes
+        drawing = PdfReader(io.BytesIO(package.read("DIMENSIONED_DRAWINGS.pdf")))
+        text = drawing.pages[0].extract_text()
+        assert "THROUGH slot 5 x 20" in text
 
 
 def test_vendor_package_records_non_through_magnet_pockets(tmp_path):
@@ -418,6 +445,10 @@ def test_vendor_package_records_non_through_magnet_pockets(tmp_path):
         assert "直径10mm" in notes
         assert "深さ2mm" in notes
         assert "非貫通" in notes
+        drawing = PdfReader(io.BytesIO(package.read("DIMENSIONED_DRAWINGS.pdf")))
+        text = drawing.pages[0].extract_text()
+        assert "P1 POCKET dia 10 depth 2" in text
+        assert "center X=15, Y=25 (not through)" in text
 
 
 def _valid_form():
@@ -477,6 +508,9 @@ def test_generate_endpoint_returns_downloadable_stl(client):
     assert vendor_download.status_code == 200
     with zipfile.ZipFile(io.BytesIO(vendor_download.data)) as package:
         assert "all_parts_mm.3mf" in package.namelist()
+        assert "DIMENSIONED_DRAWINGS.pdf" in package.namelist()
+        assert len(PdfReader(io.BytesIO(
+            package.read("DIMENSIONED_DRAWINGS.pdf"))).pages) == 1
 
 
 def test_generate_endpoint_preserves_curvature_in_result_and_vendor_zip(client):
