@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 from io import BytesIO
+from functools import lru_cache
 import os
 from pathlib import Path
 import re
 
+from fontTools.pens.svgPathPen import SVGPathPen
+from fontTools.ttLib import TTFont as OutlineFont
 from pypdf import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
 
-from .pdf_export import _LABEL_FONT, _require_jp_label_font
+from .pdf_export import _JP_FONT_PATH, _LABEL_FONT, _require_jp_label_font
+
+
+_STOP_WARNING_JA = "検査不合格・裁断禁止"
 
 
 def _warning_overlay(width: float, height: float) -> BytesIO:
@@ -86,27 +92,59 @@ def _blocked_svg_markup(source: str) -> str:
     font = min(4.0, width / 24)
     english_font = font * 0.75
     band_height = font * 5
+    warning_middle = _outlined_warning(middle_x, middle_y - font * 0.1, font)
+    warning_top = _outlined_warning(middle_x, y + font * 1.25, font)
     banner = f'''<g id="patternforge-draft-watermark" pointer-events="none">
+  <title>{_STOP_WARNING_JA} / DRAFT - NOT FOR CUTTING</title>
   <rect x="{x}" y="{y}" width="{width}" height="{height}"
         fill="#fff" fill-opacity="0.18" />
   <rect x="{x}" y="{middle_y - band_height / 2}"
         width="{width}" height="{band_height}" fill="#fff" fill-opacity="0.88" />
-  <text x="{middle_x}" y="{middle_y - font * 0.1}" text-anchor="middle"
-        font-family="PatternForgeJP,sans-serif" font-weight="700" font-size="{font}"
-        fill="#b00020">検査不合格・裁断禁止</text>
+  {warning_middle}
   <text x="{middle_x}" y="{middle_y + font * 1.15}" text-anchor="middle"
         font-family="sans-serif" font-weight="700" font-size="{english_font}"
         fill="#b00020">DRAFT - NOT FOR CUTTING</text>
   <rect x="{x}" y="{y}" width="{width}" height="{font * 3.0}"
         fill="#fff" fill-opacity="0.94" />
-  <text x="{middle_x}" y="{y + font * 1.25}" text-anchor="middle"
-        font-family="PatternForgeJP,sans-serif" font-weight="700" font-size="{font}"
-        fill="#b00020">検査不合格・裁断禁止</text>
+  {warning_top}
   <text x="{middle_x}" y="{y + font * 2.35}" text-anchor="middle"
         font-family="sans-serif" font-weight="700" font-size="{english_font}"
         fill="#b00020">DRAFT - NOT FOR CUTTING</text>
 </g>'''
     return source[:closing] + banner + source[closing:]
+
+
+@lru_cache(maxsize=1)
+def _warning_outlines() -> tuple[int, int, str]:
+    """Trace the bundled Japanese glyphs so SVG viewers need no CJK font."""
+    font = OutlineFont(_JP_FONT_PATH)
+    try:
+        cmap = font.getBestCmap()
+        glyph_set = font.getGlyphSet()
+        advances = font["hmtx"].metrics
+        units_per_em = font["head"].unitsPerEm
+        offset = 0
+        paths = []
+        for character in _STOP_WARNING_JA:
+            glyph_name = cmap.get(ord(character))
+            if glyph_name is None:
+                raise RuntimeError(f"SVG警告用フォントに文字がありません: {character}")
+            pen = SVGPathPen(glyph_set)
+            glyph_set[glyph_name].draw(pen)
+            paths.append(f'<path d="{pen.getCommands()}" '
+                         f'transform="translate({offset},0)" />')
+            offset += advances[glyph_name][0]
+        return units_per_em, offset, "".join(paths)
+    finally:
+        font.close()
+
+
+def _outlined_warning(center_x: float, baseline_y: float, size: float) -> str:
+    units_per_em, advance, paths = _warning_outlines()
+    scale = size / units_per_em
+    left_x = center_x - advance * scale / 2
+    return (f'<g fill="#b00020" transform="translate({left_x},{baseline_y}) '
+            f'scale({scale},-{scale})">{paths}</g>')
 
 
 def block_cutting_exports(output_files: dict[str, str], output_dir: str) -> None:

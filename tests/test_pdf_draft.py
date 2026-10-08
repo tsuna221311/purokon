@@ -25,6 +25,8 @@ def test_blocked_svg_markup_is_scale_aware_and_idempotent():
     assert 'id="patternforge-draft-watermark"' in marked
     assert "検査不合格・裁断禁止" in marked
     assert "DRAFT - NOT FOR CUTTING" in marked
+    assert marked.count('<path d="') >= 20  # 文字を輪郭化して豆腐を防ぐ
+    assert "font-family=\"PatternForgeJP" not in marked
     assert 'x="55.0"' in marked
     assert ElementTree.fromstring(marked).tag.endswith("svg")
     assert _blocked_svg_markup(marked) == marked
