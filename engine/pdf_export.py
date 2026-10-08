@@ -629,6 +629,27 @@ def _clip_segment_to_rect(a: Point, b: Point, xmin: float, ymin: float,
     return (x0 + t0 * dx, y0 + t0 * dy), (x0 + t1 * dx, y0 + t1 * dy)
 
 
+def _clip_contour_edges_to_rect(points: list[Point], xmin: float, ymin: float,
+                                xmax: float, ymax: float
+                                ) -> list[tuple[Point, Point]]:
+    """Clip only original contour edges, never the artificial polygon cap.
+
+    Clipping a *filled polygon* creates new edges along a tile boundary. Those
+    edges are useful for occupancy checks but are not cutting/sewing lines.
+    """
+    ring = points[:-1] if points and points[0] == points[-1] else points
+    if len(ring) < 2:
+        return []
+    edges = []
+    for index, start in enumerate(ring):
+        clipped = _clip_segment_to_rect(
+            start, ring[(index + 1) % len(ring)], xmin, ymin, xmax, ymax)
+        if clipped and (abs(clipped[0][0] - clipped[1][0]) > 1e-8 or
+                        abs(clipped[0][1] - clipped[1][1]) > 1e-8):
+            edges.append(clipped)
+    return edges
+
+
 # ---------------------------------------------------------------------------
 # A4分割PDF（実寸1:1）
 # ---------------------------------------------------------------------------
@@ -1395,30 +1416,34 @@ def _draw_fabric_section(c, result: NestingResult,
             any_content = False
             for placed in result.placed:
                 cut = clip_polygon_to_rect(placed.placed_cut_line(), tile_x0, tile_y0, tile_x1, tile_y1)
-                stitch = clip_polygon_to_rect(placed.placed_stitch_line(), tile_x0, tile_y0, tile_x1, tile_y1)
+                cut_edges = _clip_contour_edges_to_rect(
+                    placed.placed_cut_line(), tile_x0, tile_y0, tile_x1, tile_y1)
+                stitch_edges = _clip_contour_edges_to_rect(
+                    placed.placed_stitch_line(), tile_x0, tile_y0, tile_x1, tile_y1)
 
-                if len(cut) >= 3:
+                if len(cut) >= 3 or cut_edges:
                     any_content = True
-                    pts = [_to_page_xy(px - tile_x0, py - tile_y0, paper) for px, py in cut]
+                if cut_edges:
                     path = c.beginPath()
-                    path.moveTo(*pts[0])
-                    for pt in pts[1:]:
-                        path.lineTo(*pt)
-                    path.close()
+                    for start, end in cut_edges:
+                        path.moveTo(*_to_page_xy(start[0] - tile_x0,
+                                                  start[1] - tile_y0, paper))
+                        path.lineTo(*_to_page_xy(end[0] - tile_x0,
+                                                  end[1] - tile_y0, paper))
                     c.setStrokeColorRGB(0, 0, 0)
                     c.setLineWidth(1.0)
                     c.drawPath(path, stroke=1, fill=0)
 
-                if len(stitch) >= 3:
-                    pts = [_to_page_xy(px - tile_x0, py - tile_y0, paper) for px, py in stitch]
+                if stitch_edges:
                     c.setDash(2, 2)
                     c.setStrokeColorRGB(0.4, 0.4, 0.4)
                     c.setLineWidth(0.6)
                     path = c.beginPath()
-                    path.moveTo(*pts[0])
-                    for pt in pts[1:]:
-                        path.lineTo(*pt)
-                    path.close()
+                    for start, end in stitch_edges:
+                        path.moveTo(*_to_page_xy(start[0] - tile_x0,
+                                                  start[1] - tile_y0, paper))
+                        path.lineTo(*_to_page_xy(end[0] - tile_x0,
+                                                  end[1] - tile_y0, paper))
                     c.drawPath(path, stroke=1, fill=0)
                     c.setDash()
 

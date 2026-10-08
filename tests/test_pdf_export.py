@@ -6,6 +6,7 @@ import re
 
 from engine import pdf_export
 from engine.pdf_export import (
+    _clip_contour_edges_to_rect,
     _clip_segment_to_rect,
     clip_polygon_to_rect,
     export_pattern,
@@ -30,6 +31,15 @@ def test_clip_polygon_outside_rect_returns_empty():
     square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0), (0.0, 0.0)]
     clipped = clip_polygon_to_rect(square, xmin=100, ymin=100, xmax=200, ymax=200)
     assert clipped == []
+
+
+def test_clipped_contour_does_not_invent_a_cut_line_on_the_tile_edge():
+    square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0),
+              (0.0, 10.0), (0.0, 0.0)]
+    edges = _clip_contour_edges_to_rect(square, 0, 0, 5, 10)
+    assert len(edges) == 3
+    assert not any(a[0] == b[0] == 5 for a, b in edges)
+    assert _clip_contour_edges_to_rect(square, 2, 2, 4, 4) == []
 
 
 def test_export_pattern_writes_svg_and_pdf(tmp_path):
