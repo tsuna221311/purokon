@@ -1258,6 +1258,37 @@ table.log-table td:first-child, table.log-table th:first-child { white-space: no
   color: var(--muted);
 }
 .optional-section > summary + * { margin-top: 14px; }
+.optional-section#custom-panel-section { scroll-margin-top: var(--sp-5); }
+.accessory-limitations { margin: var(--sp-3) 0 0; padding: var(--sp-3); border: 1px solid var(--warn-bd); border-radius: var(--r-sm); background: var(--warn-bg); }
+.accessory-limitations > summary { color: var(--warn-fg); cursor: pointer; font-size: .78rem; font-weight: 700; line-height: 1.5; }
+.accessory-limitations > p { margin: var(--sp-2) 0 0 !important; }
+
+/* 小物は発注確定ではなく、輪郭から試作・見積相談へ進む独立した工程。 */
+.accessory-export-box { border-color: var(--info-bd); background: var(--surface); }
+.accessory-export-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-3); }
+.accessory-export-heading .eyebrow { margin: 0 0 4px; color: var(--info-fg); font-size: .72rem; font-weight: 800; letter-spacing: .08em; }
+.accessory-export-heading h3 { margin: 0; font-size: 1.08rem; line-height: 1.5; }
+.accessory-stage-badge { flex-shrink: 0; padding: 5px 9px; border: 1px solid var(--info-bd); border-radius: var(--r-pill); background: var(--info-bg); color: var(--info-fg); font-size: .72rem; font-weight: 700; }
+.accessory-process { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: var(--sp-4) 0; }
+.accessory-process span { display: flex; align-items: center; gap: 5px; min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: var(--r-sm); color: var(--ink-soft); font-size: .73rem; line-height: 1.35; }
+.accessory-process b { flex: 0 0 auto; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); }
+.accessory-export-box > .checkbox-row { margin-top: var(--sp-4); font-size: .9rem; }
+.accessory-checklist { display: grid; gap: 8px; margin: var(--sp-4) 0 0; padding: var(--sp-3); border: 1px solid var(--warn-bd); border-radius: var(--r-sm); background: var(--warn-bg); }
+.accessory-checklist legend { padding: 0 5px; color: var(--warn-fg); font-weight: 700; }
+.accessory-checklist legend small { font-size: .7rem; font-weight: 400; }
+.accessory-checklist label { display: flex; align-items: flex-start; gap: 8px; color: var(--ink); font-size: .82rem; }
+.accessory-checklist input { flex: 0 0 auto; margin-top: 3px; }
+.accessory-checklist p { margin: 3px 0 0 !important; color: var(--warn-fg); font-size: .78rem; }
+.accessory-advanced { margin-top: var(--sp-4); padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-sm); }
+.accessory-advanced > summary { color: var(--accent); cursor: pointer; font-size: .85rem; font-weight: 700; }
+.accessory-advanced > .form-grid { margin-top: var(--sp-3); }
+@media (max-width: 700px) {
+  .accessory-process { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 480px) {
+  .accessory-export-heading { flex-direction: column; }
+  .accessory-stage-badge { align-self: flex-start; }
+}
 
 .ai-badge-box { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 18px; }
 .ai-badge {

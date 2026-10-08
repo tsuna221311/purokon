@@ -12,6 +12,7 @@
     </div>
     <nav class="header-nav">
       <a href="{{ url_for('guide') }}">使い方</a>
+      <a href="{{ url_for('index') }}#custom-panel-section">小物の試作</a>
       {% if not demo_mode %}
       <a href="{{ url_for('pricing') }}">料金</a>
       {% if current_user %}

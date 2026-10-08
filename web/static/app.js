@@ -689,6 +689,21 @@ const customPanelSection = document.getElementById("custom-panel-section");
 const accessory3dCheckbox = document.getElementById("field-generate-accessory-stl");
 const accessory3dFields = document.getElementById("accessory-3d-fields");
 const accessory3dAvailability = document.getElementById("accessory-3d-availability");
+const accessoryStageBadge = document.querySelector("#accessory-export-box .accessory-stage-badge");
+const accessoryChecks = [...document.querySelectorAll("[data-accessory-check]")];
+const accessoryCheckStatus = document.getElementById("accessory-check-status");
+function openAccessoryWorkflowFromHash() {
+  if (window.location.hash !== "#custom-panel-section" || !customPanelSection) return;
+  const manualMode = form.querySelector('input[name="mode"][value="manual"]');
+  if (manualMode && !manualMode.checked) {
+    manualMode.checked = true;
+    setMode("manual");
+  }
+  customPanelSection.open = true;
+  requestAnimationFrame(() => customPanelSection.scrollIntoView({ block: "start" }));
+}
+window.addEventListener("hashchange", openAccessoryWorkflowFromHash);
+window.addEventListener("load", openAccessoryWorkflowFromHash, { once: true });
 const accessoryCurveAxis = document.getElementById("accessory-curve-axis");
 const accessoryHeightRadius = document.getElementById("accessory-curvature-radius-height");
 const accessoryAttachment = document.getElementById("accessory-attachment-interface");
@@ -718,6 +733,9 @@ function syncAccessory3dAvailability() {
   const draftIllustration = modeInput && modeInput.value === "illustration"
     && form.querySelector('input[name="illustration_stage"]:checked')?.value === "draft";
   const hasPanels = customPanels.length > 0;
+  if (accessoryStageBadge) {
+    accessoryStageBadge.textContent = hasPanels ? "輪郭あり・実寸を確認" : "まず輪郭を追加";
+  }
   accessory3dCheckbox.disabled = !supportsCustomPanels || !hasPanels || draftIllustration;
   if (accessory3dCheckbox.disabled) accessory3dCheckbox.checked = false;
   if (accessory3dAvailability) {
@@ -726,11 +744,21 @@ function syncAccessory3dAvailability() {
       : !supportsCustomPanels
       ? "3D小物は手動または画像モードで利用できます。"
       : hasPanels
-        ? "バッジ・バックル・髪飾り・装甲などを、平板または実測半径の曲面STLへ変換できます。"
+        ? "輪郭を平板または指定半径の曲面STLへ変換できます。実寸と金具は別途確認してください。"
         : "先にカスタムパーツを1つ以上追加すると選択できます。";
   }
   syncAccessory3dFields();
 }
+
+function syncAccessoryCheckStatus() {
+  if (!accessoryCheckStatus) return;
+  const checked = accessoryChecks.filter((input) => input.checked).length;
+  accessoryCheckStatus.textContent = checked === accessoryChecks.length
+    ? "4/4 確認済み（自己申告）。業者の公差回答と実物試作の確認後に発注仕様を確定してください。"
+    : `${checked}/4 確認。生成物は試作・見積相談用で、確定発注には使えません。`;
+}
+accessoryChecks.forEach((input) => input.addEventListener("change", syncAccessoryCheckStatus));
+syncAccessoryCheckStatus();
 
 function syncAccessory3dFields() {
   if (!accessory3dCheckbox || !accessory3dFields) return;
@@ -3987,14 +4015,19 @@ form.addEventListener("submit", async (event) => {
     const accessoryWarnings = document.getElementById("accessory-3d-warnings");
     const accessory = data.accessory_3d;
     if (stlLink) {
+      stlLink.hidden = !data.download.stl;
       stlLink.classList.toggle("hidden", !data.download.stl);
       if (data.download.stl) stlLink.href = data.download.stl + cacheBust;
     }
     if (vendorLink) {
+      vendorLink.hidden = !data.download.vendor_zip;
       vendorLink.classList.toggle("hidden", !data.download.vendor_zip);
       if (data.download.vendor_zip) vendorLink.href = data.download.vendor_zip + cacheBust;
     }
-    if (accessoryBox) accessoryBox.classList.toggle("hidden", !accessory);
+    if (accessoryBox) {
+      accessoryBox.hidden = !accessory;
+      accessoryBox.classList.toggle("hidden", !accessory);
+    }
     if (accessory && accessorySummary) {
       const curveText = accessory.curvature_radius_mm
         ? (accessory.curve_axis === "both"
@@ -4026,7 +4059,7 @@ form.addEventListener("submit", async (event) => {
       accessorySummary.textContent = `${accessory.piece_count}個・厚み${accessory.thickness_mm}mm・`
         + `配置サイズ ${accessory.arranged_width_mm}×${accessory.arranged_depth_mm}mm`
         + `${curveText}${holeText}${slotText}${magnetText}${attachmentText}。`
-        + "自宅印刷はSTL、業者への見積依頼は寸法図PDF入りの入稿用ZIPを使ってください。";
+        + "自宅での試作はSTL、業者への見積相談は寸法図PDF入りZIPを使ってください。実寸と取付は未検証です。";
     }
     if (accessoryWarnings) {
       accessoryWarnings.innerHTML = "";
@@ -4881,6 +4914,8 @@ function syncGenerationSummary() {
 }
 
 restoreSessionDraft();
+// 小物リンクは、画像ラフの既定モードよりも利用者が明示した行き先を優先する。
+openAccessoryWorkflowFromHash();
 syncGenerationSummary();
 form.addEventListener("input", () => {
   scheduleSessionDraftSave();

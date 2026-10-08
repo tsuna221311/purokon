@@ -922,6 +922,8 @@
                 サイズ展開では、各カードに指定した「1サイズ当たりの幅・高さ」だけを
                 増減します。0cmならバックル等の実寸を全サイズで固定します。
               </p>
+              <details class="accessory-limitations">
+                <summary>⚠ 画像の輪郭は、身頃や袖の縫製用型紙にはなりません（詳しい限界）</summary>
               <p class="hint hint-warn">
                 ⚠ 正直な限界: ここで取り込む輪郭は、画像に写っている見た目の
                 シルエットをそのまま拡大縮小しただけの形です。実際の縫製では、
@@ -938,6 +940,7 @@
                 置き換えられます。置換では必要枚数と縫い合わせ長さを検査し、
                 片側不足や縫い線不一致があれば裁断用データを出しません。
               </p>
+              </details>
             </div>
 
             <div id="custom-panel-list"></div>
@@ -945,15 +948,37 @@
             <button type="button" id="add-custom-panel-btn" class="btn-outline">＋ カスタムパーツを追加</button>
             <input type="hidden" name="custom_panels_json" id="custom-panels-json-input" value="[]">
 
-            <div class="field-box" style="margin-top:14px;" hidden>
+            <div class="field-box accessory-export-box" id="accessory-export-box">
+              <div class="accessory-export-heading">
+                <div>
+                  <p class="eyebrow">小物の設計・試作</p>
+                  <h3>輪郭を、造形業者へ相談できるデータに</h3>
+                </div>
+                <span class="accessory-stage-badge">まず輪郭を追加</span>
+              </div>
+              <div class="accessory-process" aria-label="小物の制作工程">
+                <span><b>1</b> 資料から輪郭</span><span><b>2</b> 実寸を測る</span>
+                <span><b>3</b> 金具を合わせる</span><span><b>4</b> 試作・仮組み</span>
+              </div>
+              <p class="hint">管理人の黄色い肩飾りでも、原画から分かったのは輪郭の比率だけでした。幅・肩の曲がり・金具の裏側は現物で確認します。<strong>画像だけで発注用の実寸を確定しません。</strong></p>
+              <p class="hint">小物だけを作る場合は、上の「本体パーツ」を「含めない」に変更してください。</p>
               <label class="checkbox-row">
                 <input type="checkbox" name="generate_accessory_stl" id="field-generate-accessory-stl" disabled>
-                <span><strong>この輪郭から3Dプリンター用データも作る</strong></span>
+                <span><strong>追加した輪郭から小物の試作STL・見積相談ZIPを作る</strong></span>
               </label>
               <p class="hint" id="accessory-3d-availability" aria-live="polite" style="margin:6px 0 0;">
                 先にカスタムパーツを1つ以上追加すると選択できます。
               </p>
+              <fieldset class="accessory-checklist">
+                <legend>発注前に確認すること <small>自己申告・この画面内だけ</small></legend>
+                <label><input type="checkbox" data-accessory-check> 輪郭の基準となる実寸を測った</label>
+                <label><input type="checkbox" data-accessory-check> 厚みと、曲面なら曲率半径を測った</label>
+                <label><input type="checkbox" data-accessory-check> 金具・裏当て・取付位置を現物で確認した</label>
+                <label><input type="checkbox" data-accessory-check> 仮組みして動作と肌当たりを確認した</label>
+                <p id="accessory-check-status" role="status" aria-live="polite">0/4 確認。生成物は試作・見積相談用で、確定発注には使えません。</p>
+              </fieldset>
               <div id="accessory-3d-fields" class="hidden" style="margin-top:12px;">
+                <h4>まず決める寸法</h4>
                 <div class="form-grid">
                   <label>厚み（mm）
                     <input type="number" name="accessory_thickness_mm" value="3" min="0.8" max="30" step="0.1" disabled>
@@ -982,6 +1007,11 @@
                            min="20" max="2000" step="1" placeholder="空欄なら横と同じ" disabled>
                     <small>胸当てなどで縦横の曲がり方が違う場合に実測値を入れます。</small>
                   </label>
+                </div>
+                <details class="accessory-advanced">
+                  <summary>金具・穴・素材を指定する（任意）</summary>
+                  <p class="hint">金具の現物寸法がない場合は「指定しない／穴を開けない」のままにしてください。写真の銀色の点を、そのまま貫通穴として扱いません。</p>
+                  <div class="form-grid">
                   <label>市販の取付金具
                     <select name="accessory_attachment_interface" id="accessory-attachment-interface" disabled>
                       <option value="none" selected>指定しない</option>
@@ -1091,7 +1121,8 @@
                     <input type="text" name="accessory_finish_note" value="業者と相談" maxlength="120"
                            placeholder="例：つや消し黒、塗装前提" disabled>
                   </label>
-                </div>
+                  </div>
+                </details>
                 <p class="hint hint-warn" style="margin:8px 0 0;">
                   曲面は入力した実測半径だけを使い、画像から推測しません。
                   丸い貫通穴、ベルト用長穴、非貫通の磁石ポケットも選択したときだけ付きます。
@@ -1510,10 +1541,11 @@
             <!-- round39: プロジェクター投影用(実寸1枚もの)。A4分割とは別物。 -->
             <a id="download-projector" href="#" class="btn-outline">プロジェクター投影用PDF</a>
             <a id="download-stl" href="#" class="btn-solid hidden" hidden>STL（3Dプリンター用）</a>
-            <a id="download-vendor-zip" href="#" class="btn-solid hidden" hidden>業者入稿用ZIP（寸法図PDF入り）</a>
+            <a id="download-vendor-zip" href="#" class="btn-solid hidden" hidden>試作・見積相談用ZIP（寸法図PDF入り）</a>
           </div>
           <div id="accessory-3d-result" class="field-box note-info hidden" style="margin-top:10px;" hidden>
-            <p class="hint note-title">3D小物データを作成しました</p>
+            <p class="hint note-title">小物の試作データを作成しました</p>
+            <p class="hint">出力形式と閉じたメッシュの検査は、実寸・取付強度・着用時の安全性の確認ではありません。発注前に金具と試作品を現物で合わせてください。</p>
             <p class="hint" id="accessory-3d-summary" style="margin:0;"></p>
             <ul class="hint" id="accessory-3d-warnings" style="margin:6px 0 0; padding-left:1.2em;"></ul>
           </div>
