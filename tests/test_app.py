@@ -33,6 +33,18 @@ def test_index_page_loads(client):
     assert "PatternForge" in response.get_data(as_text=True)
 
 
+def test_image_ai_notice_matches_runtime_configuration(client, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    without_key = client.get("/").get_data(as_text=True)
+    assert "画像理解APIは未設定です" in without_key
+    assert "Anthropic（Claude API）へ送信します" not in without_key
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-real")
+    with_key = client.get("/").get_data(as_text=True)
+    assert "Anthropic（Claude API）へ送信します" in with_key
+    assert "画像理解APIは未設定です" not in with_key
+
+
 def test_optional_step_numbers_are_renumbered_from_the_dom(client):
     """任意セクションの見出し番号が、DOMの順に振り直せる形になっていること。
 

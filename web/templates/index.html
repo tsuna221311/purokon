@@ -254,6 +254,11 @@
               <div id="reference-preview-list" class="reference-preview-list"></div>
               <p class="reference-privacy">
                 選択した画像は、この画面で型紙を生成するまで送信されません。
+                {% if image_ai_configured %}
+                生成時は画像から切り出した判定対象の領域をAnthropic（Claude API）へ送信します。個人情報や未公開資料は使わないでください。
+                {% else %}
+                画像理解APIは未設定です。画像固有の部位や装飾は判定せず、簡易的なラフを作ります。
+                {% endif %}
               </p>
             </section>
 
@@ -515,7 +520,6 @@
               </label>
               <p class="hint">前ファスナーを選ぶと、プリンセスラインは自動的に解除されます。</p>
             </details>
-            <p class="hint">ANTHROPIC_API_KEY が未設定の場合は簡易判定（モック）で動作します。</p>
           </div>
 
           <div class="field-box">

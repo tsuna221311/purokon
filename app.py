@@ -1068,6 +1068,7 @@ def index():
         # round21: 前後あわせた上限をヒント文に出すため(前後で別の入力欄に
         # なったので、片方だけの上限だと利用者が誤解する)。
         max_illustration_images=MAX_ILLUSTRATION_IMAGES,
+        image_ai_configured=bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()),
         usage={"plan": plan_name, "used_today": used, "daily_limit": limit},
         profiles=profiles,
         # round9で追加: AIパーツ判定ログ表(app.js)がラベル辞書を参照できる
