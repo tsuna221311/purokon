@@ -34,6 +34,8 @@ const costumeProjectSelect = document.getElementById("costume-project");
 const costumeProjectSection = document.getElementById("costume-project-section");
 const costumeProjectSearch = document.getElementById("costume-project-search");
 const costumeProjectCategory = document.getElementById("costume-project-category");
+const costumeProjectCategoryField = document.getElementById("costume-project-category-field");
+const catalogPresetControls = document.getElementById("catalog-preset-controls");
 const costumeProjectSummary = document.getElementById("costume-project-selection-summary");
 const referenceModeButton = document.getElementById("switch-to-reference-mode");
 const referenceFirstCallout = document.getElementById("reference-first-callout");
@@ -66,7 +68,7 @@ function syncCostumeProjectPicker() {
     if (!option.hidden) shown += 1;
   }
   const count = document.getElementById("costume-project-count");
-  if (count) count.textContent = `${shown}件`;
+  if (count) count.textContent = `内蔵${shown}件`;
 }
 
 function syncCostumeProjectSummary() {
@@ -337,6 +339,185 @@ function replaceInputFiles(input, files) {
   files.forEach((file) => transfer.items.add(file));
   input.files = transfer.files;
 }
+
+// Openverseは公開ライセンス画像の検索API。利用者が入力した文字列だけを
+// ブラウザから送る。画像はクリックして選ぶまでフォームへ追加しない。
+const OPENVERSE_IMAGES_URL = "https://api.openverse.org/v1/images/";
+const onlineReferenceResults = document.getElementById("online-reference-results");
+const onlineReferenceStatus = document.getElementById("online-reference-status");
+const referenceSourceNote = document.getElementById("reference-source-note");
+const onlineReferenceCache = new Map();
+let onlineReferenceTimer = null;
+let onlineReferenceController = null;
+let onlineReferenceSequence = 0;
+
+function onlineReferenceMessage(message) {
+  if (onlineReferenceStatus) onlineReferenceStatus.textContent = message;
+}
+
+function safeHttpsLink(raw) {
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:" ? url.href : "";
+  } catch (_error) { return ""; }
+}
+
+function openverseThumbUrl(id) {
+  return /^[a-f0-9-]{36}$/i.test(String(id || ""))
+    ? `${OPENVERSE_IMAGES_URL}${id}/thumb/` : "";
+}
+
+function onlineLicenseLabel(item) {
+  const license = String(item.license || "").toUpperCase();
+  if (!license) return "ライセンス要確認";
+  if (license === "PDM" || license === "CC0") return license;
+  return `CC ${license}${item.license_version ? ` ${item.license_version}` : ""}`;
+}
+
+async function addOnlineReference(item, button) {
+  if (!illustrationFileInput || typeof DataTransfer !== "function") {
+    onlineReferenceMessage("このブラウザでは画像を直接追加できません。元ページから保存してアップロードしてください。");
+    return;
+  }
+  if (referenceFiles().length >= maxReferenceImages) {
+    onlineReferenceMessage(`画像は合計${maxReferenceImages}枚までです。不要な資料を外してから追加してください。`);
+    return;
+  }
+  const thumbUrl = openverseThumbUrl(item.id);
+  if (!thumbUrl) return;
+  button.disabled = true;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 12000);
+  try {
+    const response = await fetch(thumbUrl, {
+      signal: controller.signal, credentials: "omit", referrerPolicy: "no-referrer",
+    });
+    if (!response.ok) throw new Error("画像を取得できませんでした。元ページを確認してください。");
+    const blob = await response.blob();
+    const allowed = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" };
+    const ext = allowed[blob.type];
+    if (!ext || !blob.size || blob.size > 5 * 1024 * 1024) {
+      throw new Error("画像形式または容量が対応範囲外です。元ページから画像を用意してください。");
+    }
+    const file = new File([blob], `openverse-${item.id}.${ext}`, { type: blob.type });
+    replaceInputFiles(illustrationFileInput, [...Array.from(illustrationFileInput.files || []), file]);
+    illustrationFileInput.dispatchEvent(new Event("change", { bubbles: true }));
+    const source = safeHttpsLink(item.foreign_landing_url);
+    if (referenceSourceNote) {
+      const credit = `${String(item.title || "画像").slice(0, 90)} / ${String(item.creator || "作者不明").slice(0, 90)} / ${onlineLicenseLabel(item)} / ${source}`;
+      referenceSourceNote.value = [referenceSourceNote.value.trim(), credit]
+        .filter(Boolean).join("\n").slice(0, 3000);
+      referenceSourceNote.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    const illustrationMode = form.querySelector('input[name="mode"][value="illustration"]');
+    if (illustrationMode) illustrationMode.checked = true;
+    setMode("illustration");
+    onlineReferenceMessage("低解像度の検索画像を正面資料に追加しました。衣装の一致と利用条件を元ページで確認してください。");
+    referenceBoard?.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (error) {
+    onlineReferenceMessage(error.message || "画像を取得できませんでした。元ページから保存してアップロードしてください。");
+  } finally {
+    window.clearTimeout(timeout);
+    button.disabled = false;
+  }
+}
+
+function showOnlineReferences(rows) {
+  onlineReferenceResults?.replaceChildren();
+  if (!onlineReferenceResults) return 0;
+  const fragment = document.createDocumentFragment();
+  let shown = 0;
+  for (const item of rows) {
+    if (!item || typeof item !== "object") continue;
+    const thumb = openverseThumbUrl(item.id);
+    const source = safeHttpsLink(item.foreign_landing_url);
+    if (!thumb || !source) continue;
+    const card = document.createElement("article");
+    card.className = "online-reference-card";
+    const image = document.createElement("img");
+    image.src = thumb;
+    image.alt = `${String(item.title || "画像").slice(0, 90)}の検索候補`;
+    image.loading = "lazy";
+    image.referrerPolicy = "no-referrer";
+    const body = document.createElement("div");
+    body.className = "online-reference-card-body";
+    const title = document.createElement("strong");
+    title.textContent = String(item.title || "名称不明の画像").slice(0, 90);
+    const credit = document.createElement("small");
+    credit.textContent = `${String(item.creator || "作者不明").slice(0, 60)} · ${onlineLicenseLabel(item)}`;
+    const link = document.createElement("a");
+    link.href = source;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = "元ページ・利用条件を確認";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "正面資料に追加";
+    button.addEventListener("click", () => addOnlineReference(item, button));
+    body.append(title, credit, link, button);
+    card.append(image, body);
+    fragment.append(card);
+    shown += 1;
+  }
+  onlineReferenceResults.append(fragment);
+  return shown;
+}
+
+async function runOnlineReferenceSearch(query, sequence) {
+  const controller = new AbortController();
+  onlineReferenceController = controller;
+  const timeout = window.setTimeout(() => controller.abort(), 12000);
+  onlineReferenceMessage(`「${query}」の画像を検索中…`);
+  try {
+    const endpoint = new URL(OPENVERSE_IMAGES_URL);
+    endpoint.searchParams.set("q", query);
+    endpoint.searchParams.set("page_size", "8");
+    endpoint.searchParams.set("mature", "false");
+    const response = await fetch(endpoint, {
+      signal: controller.signal, credentials: "omit", referrerPolicy: "no-referrer",
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) throw new Error(`検索先が応答しませんでした（HTTP ${response.status}）。`);
+    const data = await response.json();
+    if (sequence !== onlineReferenceSequence) return;
+    const rows = Array.isArray(data.results) ? data.results : [];
+    onlineReferenceCache.set(query, rows);
+    if (onlineReferenceCache.size > 20) onlineReferenceCache.delete(onlineReferenceCache.keys().next().value);
+    const shown = showOnlineReferences(rows);
+    onlineReferenceMessage(shown
+      ? `${shown}件の画像候補が見つかりました。公式資料や衣装の一致は保証されません。`
+      : "公開ライセンス画像は見つかりませんでした。手元の資料をアップロードしてください。");
+  } catch (error) {
+    if (sequence !== onlineReferenceSequence) return;
+    onlineReferenceMessage(error.name === "AbortError"
+      ? "検索が時間切れになりました。文字を変えて再度お試しください。"
+      : "画像検索を利用できません。通信を確認するか、手元の資料をアップロードしてください。");
+  } finally {
+    window.clearTimeout(timeout);
+    if (onlineReferenceController === controller) onlineReferenceController = null;
+  }
+}
+
+function queueOnlineReferenceSearch() {
+  window.clearTimeout(onlineReferenceTimer);
+  onlineReferenceController?.abort();
+  const sequence = ++onlineReferenceSequence;
+  const query = (costumeProjectSearch?.value || "").trim();
+  onlineReferenceResults?.replaceChildren();
+  if ([...query].length < 2) {
+    onlineReferenceMessage("2文字以上入力すると画像候補を表示します。");
+    return;
+  }
+  if (onlineReferenceCache.has(query)) {
+    const shown = showOnlineReferences(onlineReferenceCache.get(query));
+    onlineReferenceMessage(`${shown}件の画像候補を表示中です。`);
+    return;
+  }
+  onlineReferenceMessage("入力が止まったら検索します…");
+  onlineReferenceTimer = window.setTimeout(() => runOnlineReferenceSearch(query, sequence), 500);
+}
+
+costumeProjectSearch?.addEventListener("input", queueOnlineReferenceSearch);
 
 function removeReferenceFile(input, index) {
   replaceInputFiles(input, Array.from(input.files || []).filter((_, i) => i !== index));
@@ -795,12 +976,13 @@ function setMode(mode) {
   // サイズ分まとめて作る」機能なので、パーツ構成の選び方自体は変わらない)。
   manualSection.classList.toggle("hidden", isIllustration);
   multiSizeSection.classList.toggle("hidden", !isMultiSize);
-  // 衣装プリセットは採寸を使う手動生成専用。イラスト／サイズ展開では入力欄を
-  // 隠して送信対象から外すことで、選択だけ残ってサーバーに400を返される
-  // 「見えない矛盾」を防ぐ。手動へ戻れば選択はそのまま復元される。
-  if (costumeProjectSection) costumeProjectSection.classList.toggle("hidden", !isManual);
-  [costumeProjectSelect, costumeProjectSearch, costumeProjectCategory]
-    .filter(Boolean)
+  // ネット画像検索はどのモードでも使える。既存の形状プリセットだけは
+  // 手動生成専用なので、イラスト／サイズ展開では隠して送信対象から外す。
+  if (costumeProjectSection) costumeProjectSection.classList.remove("hidden");
+  catalogPresetControls?.classList.toggle("hidden", !isManual);
+  costumeProjectCategoryField?.classList.toggle("hidden", !isManual);
+  document.getElementById("costume-project-count")?.classList.toggle("hidden", !isManual);
+  [costumeProjectSelect, costumeProjectCategory].filter(Boolean)
     .forEach((input) => { input.disabled = !isManual; });
   if (customPanelSection) {
     customPanelSection.classList.toggle("hidden", !(isManual || isIllustration || isMultiSize));

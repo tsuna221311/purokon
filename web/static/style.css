@@ -684,6 +684,23 @@ body.has-outfit-preview-expanded .action-bar { visibility: hidden; }
 .project-selection-summary { margin: var(--sp-2) 0 0; border-left: 3px solid var(--border-strong); padding: 6px 9px; color: var(--ink-soft); font-size: 0.8rem; line-height: 1.55; }
 .project-selection-summary.is-curated { border-color: var(--success-fg); background: var(--success-bg); color: var(--success-fg); }
 .project-selection-summary.is-catalog { border-color: var(--info-fg); background: var(--info-bg); color: var(--info-fg); }
+.catalog-preset-label { display: block; font-size: 0.76rem; font-weight: 700; margin: var(--sp-3) 0 var(--sp-1); }
+.online-reference-search { border-top: 1px solid var(--border-strong); margin-top: var(--sp-4); padding-top: var(--sp-3); }
+.online-reference-search h3 { font-size: 0.93rem; margin: 0; }
+.online-reference-caveat { color: var(--ink-soft); font-size: 0.76rem; line-height: 1.55; margin: var(--sp-2) 0; }
+#online-reference-status { color: var(--ink-soft); font-size: 0.8rem; margin: var(--sp-2) 0; }
+.online-reference-results { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: var(--sp-3); }
+.online-reference-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; min-width: 0; }
+.online-reference-card img { background: var(--surface-sunken); display: block; height: 135px; object-fit: contain; width: 100%; }
+.online-reference-card-body { display: grid; gap: var(--sp-1); padding: var(--sp-2); }
+.online-reference-card strong { font-size: 0.79rem; overflow-wrap: anywhere; }
+.online-reference-card small { color: var(--muted); font-size: 0.71rem; overflow-wrap: anywhere; }
+.online-reference-card a, .online-reference-card button { font-size: 0.76rem; }
+.online-reference-card button { background: var(--accent); border: 0; border-radius: var(--r-sm); color: var(--accent-ink); cursor: pointer; font: inherit; font-size: 0.76rem; padding: 7px 8px; }
+.online-reference-card button:hover, .online-reference-card button:focus-visible { background: var(--accent-hover); outline: var(--ring); }
+.online-reference-card button:disabled { cursor: wait; opacity: 0.65; }
+.reference-source-label { display: block; font-size: 0.77rem; font-weight: 700; margin: var(--sp-3) 0 var(--sp-1); }
+#reference-source-note { min-height: 58px; width: 100%; }
 @media (max-width: 480px) {
   .mode-row, .workflow-overview { grid-template-columns: 1fr; }
   .mode-row .mode-card { min-height: 0; }
@@ -691,6 +708,7 @@ body.has-outfit-preview-expanded .action-bar { visibility: hidden; }
   .project-section-heading { align-items: center; }
   .reference-first-callout { align-items: stretch; flex-direction: column; }
   .reference-first-callout button { width: 100%; }
+  .online-reference-results { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .field-box p.hint { font-size: 0.78rem; color: var(--muted); margin: 8px 0 0; }
 

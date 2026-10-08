@@ -84,17 +84,17 @@
           <details class="field-box catalog-details" id="costume-project-section">
             <summary class="project-section-heading">
               <div>
-                <label for="costume-project"><strong>参考カタログ（任意）</strong></label>
-                <p class="project-section-subtitle">資料がない場合のシルエット確認用です。ユーザー提供の画像から作る場合は、上の「資料画像を使う」を選んでください。</p>
+                <strong>衣装画像を探す・参考カタログ（任意）</strong>
+                <p class="project-section-subtitle">名前を入力すると公開ライセンス画像をネット検索します。内蔵プリセットは手動モードで形を試すための別機能です。</p>
               </div>
-              <span class="project-count" id="costume-project-count">{{ costume_project_choices|length - 1 }}件</span>
+              <span class="project-count" id="costume-project-count">内蔵{{ costume_project_choices|length - 1 }}件</span>
             </summary>
             <div class="project-filters">
               <div class="field">
-                <label for="costume-project-search">名前から探す</label>
-                <input type="search" id="costume-project-search" placeholder="例：初音ミク、原神、コート" autocomplete="off">
+                <label for="costume-project-search">キャラクター名・衣装名で探す</label>
+                <input type="search" id="costume-project-search" placeholder="例：Hatsune Miku cosplay" autocomplete="off" maxlength="80">
               </div>
-              <div class="field">
+              <div class="field" id="costume-project-category-field">
                 <label for="costume-project-category">ジャンル</label>
                 <select id="costume-project-category">
                   <option value="all">すべて</option>
@@ -106,15 +106,24 @@
                 </select>
               </div>
             </div>
-            <select name="costume_project" id="costume-project">
-              {% for value, label in costume_project_choices %}
-              <option value="{{ value }}">{{ label }}</option>
-              {% endfor %}
-            </select>
-            <p id="costume-project-selection-summary" class="project-selection-summary" aria-live="polite">
-              未選択です。資料画像から作る場合は、上の「資料画像を使う」を選んでください。
-            </p>
-            <p class="hint" style="margin:6px 0 0;">採寸値は下の欄に必ず入力してください。個別設計済み以外は、シルエット互換性を確認済みの検証ベースです。</p>
+            <div id="catalog-preset-controls">
+              <label for="costume-project" class="catalog-preset-label">内蔵の形状プリセット</label>
+              <select name="costume_project" id="costume-project">
+                {% for value, label in costume_project_choices %}
+                <option value="{{ value }}">{{ label }}</option>
+                {% endfor %}
+              </select>
+              <p id="costume-project-selection-summary" class="project-selection-summary" aria-live="polite">
+                未選択です。資料画像から作る場合は、上の「資料画像を使う」を選んでください。
+              </p>
+              <p class="hint" style="margin:6px 0 0;">採寸値は下の欄に必ず入力してください。個別設計済み以外は、シルエット互換性を確認済みの検証ベースです。</p>
+            </div>
+            <section class="online-reference-search" aria-labelledby="online-reference-title">
+              <h3 id="online-reference-title">ネット上の衣装画像候補</h3>
+              <p class="online-reference-caveat">2文字以上入力するとOpenverseを検索します。検索語はOpenverseに送信されます。画像は公式設定画とは限らず、低解像度の候補です。利用前に元ページで作者・ライセンス・衣装の一致を確認してください。</p>
+              <p id="online-reference-status" role="status" aria-live="polite">名前を入力すると画像候補を表示します。</p>
+              <div id="online-reference-results" class="online-reference-results"></div>
+            </section>
           </details>
 
           <div id="multi-size-section" class="field-box hidden">
@@ -167,6 +176,8 @@
               正面の絵・写真 <span class="required-badge">必須</span>
             </label>
             <input type="file" name="illustration" id="field-illustration" accept="image/*" multiple>
+            <label for="reference-source-note" class="reference-source-label">検索画像の出典メモ（任意）</label>
+            <textarea name="reference_source_note" id="reference-source-note" rows="2" maxlength="3000" placeholder="オンライン画像を追加すると作者・ライセンス・元ページを記録します。"></textarea>
             <p class="hint">
               服だけが写った画像（平置き・ハンガー・マネキン等）がもっとも
               精度が高くなります。人物が着ているイラスト（アニメ画像など）も、

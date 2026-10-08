@@ -509,7 +509,8 @@ def _set_security_headers(response):
     response.headers.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data: blob:; connect-src 'self' blob:; "
+        "img-src 'self' data: blob: https://api.openverse.org; "
+        "connect-src 'self' blob: https://api.openverse.org; "
         "object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
     )
     # round48: 実際にヘッダーを読み出して、付いていなかった3つを足す。
