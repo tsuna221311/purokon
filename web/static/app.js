@@ -1981,11 +1981,22 @@ function renderDartNote(data) {
   }
 }
 
-function renderFabricNeed(data) {
+function renderFabricNeed(data, quality) {
+  const leadEl = document.getElementById("fabric-need-lead");
+  const mainEl = document.getElementById("fabric-need-main");
   const widthEl = document.getElementById("need-width");
   const lengthEl = document.getElementById("need-length");
   const subEl = document.getElementById("need-sub");
   if (!widthEl || !lengthEl) return;
+
+  if (quality && quality.digital_ready === false) {
+    if (leadEl) leadEl.textContent = "生地の購入量は未確定";
+    if (mainEl) mainEl.classList.add("hidden");
+    if (subEl) subEl.textContent = "自動検査で停止したため、この型紙の配置量は購入の目安にできません。停止理由を確認し、採寸・パーツを直して再生成してください。";
+    return;
+  }
+  if (leadEl) leadEl.textContent = "用意する生地";
+  if (mainEl) mainEl.classList.remove("hidden");
 
   const usedCm = Number(data.used_length_cm) || 0;
   const buyCm = recommendedBuyLengthCm(usedCm);
@@ -2045,9 +2056,13 @@ function setNoteTone(el, tone) {
   if (tone) el.classList.add("note-" + tone);
 }
 
-function renderStashVerdict(data) {
+function renderStashVerdict(data, quality) {
   const box = document.getElementById("stash-verdict");
   if (!box) return;
+  if (quality && quality.digital_ready === false) {
+    box.classList.add("hidden");
+    return;
+  }
   const verdict = data.stash_verdict;
   if (!verdict) {
     box.classList.add("hidden");
@@ -2429,9 +2444,13 @@ function fillWidthTable(table, widths, recommendedWidthCm) {
   table.appendChild(body);
 }
 
-function renderShoppingList(data) {
+function renderShoppingList(data, quality) {
   const box = document.getElementById("shopping-list");
   if (!box) return;
+  if (quality && quality.digital_ready === false) {
+    box.classList.add("hidden");
+    return;
+  }
   const memo = data.shopping_list;
   if (!memo || !Array.isArray(memo.widths) || memo.widths.length === 0) {
     box.classList.add("hidden");
@@ -3912,14 +3931,14 @@ form.addEventListener("submit", async (event) => {
     document.getElementById("stat-waste").textContent = formatPercent(data.waste_ratio);
     document.getElementById("stat-length").textContent = data.used_length_cm;
     document.getElementById("stat-width").textContent = data.fabric_width_cm;
-    renderFabricNeed(data);
-    renderShoppingList(data);
-    renderStashVerdict(data);
+    const quality = data.production_quality;
+    renderFabricNeed(data, quality);
+    renderShoppingList(data, quality);
+    renderStashVerdict(data, quality);
     renderLining(data);
     document.getElementById("stat-time").textContent = data.elapsed_seconds;
     document.getElementById("stat-unplaced").textContent = data.unplaced_count;
     renderPdfSheetCount(data);
-    const quality = data.production_quality;
     renderDigitalQualityAlert(quality);
     renderFabricGroups(data);
 
@@ -4223,13 +4242,16 @@ form.addEventListener("submit", async (event) => {
       const warnings = (data.measurement_warnings || []).length
                         + (data.unplaced_warnings || []).length
                         + (data.compatibility_warnings || []).length;
-      const buyCm = recommendedBuyLengthCm(data.used_length_cm);
-      announce(`${quality && quality.digital_ready === false
-                 ? "自動検査で停止しました。出力は検証用で、本番生地を裁断しないでください。"
-                 : "型紙ができました。"}パーツ${data.part_count}枚、`
-               + `幅${data.fabric_width_cm}cmの生地を`
-               + `${(buyCm / 100).toFixed(1)}メートル買う目安です。`
-               + (warnings ? `確認してほしい注意が${warnings}件あります。` : ""));
+      if (quality && quality.digital_ready === false) {
+        announce("自動検査で停止しました。出力は検証用です。本番生地を裁断せず、購入量も確定しないでください。"
+                 + `停止理由が${(quality.blockers || []).length}件あります。`);
+      } else {
+        const buyCm = recommendedBuyLengthCm(data.used_length_cm);
+        announce(`型紙ができました。パーツ${data.part_count}枚、`
+                 + `幅${data.fabric_width_cm}cmの生地を`
+                 + `${(buyCm / 100).toFixed(1)}メートル買う目安です。`
+                 + (warnings ? `確認してほしい注意が${warnings}件あります。` : ""));
+      }
     }
     endGenerating();
   } catch (err) {

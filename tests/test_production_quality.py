@@ -21,6 +21,23 @@ def test_blocked_digital_pattern_is_flagged_before_download_and_per_size():
     assert '本番生地を裁断しないでください。' in js
 
 
+def test_blocked_pattern_does_not_recommend_buying_fabric():
+    root = Path(__file__).resolve().parents[1]
+    html = (root / "web/templates/index.html").read_text(encoding="utf-8")
+    js = (root / "web/static/app.js").read_text(encoding="utf-8")
+    assert 'id="fabric-need-main"' in html
+    fabric = js.split("function renderFabricNeed(data, quality) {")[1].split("\n}", 1)[0]
+    assert 'quality.digital_ready === false' in fabric
+    assert 'mainEl.classList.add("hidden")' in fabric
+    assert '生地の購入量は未確定' in fabric
+    assert 'mainEl.classList.remove("hidden")' in fabric
+    for name in ("renderStashVerdict", "renderShoppingList"):
+        renderer = js.split(f"function {name}(data, quality) {{")[1].split("\n}", 1)[0]
+        assert 'quality.digital_ready === false' in renderer
+        assert 'box.classList.add("hidden")' in renderer
+    assert '購入量も確定しないでください。' in js
+
+
 def test_paper_preflight_is_in_physical_checklist_without_generation():
     result = SimpleNamespace(
         finalized_parts=[],
