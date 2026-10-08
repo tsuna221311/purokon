@@ -150,7 +150,8 @@ def build_dimensioned_drawings(rows: Sequence[dict], *,
                                curvature_radius_mm: float | None,
                                curvature_height_radius_mm: float | None,
                                curve_axis: str,
-                               magnet_depth_mm: float | None) -> bytes:
+                               magnet_depth_mm: float | None,
+                               material_profile: str = "consult") -> bytes:
     """Return a one-page-per-piece vector PDF for review with a print vendor."""
     _require_jp_label_font()
     output = BytesIO()
@@ -224,6 +225,12 @@ def build_dimensioned_drawings(rows: Sequence[dict], *,
             f"Final mesh X x Y x Z: {_number(dims['x'])} x {_number(dims['y'])} x {_number(dims['z'])} mm",
             f"Nominal wall thickness: {_number(thickness_mm)} mm",
             "Datum: flat outline lower-left (X=0, Y=0)",
+            "Process request: " + {
+                "pa12": "PA12 nylon / SLS candidate",
+                "tough_resin": "tough resin / SLA candidate",
+                "prototype": "PLA or PETG / FDM prototype",
+                "consult": "vendor to propose",
+            }[material_profile],
         ]
         if curvature_radius_mm is not None:
             lines.append(f"Bend axis: {curve_axis}; inner R={_number(curvature_radius_mm)} mm")

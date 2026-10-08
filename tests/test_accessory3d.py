@@ -321,6 +321,7 @@ def test_vendor_package_contains_mm_3mf_individual_binary_stl_and_order_sheet(tm
         assert "Y 20 mm" in first_page
         assert "Z 2.5 mm" in first_page
         assert "Fit, tolerances" in first_page
+        assert "Process request: PA12 nylon / SLS candidate" in first_page
 
         first_stl = package.read(stl_names[0])
         triangle_count = struct.unpack("<I", first_stl[80:84])[0]

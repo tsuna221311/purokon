@@ -1152,7 +1152,8 @@ def export_vendor_package(specs: Iterable[CustomPanelSpec], output_path: str,
         drawing_rows, thickness_mm=thickness,
         curvature_radius_mm=curvature_radius,
         curvature_height_radius_mm=curvature_height_radius,
-        curve_axis=curve_axis, magnet_depth_mm=magnet_depth)
+        curve_axis=curve_axis, magnet_depth_mm=magnet_depth,
+        material_profile=profile)
     notes = [
         "PatternForge 3D小物　業者入稿票",
         "================================",
