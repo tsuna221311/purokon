@@ -32,6 +32,15 @@ def test_blocked_svg_markup_is_scale_aware_and_idempotent():
     assert _blocked_svg_markup(marked) == marked
 
 
+def test_unconfirmed_preview_uses_the_same_readable_svg_warning():
+    source = '<svg viewBox="0 0 150 120" xmlns="http://www.w3.org/2000/svg"></svg>'
+    marked = _blocked_svg_markup(source, "未確認・裁断禁止")
+    assert "未確認・裁断禁止" in marked
+    assert "検査不合格" not in marked
+    assert marked.count('<path d="') >= 16
+    assert ElementTree.fromstring(marked).tag.endswith("svg")
+
+
 def test_blocked_export_marks_every_pdf_page(tmp_path):
     result = PatternForgePipeline(output_dir=str(tmp_path)).generate_from_selection(
         build_garment_spec(), Measurements(66, 45, 72, 148, 46, 37),

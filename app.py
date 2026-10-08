@@ -2261,32 +2261,10 @@ def _export_accessory_outputs(result, custom_panel_specs, settings):
 
 
 def _mark_svg_as_draft(path: str) -> None:
-    """診断用SVGへ、裁断用ではないことを消せない見た目で重ねる。"""
-    try:
-        source = Path(path).read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        return
-    marker = """
-<g id="patternforge-draft-watermark" pointer-events="none">
-  <rect x="0" y="0" width="100%" height="100%" fill="#fff" fill-opacity="0.32"/>
-  <text x="50%" y="48%" text-anchor="middle" font-family="sans-serif"
-        font-size="48" font-weight="700" fill="#b00020" fill-opacity="0.72"
-        transform="rotate(-18)">DRAFT / NOT FOR CUTTING</text>
-  <text x="50%" y="54%" text-anchor="middle" font-family="sans-serif"
-        font-size="22" font-weight="700" fill="#b00020">未確認項目があります・裁断禁止</text>
-</g>
-"""
-    index = source.rfind("</svg>")
-    if index < 0 or "patternforge-draft-watermark" in source:
-        return
-    temp_path = path + ".draft.tmp"
-    try:
-        Path(temp_path).write_text(source[:index] + marker + source[index:],
-                                   encoding="utf-8")
-        os.replace(temp_path, path)
-    finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+    """未確認ラフのプレビューを、フォントに依存しない警告付きにする。"""
+    from engine.pdf_draft import mark_inspection_svg
+
+    mark_inspection_svg(path, "未確認・裁断禁止")
 
 
 def _withhold_unconfirmed_outputs(result) -> str | None:

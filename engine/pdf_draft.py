@@ -17,6 +17,7 @@ from .pdf_export import _JP_FONT_PATH, _LABEL_FONT, _require_jp_label_font
 
 
 _STOP_WARNING_JA = "検査不合格・裁断禁止"
+_UNCONFIRMED_WARNING_JA = "未確認・裁断禁止"
 
 
 def _warning_overlay(width: float, height: float) -> BytesIO:
@@ -76,8 +77,11 @@ def mark_blocked_pdfs(output_files: dict[str, str]) -> None:
                 temp.unlink()
 
 
-def _blocked_svg_markup(source: str) -> str:
+def _blocked_svg_markup(source: str,
+                        warning_ja: str = _STOP_WARNING_JA) -> str:
     """Add a prominent, scale-aware inspection watermark to a generated SVG."""
+    if warning_ja not in {_STOP_WARNING_JA, _UNCONFIRMED_WARNING_JA}:
+        raise ValueError("Unknown SVG inspection warning")
     if 'id="patternforge-draft-watermark"' in source:
         return source
     closing = source.rfind("</svg>")
@@ -92,10 +96,12 @@ def _blocked_svg_markup(source: str) -> str:
     font = min(4.0, width / 24)
     english_font = font * 0.75
     band_height = font * 5
-    warning_middle = _outlined_warning(middle_x, middle_y - font * 0.1, font)
-    warning_top = _outlined_warning(middle_x, y + font * 1.25, font)
+    warning_middle = _outlined_warning(
+        warning_ja, middle_x, middle_y - font * 0.1, font)
+    warning_top = _outlined_warning(
+        warning_ja, middle_x, y + font * 1.25, font)
     banner = f'''<g id="patternforge-draft-watermark" pointer-events="none">
-  <title>{_STOP_WARNING_JA} / DRAFT - NOT FOR CUTTING</title>
+  <title>{warning_ja} / DRAFT - NOT FOR CUTTING</title>
   <rect x="{x}" y="{y}" width="{width}" height="{height}"
         fill="#fff" fill-opacity="0.18" />
   <rect x="{x}" y="{middle_y - band_height / 2}"
@@ -114,8 +120,8 @@ def _blocked_svg_markup(source: str) -> str:
     return source[:closing] + banner + source[closing:]
 
 
-@lru_cache(maxsize=1)
-def _warning_outlines() -> tuple[int, int, str]:
+@lru_cache(maxsize=2)
+def _warning_outlines(warning_ja: str) -> tuple[int, int, str]:
     """Trace the bundled Japanese glyphs so SVG viewers need no CJK font."""
     font = OutlineFont(_JP_FONT_PATH)
     try:
@@ -125,7 +131,7 @@ def _warning_outlines() -> tuple[int, int, str]:
         units_per_em = font["head"].unitsPerEm
         offset = 0
         paths = []
-        for character in _STOP_WARNING_JA:
+        for character in warning_ja:
             glyph_name = cmap.get(ord(character))
             if glyph_name is None:
                 raise RuntimeError(f"SVG警告用フォントに文字がありません: {character}")
@@ -139,12 +145,29 @@ def _warning_outlines() -> tuple[int, int, str]:
         font.close()
 
 
-def _outlined_warning(center_x: float, baseline_y: float, size: float) -> str:
-    units_per_em, advance, paths = _warning_outlines()
+def _outlined_warning(warning_ja: str, center_x: float,
+                      baseline_y: float, size: float) -> str:
+    units_per_em, advance, paths = _warning_outlines(warning_ja)
     scale = size / units_per_em
     left_x = center_x - advance * scale / 2
     return (f'<g fill="#b00020" transform="translate({left_x},{baseline_y}) '
             f'scale({scale},-{scale})">{paths}</g>')
+
+
+def mark_inspection_svg(path: str, warning_ja: str = _STOP_WARNING_JA) -> None:
+    """Atomically mark one generated SVG before allowing it to be previewed."""
+    target = Path(path)
+    source = target.read_text(encoding="utf-8")
+    marked = _blocked_svg_markup(source, warning_ja)
+    if marked == source:
+        return
+    temp = target.with_name(target.name + ".draft.tmp")
+    try:
+        temp.write_text(marked, encoding="utf-8")
+        os.replace(temp, target)
+    finally:
+        if temp.exists():
+            temp.unlink()
 
 
 def block_cutting_exports(output_files: dict[str, str], output_dir: str) -> None:
