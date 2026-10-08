@@ -526,6 +526,8 @@ def _set_security_headers(response):
     # 生成物(型紙)や画像を、他所のサイトから読み込ませない。
     # 採寸値から作られた個人性のあるファイルなので、埋め込みを許す理由が無い。
     response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+    if DEMO_MODE:
+        response.headers.setdefault("X-Robots-Tag", "noindex, nofollow")
     # HTTPSで運用すると宣言しているときだけHSTSを送る(上記定数のコメント参照)。
     if FORCE_HTTPS:
         response.headers.setdefault(
@@ -1122,6 +1124,8 @@ _PUBLIC_SITEMAP_ENDPOINTS = (
 
 @app.get("/robots.txt")
 def robots_txt():
+    if DEMO_MODE:
+        return Response("User-agent: *\nDisallow: /\n", mimetype="text/plain")
     lines = [
         "User-agent: *",
         "Disallow: /account",
@@ -1138,6 +1142,12 @@ def robots_txt():
 
 @app.get("/sitemap.xml")
 def sitemap_xml():
+    if DEMO_MODE:
+        return Response(
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"/>',
+            mimetype="application/xml",
+        )
     urls = "".join(
         f"<url><loc>{url_for(endpoint, _external=True)}</loc></url>"
         for endpoint in _PUBLIC_SITEMAP_ENDPOINTS

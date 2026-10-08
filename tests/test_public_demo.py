@@ -15,6 +15,9 @@ def test_demo_allows_pattern_workflow_and_explains_limits(client, monkeypatch):
     assert client.get("/guide").status_code == 200
     assert client.get("/healthz").status_code == 200
     assert client.get("/static/style.css").status_code == 200
+    assert home.headers["X-Robots-Tag"] == "noindex, nofollow"
+    assert "Disallow: /" in client.get("/robots.txt").get_data(as_text=True)
+    assert "/signup" not in client.get("/sitemap.xml").get_data(as_text=True)
 
 
 def test_demo_blocks_accounts_billing_and_private_api(client, monkeypatch):
