@@ -119,10 +119,19 @@
               <p class="hint" style="margin:6px 0 0;">採寸値は下の欄に必ず入力してください。個別設計済み以外は、シルエット互換性を確認済みの検証ベースです。</p>
             </div>
             <section class="online-reference-search" aria-labelledby="online-reference-title">
-              <h3 id="online-reference-title">ネット上の衣装画像候補</h3>
+              <h3 id="online-reference-title">ネットで探して、画像からラフ型紙を試す</h3>
               <p class="online-reference-caveat">2文字以上入力するとOpenverseを検索します。検索語はOpenverseに送信されます。画像は公式設定画とは限らず、低解像度の候補です。利用前に元ページで作者・ライセンス・衣装の一致を確認してください。</p>
               <p id="online-reference-status" role="status" aria-live="polite">名前を入力すると画像候補を表示します。</p>
               <div id="online-reference-results" class="online-reference-results"></div>
+              <div id="online-reference-selected" class="online-reference-selected hidden" aria-live="polite">
+                <strong id="online-reference-selected-name">選んだ画像</strong>
+                <p>この画像を正面資料に設定しました。背面がない部分は推定になります。画像理解APIが未設定の場合、画像の細部は判定せず簡易ラフを作ります。</p>
+                <p id="online-reference-measurements"></p>
+                <div class="online-reference-actions">
+                  <button type="button" id="online-reference-edit-measurements">採寸値を確認・修正</button>
+                  <button type="button" id="online-reference-generate">この画像と採寸でラフ型紙を生成</button>
+                </div>
+              </div>
             </section>
           </details>
 

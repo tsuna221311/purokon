@@ -345,11 +345,47 @@ function replaceInputFiles(input, files) {
 const OPENVERSE_IMAGES_URL = "https://api.openverse.org/v1/images/";
 const onlineReferenceResults = document.getElementById("online-reference-results");
 const onlineReferenceStatus = document.getElementById("online-reference-status");
+const onlineReferenceSelected = document.getElementById("online-reference-selected");
+const onlineReferenceSelectedName = document.getElementById("online-reference-selected-name");
+const onlineReferenceMeasurements = document.getElementById("online-reference-measurements");
+const onlineReferenceEditMeasurements = document.getElementById("online-reference-edit-measurements");
+const onlineReferenceGenerate = document.getElementById("online-reference-generate");
 const referenceSourceNote = document.getElementById("reference-source-note");
 const onlineReferenceCache = new Map();
 let onlineReferenceTimer = null;
 let onlineReferenceController = null;
 let onlineReferenceSequence = 0;
+let selectedOnlineReferenceFileName = "";
+
+function syncOnlineReferenceReview() {
+  if (!onlineReferenceSelected) return;
+  const hasSelectedImage = selectedOnlineReferenceFileName
+    && Array.from(illustrationFileInput?.files || [])
+      .some((file) => file.name === selectedOnlineReferenceFileName);
+  onlineReferenceSelected.classList.toggle("hidden", !hasSelectedImage);
+  if (!hasSelectedImage || !onlineReferenceMeasurements) return;
+  const value = (name) => form.elements.namedItem(name)?.value || "—";
+  onlineReferenceMeasurements.textContent = `現在の採寸：B${value("bust")} / W${value("waist")} / H${value("hip")}・身長${value("height")}cm。初期値のままなら、着る人の実測値に直してください。`;
+}
+
+onlineReferenceEditMeasurements?.addEventListener("click", () => {
+  const bust = document.getElementById("field-bust");
+  bust?.scrollIntoView({ behavior: "smooth", block: "center" });
+  bust?.focus({ preventScroll: true });
+});
+onlineReferenceGenerate?.addEventListener("click", () => {
+  if (!illustrationFileInput?.files?.length) {
+    onlineReferenceMessage("先に使う衣装画像を選んでください。");
+    return;
+  }
+  const illustrationMode = form.querySelector('input[name="mode"][value="illustration"]');
+  const draftStage = form.querySelector('input[name="illustration_stage"][value="draft"]');
+  if (illustrationMode) illustrationMode.checked = true;
+  if (draftStage) draftStage.checked = true;
+  setMode("illustration");
+  syncPrimaryAction();
+  form.requestSubmit(submitButton);
+});
 
 function onlineReferenceMessage(message) {
   if (onlineReferenceStatus) onlineReferenceStatus.textContent = message;
@@ -410,10 +446,15 @@ async function addOnlineReference(item, button) {
       referenceSourceNote.dispatchEvent(new Event("change", { bubbles: true }));
     }
     const illustrationMode = form.querySelector('input[name="mode"][value="illustration"]');
+    const draftStage = form.querySelector('input[name="illustration_stage"][value="draft"]');
     if (illustrationMode) illustrationMode.checked = true;
+    if (draftStage) draftStage.checked = true;
     setMode("illustration");
-    onlineReferenceMessage("低解像度の検索画像を正面資料に追加しました。衣装の一致と利用条件を元ページで確認してください。");
-    referenceBoard?.scrollIntoView({ behavior: "smooth", block: "start" });
+    selectedOnlineReferenceFileName = file.name;
+    if (onlineReferenceSelectedName) onlineReferenceSelectedName.textContent = `選択中：${String(item.title || "衣装画像").slice(0, 90)}`;
+    syncOnlineReferenceReview();
+    onlineReferenceMessage("画像を選びました。採寸値を確認してラフ型紙を生成できます。衣装の一致と利用条件も元ページで確認してください。");
+    onlineReferenceSelected?.scrollIntoView({ behavior: "smooth", block: "center" });
   } catch (error) {
     onlineReferenceMessage(error.message || "画像を取得できませんでした。元ページから保存してアップロードしてください。");
   } finally {
@@ -452,7 +493,7 @@ function showOnlineReferences(rows) {
     link.textContent = "元ページ・利用条件を確認";
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = "正面資料に追加";
+    button.textContent = "この画像からラフを試す";
     button.addEventListener("click", () => addOnlineReference(item, button));
     body.append(title, credit, link, button);
     card.append(image, body);
@@ -600,6 +641,7 @@ function renderReferenceBoard() {
     referencePreviewList.appendChild(card);
   });
   syncWorkflowProgress();
+  syncOnlineReferenceReview();
 }
 
 function validateReferencesBeforeSubmit() {
@@ -4813,6 +4855,7 @@ function syncGenerationSummary() {
   }
   const prefix = projectName ? `「${projectName}」・` : "";
   generationSummaryText.textContent = `${prefix}${plan}・B${bust} / W${waist} / H${hip}・身長${height}cm`;
+  syncOnlineReferenceReview();
 }
 
 restoreSessionDraft();

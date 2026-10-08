@@ -699,6 +699,13 @@ body.has-outfit-preview-expanded .action-bar { visibility: hidden; }
 .online-reference-card button { background: var(--accent); border: 0; border-radius: var(--r-sm); color: var(--accent-ink); cursor: pointer; font: inherit; font-size: 0.76rem; padding: 7px 8px; }
 .online-reference-card button:hover, .online-reference-card button:focus-visible { background: var(--accent-hover); outline: var(--ring); }
 .online-reference-card button:disabled { cursor: wait; opacity: 0.65; }
+.online-reference-selected { border: 1px solid var(--border-strong); border-radius: var(--r-md); background: var(--surface); margin-top: var(--sp-3); padding: var(--sp-3); }
+.online-reference-selected strong { display: block; overflow-wrap: anywhere; }
+.online-reference-selected p { color: var(--ink-soft); font-size: 0.79rem; line-height: 1.55; margin: var(--sp-2) 0; }
+.online-reference-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.online-reference-actions button { border: 1px solid var(--border-strong); border-radius: var(--r-sm); background: var(--surface); color: var(--ink); cursor: pointer; font: inherit; font-size: 0.8rem; padding: 8px 10px; }
+#online-reference-generate { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 700; }
+.online-reference-actions button:hover, .online-reference-actions button:focus-visible { outline: var(--ring); }
 .reference-source-label { display: block; font-size: 0.77rem; font-weight: 700; margin: var(--sp-3) 0 var(--sp-1); }
 #reference-source-note { min-height: 58px; width: 100%; }
 @media (max-width: 480px) {

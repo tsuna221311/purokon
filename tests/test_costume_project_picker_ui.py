@@ -12,6 +12,9 @@ def test_index_renders_costume_project_search_and_category_picker():
     assert 'id="costume-project-search"' in html
     assert 'id="online-reference-results"' in html
     assert 'id="online-reference-status"' in html
+    assert 'id="online-reference-selected"' in html
+    assert 'id="online-reference-generate"' in html
+    assert 'id="online-reference-edit-measurements"' in html
     assert 'id="reference-source-note"' in html
     assert 'id="costume-project-category"' in html
     assert 'id="costume-project-selection-summary"' in html
