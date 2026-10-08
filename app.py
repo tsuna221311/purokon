@@ -364,6 +364,7 @@ Image.MAX_IMAGE_PIXELS = None
 # プロキシが正しくX-Forwarded-Forを設定し直している場合のみ、
 # 環境変数で明示的に有効化すること。
 TRUST_PROXY_HEADERS = os.environ.get("PATTERNFORGE_TRUST_PROXY_HEADERS") == "1"
+DEMO_MODE = os.environ.get("PATTERNFORGE_DEMO_MODE") == "1"
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -615,6 +616,22 @@ def _get_or_create_csrf_token() -> str:
 
 
 @app.before_request
+def _restrict_public_demo():
+    """Keep the temporary public demo anonymous and free of account/billing flows."""
+    if not DEMO_MODE:
+        return None
+    # Match URL paths so account and billing endpoints remain closed even if renamed.
+    path = request.path
+    if (path in {"/", "/guide", "/healthz", "/favicon.ico", "/robots.txt", "/sitemap.xml",
+                 "/api/measurements/check", "/api/custom-panel/trace", "/api/generate"}
+            or path.startswith("/static/") or path.startswith("/download/")):
+        return None
+    if path.startswith("/api/"):
+        return jsonify({"ok": False, "error": "公開デモではこの機能を利用できません。"}), 404
+    return "公開デモではこのページを利用できません。", 404
+
+
+@app.before_request
 def _csrf_protect():
     """状態変更リクエスト全体を対象にしたCSRFトークン検証(round6で追加)。
 
@@ -789,6 +806,7 @@ def _inject_template_globals():
     return {
         "current_user": _current_user(),
         "current_year": time.strftime("%Y", time.gmtime()),
+        "demo_mode": DEMO_MODE,
         "csrf_token": _get_or_create_csrf_token(),
         # `_csrf_protect`からのリダイレクトの目印(session書き込みを避けて
         # いるため、`show_login_required_notice`と同じクエリ文字列方式)。

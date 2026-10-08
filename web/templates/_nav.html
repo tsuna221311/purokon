@@ -12,6 +12,7 @@
     </div>
     <nav class="header-nav">
       <a href="{{ url_for('guide') }}">使い方</a>
+      {% if not demo_mode %}
       <a href="{{ url_for('pricing') }}">料金</a>
       {% if current_user %}
         <span class="nav-plan-pill nav-plan-{{ current_user.plan }}">{{ 'Pro' if current_user.plan == 'pro' else 'Free' }}</span>
@@ -24,6 +25,7 @@
         <a href="{{ url_for('login') }}">ログイン</a>
         <a href="{{ url_for('signup') }}" class="nav-cta">無料登録</a>
       {% endif %}
+      {% else %}<span class="nav-plan-pill">無料デモ</span>{% endif %}
     </nav>
   </div>
 </header>

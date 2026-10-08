@@ -244,6 +244,16 @@ header.app-header p { margin: 3px 0 0; color: #b9c0cf; font-size: 0.8rem; }
   padding: var(--sp-5);
 }
 .container.narrow { max-width: 460px; }
+.demo-notice {
+  margin: 0 0 var(--sp-4);
+  padding: var(--sp-3) var(--sp-4);
+  border: 2px solid #a85b11;
+  border-radius: 10px;
+  background: #fff4df;
+  color: #422708;
+  line-height: 1.6;
+  font-size: 0.95rem;
+}
 
 .flash-container { padding-bottom: 0; }
 .flash-msg {

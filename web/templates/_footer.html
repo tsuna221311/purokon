@@ -3,9 +3,11 @@
   <p>PatternForge — 採寸値から、家庭用プリンタで印刷できる型紙をつくります</p>
   <p class="app-footer-links">
     <a href="{{ url_for('guide') }}">使い方ガイド</a>
+    {% if not demo_mode %}
     <a href="{{ url_for('terms') }}">利用規約</a>
     <a href="{{ url_for('privacy') }}">プライバシーポリシー</a>
     <a href="{{ url_for('legal_notice') }}">運営者情報</a>
+    {% endif %}
   </p>
   <p class="app-footer-copyright">&copy; {{ current_year }} PatternForge</p>
 </footer>

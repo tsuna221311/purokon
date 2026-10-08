@@ -13,6 +13,9 @@
   {% include "_flash.html" %}
 
   <main id="main-content" class="container">
+    {% if demo_mode %}
+    <div class="demo-notice" role="note"><strong>公開デモ（試作版）</strong> — 会員登録・決済は停止中です。入力した画像・採寸値や生成ファイルの保存は保証されません。個人情報や公開できない資料は入力せず、裁断・縫製前に寸法と縫い合わせを確認してください。</div>
+    {% endif %}
     <div class="layout">
       <!-- 入力フォーム -->
       <section class="panel">
@@ -627,7 +630,7 @@
             </div>
             <p class="hint" id="profile-save-message" style="margin:6px 0 0;"></p>
           </div>
-          {% else %}
+          {% elif not demo_mode %}
           <p class="hint" style="margin-bottom:10px;">
             <a href="{{ url_for('login') }}">ログイン</a>すると、採寸値を名前を付けて保存し、次回から呼び出せます
             （複数の顧客・家族分の管理に便利です）。
@@ -1387,7 +1390,7 @@
               {{ usage.used_today }} / {{ usage.daily_limit if usage.daily_limit is not none else '無制限' }}
               （{{ 'Pro' if usage.plan == 'pro' else ('Free会員' if usage.plan == 'free' else '未ログイン') }}）
             </span>
-            {% if not current_user %}
+            {% if not current_user and not demo_mode %}
               — <a href="{{ url_for('signup') }}">無料登録</a>で上限が増えます
             {% endif %}
           </p>
