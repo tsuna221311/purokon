@@ -410,6 +410,45 @@ def test_clip_segment_to_rect_returns_none_when_fully_outside():
     assert clipped is None
 
 
+def test_notch_crossing_a4_tile_boundary_is_printed_on_both_sheets(tmp_path):
+    """合印の中点だけで面を選ぶと、境界をまたぐ片側が欠ける。"""
+    import pypdf
+
+    from engine.nesting import NestedPart, NestingResult
+
+    boundary = A4_PAPER.usable_w_cm
+    part = finalize_part(
+        "front_bodice", "round_neck",
+        parse_path("M 0 0 L 32 0 L 32 20 L 0 20 Z"),
+        seam_allowance_cm=0.0)
+    part.notches = [((boundary - 0.3, 10.0),
+                     (boundary + 0.3, 10.0))]
+    result = NestingResult(
+        placed=[NestedPart(part=part, x=0.0, y=0.0, rotated=False)],
+        unplaced=[], fabric_width_cm=40.0, used_length_cm=20.0,
+        waste_ratio=0.0)
+
+    pdf_path = tmp_path / "notch-boundary.pdf"
+    render_a4_pdf(result, str(pdf_path), seam_allowance_cm=0.0)
+    pages = pypdf.PdfReader(str(pdf_path)).pages
+    assert len(pages) == 3  # 表紙 + 2枚の実寸タイル
+    tile_pages = pages[-2:]
+    assert "R1-C1" in tile_pages[0].extract_text()
+    assert "R1-C2" in tile_pages[1].extract_text()
+    for page in tile_pages:
+        assert any(
+            abs(r - 0.8) < 0.01 and abs(g) < 0.01 and abs(b) < 0.01
+            for r, g, b in _stroke_color_ops(page.get_contents().get_data())
+        ), "境界の反対側の紙から合印が消えています"
+
+    left = _clip_segment_to_rect(*part.notches[0], 0, 0,
+                                 boundary, A4_PAPER.usable_h_cm)
+    right = _clip_segment_to_rect(*part.notches[0], boundary, 0,
+                                  2 * boundary, A4_PAPER.usable_h_cm)
+    assert left == ((boundary - 0.3, 10.0), (boundary, 10.0))
+    assert right == ((boundary, 10.0), (boundary + 0.3, 10.0))
+
+
 def _stroke_color_ops(content_bytes: bytes) -> list[tuple[float, float, float]]:
     """PDFページのcontent streamから、ストローク色設定(`r g b RG`)を全て抜き出す。"""
     ops = []

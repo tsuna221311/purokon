@@ -590,37 +590,13 @@ def clip_polygon_to_rect(points: list[Point], xmin: float, ymin: float,
     return poly
 
 
-def _segment_in_tile(a: Point, b: Point, xmin: float, ymin: float,
-                      xmax: float, ymax: float) -> bool:
-    """合印などの短い線分は、中点がタイル内にあれば描画する簡易判定で十分。
-
-    合印(notch)は裁断線上の一点を指す長さ数mm程度の短い印であり、実際の
-    A4タイル1枚(27.7cm)よりずっと短いため、中点がどのタイルに属するかで
-    「そのタイルに描くかどうか」を判定しても、実質的に描き漏れは起きない。
-    """
-    mx, my = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
-    return xmin <= mx <= xmax and ymin <= my <= ymax
-
-
 def _clip_segment_to_rect(a: Point, b: Point, xmin: float, ymin: float,
                            xmax: float, ymax: float) -> tuple[Point, Point] | None:
     """線分を矩形[xmin,xmax]x[ymin,ymax]でクリップする(Liang-Barsky)。
 
-    交差しない場合はNoneを返す。布目線(grainline)の描画で使う実バグの
-    修正のために追加した(下のrender_a4_pdf内のコメント参照)。合印と違い、
-    布目線はパーツの縦幅いっぱいに伸びる長い線であり、A4タイル1枚の高さ
-    (27.7cm)を優に超えることが多い(例: パンツの脚パーツは高さ100cm超)。
-    以前は`_segment_in_tile`と同じ「線分全体の中点がこのタイルに入って
-    いるかどうか」だけで判定し、入っていれば"元の(タイルでクリップして
-    いない)線分"をそのまま描いていた。これは、線分の長さがタイル1枚分より
-    十分短い合印には問題無いが、布目線のような長い線分では、線分全体の
-    中点が属するタイル1枚にしか描かれず、実際にその線分が視覚的に通過する
-    他のタイル(複数枚に渡ることが多い)には一切描かれない、という実バグに
-    なっていた。実際に生成したPDFの各ページのcontent streamを検査して、
-    高さ72cmの縦長パーツ(A4タイル6枚分に相当)で、布目線の色(青
-    "0 0 .8 RG")が全6ページ中1ページにしか出現しないことを確認して発見した。
-    貼り合わせて使う大きなパーツほど、布目(生地の縦地)を確認する手段が
-    ほとんど無くなってしまう、実用上重要な不具合だった。
+    交差しない場合はNoneを返す。布目線はA4タイルを何枚も通過することが
+    あり、中点のある1枚だけに描くと他の紙から消える。短い合印でもタイル
+    境界をまたげば片側が欠ける。どちらも各タイルとの交差部分だけを描く。
     """
     x0, y0 = a
     x1, y1 = b
@@ -1501,9 +1477,17 @@ def _draw_fabric_section(c, result: NestingResult,
                         c.drawString(pts[0][0] + 2, pts[0][1] + 2, label)
 
                 for notch_index, (a, b) in enumerate(placed.placed_notches()):
-                    if _segment_in_tile(a, b, tile_x0, tile_y0, tile_x1, tile_y1):
-                        pa = _to_page_xy(a[0] - tile_x0, a[1] - tile_y0, paper)
-                        pb = _to_page_xy(b[0] - tile_x0, b[1] - tile_y0, paper)
+                    # 数mmの合印でもタイル境界をまたぐ場合がある。中点だけで
+                    # 所属面を決めると片側が消えるため、各面に載る部分を描く。
+                    notch_segment = _clip_segment_to_rect(
+                        a, b, tile_x0, tile_y0, tile_x1, tile_y1)
+                    if (notch_segment is not None and
+                            math.dist(*notch_segment) > 1e-8):
+                        start, end = notch_segment
+                        pa = _to_page_xy(start[0] - tile_x0,
+                                          start[1] - tile_y0, paper)
+                        pb = _to_page_xy(end[0] - tile_x0,
+                                          end[1] - tile_y0, paper)
                         c.setStrokeColorRGB(0.8, 0, 0)
                         c.setLineWidth(1.2)
                         c.line(*pa, *pb)
@@ -1566,16 +1550,16 @@ def _draw_fabric_section(c, result: NestingResult,
                     c.setFont(_LABEL_FONT, note_size)
                     c.drawCentredString(lx, ly - fitted_size * 1.15, note_text)
 
-                # 布目線(grainline)は、合印と違ってパーツの縦幅いっぱいに伸びる
+                # 布目線(grainline)はパーツの縦幅いっぱいに伸びる
                 # 長い線分で、A4タイル1枚の高さを超えることが多い。以前は
-                # (合印と同じ)"線分全体の中点がこのタイルに入っているか"だけで
+                # "線分全体の中点がこのタイルに入っているか"だけで
                 # 判定し、入っていれば元の(タイルでクリップしていない)線分を
                 # そのまま描いていたため、線分全体の中点が属するタイル1枚にしか
                 # 描かれず、実際にその布目線が通過している他のタイル(複数枚に
                 # 渡ることが多い)には一切描かれていない実バグがあった
-                # (_clip_segment_to_rectの docstring 参照。実際に高さ72cmの
-                # パーツで検証し、6ページ中1ページにしか描かれないことを確認
-                # 済み)。Liang-Barsky法で線分をこのタイルの範囲にクリップし、
+                # (実際に高さ72cmのパーツで検証し、6ページ中1ページにしか
+                # 描かれないことを確認済み)。Liang-Barsky法で線分を
+                # このタイルの範囲にクリップし、
                 # 交差する分だけ(=このページに実際に収まる区間だけ)描くように
                 # 修正した。これにより、布目線が通過する全ページに、その
                 # ページ内に収まる長さの線が描かれるようになる。
