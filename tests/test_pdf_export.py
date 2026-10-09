@@ -9,6 +9,7 @@ from engine.pdf_export import (
     A4_PAPER,
     _clamp_tile_label_anchor,
     _clip_contour_edges_to_rect,
+    _clip_polyline_edges_to_rect,
     _clip_segment_to_rect,
     clip_polygon_to_rect,
     export_pattern,
@@ -42,6 +43,15 @@ def test_clipped_contour_does_not_invent_a_cut_line_on_the_tile_edge():
     assert len(edges) == 3
     assert not any(a[0] == b[0] == 5 for a, b in edges)
     assert _clip_contour_edges_to_rect(square, 2, 2, 4, 4) == []
+
+
+def test_long_reference_line_is_split_exactly_at_a4_tile_boundaries():
+    line = [(-5.0, 5.0), (25.0, 5.0)]
+    left = _clip_polyline_edges_to_rect(line, 0, 0, 10, 10)
+    right = _clip_polyline_edges_to_rect(line, 10, 0, 20, 10)
+    assert left == [((0.0, 5.0), (10.0, 5.0))]
+    assert right == [((10.0, 5.0), (20.0, 5.0))]
+    assert _clip_polyline_edges_to_rect(line, 0, 20, 10, 30) == []
 
 
 def test_part_label_and_cutting_note_stay_inside_printable_tile():

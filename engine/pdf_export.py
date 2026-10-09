@@ -644,6 +644,24 @@ def _clip_contour_edges_to_rect(points: list[Point], xmin: float, ymin: float,
     return edges
 
 
+def _clip_polyline_edges_to_rect(points: list[Point], xmin: float, ymin: float,
+                                 xmax: float, ymax: float
+                                 ) -> list[tuple[Point, Point]]:
+    """Clip an open construction line without joining its visible fragments.
+
+    A long reference line may span several A4 tiles.  Drawing its original
+    coordinates on every page leaks the line into margins and across the
+    registration border.  Each page must receive only the original segments
+    inside that tile, with no invented edge at the clipping boundary.
+    """
+    edges = []
+    for start, end in zip(points, points[1:]):
+        clipped = _clip_segment_to_rect(start, end, xmin, ymin, xmax, ymax)
+        if clipped and math.dist(*clipped) > 1e-8:
+            edges.append(clipped)
+    return edges
+
+
 # ---------------------------------------------------------------------------
 # A4分割PDF（実寸1:1）
 # ---------------------------------------------------------------------------
@@ -1445,15 +1463,19 @@ def _draw_fabric_section(c, result: NestingResult,
                 for line in placed.placed_internal_lines():
                     if len(line) < 3:
                         continue
-                    pts = [_to_page_xy(px - tile_x0, py - tile_y0, paper) for px, py in line]
+                    edges = _clip_contour_edges_to_rect(
+                        line, tile_x0, tile_y0, tile_x1, tile_y1)
+                    if not edges:
+                        continue
                     c.setDash(2, 2)
                     c.setStrokeColorRGB(0.4, 0.4, 0.4)
                     c.setLineWidth(0.6)
                     path = c.beginPath()
-                    path.moveTo(*pts[0])
-                    for pt in pts[1:]:
-                        path.lineTo(*pt)
-                    path.close()
+                    for start, end in edges:
+                        path.moveTo(*_to_page_xy(start[0] - tile_x0,
+                                                  start[1] - tile_y0, paper))
+                        path.lineTo(*_to_page_xy(end[0] - tile_x0,
+                                                  end[1] - tile_y0, paper))
                     c.drawPath(path, stroke=1, fill=0)
                     c.setDash()
 
@@ -1461,20 +1483,30 @@ def _draw_fabric_section(c, result: NestingResult,
                 for label, line in placed.placed_reference_lines():
                     if len(line) < 2:
                         continue
-                    pts = [_to_page_xy(px - tile_x0, py - tile_y0, paper) for px, py in line]
+                    edges = _clip_polyline_edges_to_rect(
+                        line, tile_x0, tile_y0, tile_x1, tile_y1)
+                    if not edges:
+                        continue
                     c.setDash([6, 2, 1, 2], 0)
                     c.setStrokeColorRGB(*REFERENCE_LINE_RGB)
                     c.setLineWidth(0.4)
                     path = c.beginPath()
-                    path.moveTo(*pts[0])
-                    for pt in pts[1:]:
-                        path.lineTo(*pt)
+                    for start, end in edges:
+                        path.moveTo(*_to_page_xy(start[0] - tile_x0,
+                                                  start[1] - tile_y0, paper))
+                        path.lineTo(*_to_page_xy(end[0] - tile_x0,
+                                                  end[1] - tile_y0, paper))
                     c.drawPath(path, stroke=1, fill=0)
                     c.setDash()
-                    if label:
+                    # Keep one label at its authored start, not a duplicate
+                    # on every tile the same construction line traverses.
+                    if (label and tile_x0 <= line[0][0] < tile_x1
+                            and tile_y0 <= line[0][1] < tile_y1):
+                        px, py = _to_page_xy(line[0][0] - tile_x0,
+                                             line[0][1] - tile_y0, paper)
                         c.setFillColorRGB(*REFERENCE_LINE_RGB)
                         c.setFont(_LABEL_FONT, 5)
-                        c.drawString(pts[0][0] + 2, pts[0][1] + 2, label)
+                        c.drawString(px + 2, py + 2, label)
 
                 for notch_index, (a, b) in enumerate(placed.placed_notches()):
                     # 数mmの合印でもタイル境界をまたぐ場合がある。中点だけで
