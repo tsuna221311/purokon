@@ -190,6 +190,23 @@ def test_cut_line_inside_stitch_line_blocks_digital_readiness(tmp_path):
     assert production_quality_report(result)["digital_ready"] is False
 
 
+def test_cut_line_that_contains_stitch_but_has_too_little_allowance_is_blocked():
+    from shapely.geometry import Polygon
+
+    stitch = [(0, 0), (10, 0), (10, 10), (0, 10)]
+    part = SimpleNamespace(
+        display_name="試験片", stitch_line=stitch,
+        cut_line=list(Polygon(stitch).buffer(.35, join_style=2).exterior.coords),
+        seam_allowance_cm=1.0, hem_seam_allowance_cm=None,
+        grainline={"line": ((2, 2), (2, 8)), "arrows": []}, notches=[],
+    )
+    warnings = pattern_geometry_warnings([part])
+    assert any("縫い代が指定幅より細い" in item for item in warnings)
+
+    part.cut_line = list(Polygon(stitch).buffer(1.0, join_style=2).exterior.coords)
+    assert pattern_geometry_warnings([part]) == []
+
+
 def test_non_finite_cut_coordinate_is_reported_instead_of_crashing(tmp_path):
     result = _result(tmp_path)
     result.finalized_parts[0].cut_line[0] = (float("nan"), 0.0)

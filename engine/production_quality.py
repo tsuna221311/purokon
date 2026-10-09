@@ -52,6 +52,38 @@ def pattern_geometry_warnings(parts) -> list[str]:
         elif not cut.buffer(1e-6).covers(stitch):
             warnings.append(f"{label}: 裁断線が縫い線の内側に入り込んでいます")
         else:
+            # A cut outline can contain the stitch outline yet leave almost no
+            # material for sewing.  Check the *exported* geometry, not merely
+            # the requested allowance.  The smaller of the ordinary/hem
+            # allowances is a conservative floor at their transition.
+            try:
+                allowances = [float(part.seam_allowance_cm)]
+                if part.hem_seam_allowance_cm is not None:
+                    allowances.append(float(part.hem_seam_allowance_cm))
+                minimum_allowance = min(allowances)
+            except (AttributeError, TypeError, ValueError, OverflowError):
+                minimum_allowance = 0.0
+            if minimum_allowance > 0.15 and isfinite(minimum_allowance):
+                closed = (stitch_points if stitch_points[0] == stitch_points[-1]
+                          else [*stitch_points, stitch_points[0]])
+                cut_boundary = cut.boundary
+                thin_at = None
+                for start, end in zip(closed, closed[1:]):
+                    if Point(start).distance(Point(end)) < 0.2:
+                        continue
+                    for fraction in (0.25, 0.5, 0.75):
+                        sample = Point(start[0] + (end[0] - start[0]) * fraction,
+                                       start[1] + (end[1] - start[1]) * fraction)
+                        gap = cut_boundary.distance(sample)
+                        if gap < minimum_allowance - 0.1:
+                            thin_at = gap
+                            break
+                    if thin_at is not None:
+                        break
+                if thin_at is not None:
+                    warnings.append(
+                        f"{label}: 縫い代が指定幅より細い箇所があります"
+                        f"（約{thin_at:.2f}cm、最低指定幅{minimum_allowance:.2f}cm）")
             grain = part.grainline or {}
             segments = [grain.get("line"), *(grain.get("arrows") or ())]
             try:
