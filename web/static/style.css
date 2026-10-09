@@ -1896,7 +1896,11 @@ header.app-header a.nav-cta { color: #2f3c75 !important; }
 .demo-case-card h4 { font-size: 1rem; }
 .demo-case-card p { color: var(--ink-soft); font-size: .86rem; line-height: 1.5; }
 .demo-case-card img { display: block; width: 100%; background: #f3f7fb; border-radius: 8px; }
-.demo-case-card button { margin-top: auto; }
+.demo-case-card button { margin-top: auto; padding: .7rem .8rem; border: 0;
+  border-radius: var(--r-sm); background: var(--accent); color: var(--accent-ink);
+  font: inherit; font-weight: 700; cursor: pointer; }
+.demo-case-card button:hover, .demo-case-card button:focus-visible {
+  background: var(--accent-hover); outline: var(--ring); }
 .demo-case-assets { display: flex; flex-wrap: wrap; gap: .45rem .8rem; margin-top: .6rem; }
 .demo-case-assets a { color: var(--info-fg); font-size: .85rem; font-weight: 700; }
 .demo-case-assets a:hover, .demo-case-assets a:focus-visible { text-decoration-thickness: 2px; }
