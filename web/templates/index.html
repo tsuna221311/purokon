@@ -77,7 +77,7 @@
             <p>下のボタンは現在の入力欄を置き換え、同じ採寸値と事前に確認したパーツ構成で生成します。<strong>画像を自動解析した結果ではありません。</strong> 裁断前には実寸印刷と仮縫いが必要です。</p>
             <div class="demo-case-grid">
               {% for case in demo_cases %}
-              <article class="demo-case-card">
+              <article class="demo-case-card{{ ' demo-case-card-wide' if case.sketch else '' }}">
                 <h3>{{ case.title }}</h3>
                 {% if case.sketch %}
                 <img src="{{ url_for('static', filename=case.sketch) }}" alt="青いドレスの正面・側面・背面を描いた模式ラフ">

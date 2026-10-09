@@ -1896,5 +1896,7 @@ header.app-header a.nav-cta { color: #2f3c75 !important; }
 .demo-case-card h3 { font-size: 1rem; }
 .demo-case-card p { color: var(--ink-soft); font-size: .86rem; line-height: 1.5; }
 .demo-case-card img { display: block; width: 100%; background: #f3f7fb; border-radius: 8px; }
+.demo-case-card-wide { grid-column: 1 / -1; }
+.demo-case-card-wide img { max-width: 900px; align-self: center; }
 .demo-case-card button { margin-top: auto; }
 #demo-case-status { min-height: 1.3em; color: var(--info-fg); }
