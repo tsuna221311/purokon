@@ -41,7 +41,7 @@ def _messages_response(text: str) -> dict:
         "id": "msg_test",
         "type": "message",
         "role": "assistant",
-        "model": "claude-sonnet-4-5",
+        "model": "claude-sonnet-4-6",
         "content": [{"type": "text", "text": text}],
         "stop_reason": "end_turn",
         "stop_sequence": None,
@@ -119,7 +119,7 @@ def test_the_request_carries_the_image_and_the_hint(fake_api):
     _classifier(fake_api).classify(_image(), region_label="スカート")
     sent = fake_api.received[0]["json"]
 
-    assert sent["model"] == "claude-sonnet-4-5"
+    assert sent["model"] == "claude-sonnet-4-6"
     assert sent["system"], "systemプロンプトが入っていません"
     content = sent["messages"][0]["content"]
     kinds = [block["type"] for block in content]

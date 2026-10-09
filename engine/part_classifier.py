@@ -92,7 +92,7 @@ MAX_CLASSIFICATIONS_PER_REQUEST = 24
 class ClaudePartClassifier(PartClassifier):
     """Claude API(vision)を使った本番実装。ANTHROPIC_API_KEY が必要。"""
 
-    def __init__(self, api_key: str | None = None, model: str = "claude-sonnet-4-5",
+    def __init__(self, api_key: str | None = None, model: str = "claude-sonnet-4-6",
                  timeout: float = _API_TIMEOUT_SECONDS,
                  max_retries: int = _API_MAX_RETRIES,
                  base_url: str | None = None):
