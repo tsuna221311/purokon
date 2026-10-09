@@ -197,6 +197,11 @@
               正面の絵・写真 <span class="required-badge">必須</span>
             </label>
             <input type="file" name="illustration" id="field-illustration" accept="image/*" multiple>
+            <label class="hint" style="display:block; margin:10px 0 0;">
+              <input type="checkbox" name="illustration_three_views" value="1">
+              1枚に正面・側面・背面が左から並ぶ三面図として読み込む
+            </label>
+            <p class="hint">三面図の場合はこの欄に1枚だけ入れてください。3分割して各方向の資料として扱います。自動で確定できない縫製構造は下の項目で確認します。</p>
             <label for="reference-source-note" class="reference-source-label">検索画像の出典メモ（任意）</label>
             <textarea name="reference_source_note" id="reference-source-note" rows="2" maxlength="3000" placeholder="オンライン画像を追加すると作者・ライセンス・元ページを記録します。"></textarea>
             <p class="hint">

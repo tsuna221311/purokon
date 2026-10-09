@@ -1851,6 +1851,18 @@ def _parse_custom_grade_cm(form) -> dict[str, float] | None:
 MAX_ILLUSTRATION_IMAGES = 6
 
 
+def _split_three_view_sheet(sheet: Image.Image) -> list[Image.Image]:
+    """Split a left-to-right front/side/back sheet without guessing its layout."""
+    if sheet.width < sheet.height * 1.2 or sheet.width < 600:
+        raise ValueError("三面図モードには横長の画像が必要です。")
+    boundaries = [round(sheet.width * index / 3) for index in range(4)]
+    front, side, back = [
+        sheet.crop((boundaries[index], 0, boundaries[index + 1], sheet.height))
+        for index in range(3)
+    ]
+    return [front, back, side]
+
+
 def _load_uploaded_image(uploaded) -> Image.Image:
     """アップロードされたイラストを検証しつつ読み込む。
 
@@ -2948,6 +2960,13 @@ def _api_generate_impl():
                     f"（{len(uploads)}枚が選択されています）。"
                 )
             image = [_load_uploaded_image(f) for f in uploads]
+            if _bool_field(request.form, "illustration_three_views"):
+                if len(front_uploads) != 1 or back_uploads or side_uploads or detail_uploads:
+                    raise ValueError(
+                        "三面図モードでは、正面・側面・背面が左から並ぶ画像を"
+                        "正面欄に1枚だけ指定してください。")
+                image = _split_three_view_sheet(image[0])
+                illustration_views = ["front", "back", "side"]
 
             illustration_stage = (request.form.get("illustration_stage")
                                   or "production").strip()
