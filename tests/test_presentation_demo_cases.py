@@ -1,5 +1,9 @@
 """Presentation examples are disclosed fixed inputs, not image-AI claims."""
 
+import html
+import json
+import re
+
 import pytest
 
 import app as app_module
@@ -53,16 +57,24 @@ def test_fixed_demo_uses_manual_generator_and_downloads(client, monkeypatch, cas
         assert download.data
 
 
-def test_demo_page_discloses_fixed_inputs_and_original_sketch(client, monkeypatch):
+def test_demo_page_hides_fixed_inputs_until_searched(client, monkeypatch):
     monkeypatch.setattr(app_module, "DEMO_MODE", True)
     page = client.get("/").get_data(as_text=True)
-    assert "画像を自動解析した結果ではありません" in page
+    assert 'class="demo-search-results hidden" id="demo-search-results"' in page
+    assert 'id="demo-case-data"' in page
+    assert 'id="demo-search-list"' in page
+    assert 'data-demo-case=' not in page
+    assert "発表用・固定入力の3例" not in page
+    assert "検索画像を自動解析した結果ではありません" in page
+    data = re.search(r'id="demo-case-data" data-cases=\'([^\']+)\'', page)
+    assert data
+    cases = json.loads(html.unescape(data.group(1)))
     for case in DEMO_CASES:
-        assert f'data-demo-case="{case["id"]}"' in page
+        assert f'<option value="{case["project_key"]}">' not in page
+        assert case in cases  # 非表示の検索用データにのみ入る。
         paper_pdf = client.get("/static/" + case["doll_pdf"])
         assert paper_pdf.status_code == 200
         assert paper_pdf.data.startswith(b"%PDF")
-    assert "紙模型の流れを見る（模式動画）" in page
     movie = client.get("/static/demo/blue_dress_paper_demo.mp4")
     assert movie.status_code == 200
     assert b"ftyp" in movie.data[:32]

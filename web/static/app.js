@@ -1135,41 +1135,118 @@ if (referenceModeButton) {
 }
 setMode(form.querySelector('input[name="mode"]:checked')?.value || "illustration");
 
-// 発表用の再現可能な入力。資料の自動画像判定とは切り離した手動構成である。
-const demoCases = document.getElementById("demo-cases");
-if (demoCases) {
-  demoCases.querySelectorAll("[data-demo-case]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const key = button.dataset.projectKey;
-      if (!costumeProjectSelect || !Array.from(costumeProjectSelect.options).some((item) => item.value === key)) {
-        announce("このデモの構成が見つかりません。");
-        return;
-      }
-      form.reset(); // 前の画像・補正・カスタムパーツを固定入力へ混ぜない。
-      for (const panel of customPanels) panel.card.remove();
-      customPanels.length = 0;
-      updateCustomPanelsJson();
-      syncAddCustomPanelButton();
-      const manualMode = form.querySelector('input[name="mode"][value="manual"]');
-      manualMode.checked = true;
-      setMode("manual");
-      costumeProjectSelect.value = key;
-      syncCostumeProjectPicker();
-      syncCostumeProjectSummary();
-      for (const field of ["bust", "waist", "hip", "height", "sleeve_length", "shoulder_width"]) {
-        const input = form.querySelector(`[name="${field}"]`);
-        const value = demoCases.getAttribute(`data-${field.replaceAll("_", "-")}`);
-        if (input && value) input.value = value;
-      }
-      const projectName = form.querySelector('[name="project_name"]');
-      if (projectName) projectName.value = `発表用・${button.closest("article")?.querySelector("h3")?.textContent || key}`;
-      const status = document.getElementById("demo-case-status");
-      if (status) status.textContent = "固定採寸と構成を読み込みました。結果欄に生成状況を表示します。";
-      syncPrimaryAction();
-      form.requestSubmit(submitButton);
-    });
-  });
+// 発表用の固定構成は常時一覧に出さず、名前が一致したときだけローカル検索に表示する。
+// ネット画像検索と混同させないため、カードにも「内蔵・固定構成」と記す。
+const demoCaseData = document.getElementById("demo-case-data");
+const demoSearchResults = document.getElementById("demo-search-results");
+const demoSearchList = document.getElementById("demo-search-list");
+const demoCasePayload = demoCaseData ? {
+  cases: JSON.parse(demoCaseData.dataset.cases || "[]"),
+  measurements: JSON.parse(demoCaseData.dataset.measurements || "{}"),
+} : null;
+
+function ensureDemoOption(key) {
+  const demoCase = demoCasePayload?.cases.find((item) => item.project_key === key);
+  if (!demoCase || !costumeProjectSelect) return null;
+  if (!Array.from(costumeProjectSelect.options).some((option) => option.value === key)) {
+    const option = document.createElement("option");
+    option.value = key;
+    option.textContent = demoCase.title;
+    costumeProjectSelect.append(option);
+  }
+  return demoCase;
 }
+
+function loadDemoCase(demoCase) {
+  if (!costumeProjectSelect || !form || !submitButton) return;
+  form.reset(); // 前の画像・補正・カスタムパーツを固定入力へ混ぜない。
+  for (const panel of customPanels) panel.card.remove();
+  customPanels.length = 0;
+  updateCustomPanelsJson();
+  syncAddCustomPanelButton();
+  const manualMode = form.querySelector('input[name="mode"][value="manual"]');
+  manualMode.checked = true;
+  setMode("manual");
+  ensureDemoOption(demoCase.project_key);
+  costumeProjectSelect.value = demoCase.project_key;
+  for (const [field, value] of Object.entries(demoCasePayload.measurements)) {
+    const input = form.elements.namedItem(field);
+    if (input) input.value = String(value);
+  }
+  const projectName = form.elements.namedItem("project_name");
+  if (projectName) projectName.value = `発表用・${demoCase.title}`;
+  costumeProjectSearch.value = demoCase.title;
+  syncCostumeProjectPicker();
+  syncCostumeProjectSummary();
+  const status = document.getElementById("demo-case-status");
+  if (status) status.textContent = "固定採寸と構成を読み込みました。型紙を生成します。";
+  syncPrimaryAction();
+  syncGenerationSummary();
+  saveSessionDraft();
+  form.requestSubmit(submitButton);
+}
+
+function renderDemoSearchResults() {
+  if (!demoCasePayload || !demoSearchResults || !demoSearchList) return;
+  const normalizeTerm = (term) => String(term).normalize("NFKC")
+    .toLocaleLowerCase("ja-JP").replace(/\s+/g, "");
+  const query = normalizeTerm((costumeProjectSearch?.value || "").trim());
+  demoSearchList.replaceChildren();
+  if ([...query].length < 2) {
+    demoSearchResults.classList.add("hidden");
+    return;
+  }
+  const matches = demoCasePayload.cases.filter((demoCase) =>
+    [demoCase.title, ...(demoCase.search_terms || [])]
+      .some((term) => normalizeTerm(term).includes(query)));
+  demoSearchResults.classList.toggle("hidden", matches.length === 0);
+  const count = document.getElementById("costume-project-count");
+  if (count && matches.length && costumeProjectSelect) {
+    const listed = Array.from(costumeProjectSelect.options).filter((option) => option.value && !option.hidden);
+    const extra = matches.filter((demoCase) =>
+      !listed.some((option) => option.value === demoCase.project_key)).length;
+    count.textContent = `内蔵${listed.length + extra}件`;
+  }
+  for (const demoCase of matches) {
+    const card = document.createElement("article");
+    card.className = "demo-case-card";
+    const heading = document.createElement("h4");
+    heading.textContent = demoCase.title;
+    const summary = document.createElement("p");
+    summary.textContent = demoCase.summary;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "内蔵の固定構成で型紙を生成";
+    button.addEventListener("click", () => loadDemoCase(demoCase));
+    card.append(heading, summary, button);
+    if (demoCase.sketch) {
+      const sketch = document.createElement("img");
+      sketch.src = `/static/${demoCase.sketch}`;
+      sketch.alt = `${demoCase.title}の正面・側面・背面の模式ラフ`;
+      card.insertBefore(sketch, summary);
+    }
+    const assets = document.createElement("div");
+    assets.className = "demo-case-assets";
+    const paper = document.createElement("a");
+    paper.href = `/static/${demoCase.doll_pdf}`;
+    paper.download = "";
+    paper.textContent = "1/3紙模型PDF（A4）";
+    assets.append(paper);
+    if (demoCase.doll_video) {
+      const video = document.createElement("a");
+      video.href = `/static/${demoCase.doll_video}`;
+      video.target = "_blank";
+      video.rel = "noopener";
+      video.textContent = "紙模型の流れを見る（模式動画）";
+      assets.append(video);
+    }
+    card.append(assets);
+    demoSearchList.append(card);
+  }
+}
+
+costumeProjectSearch?.addEventListener("input", renderDemoSearchResults);
+renderDemoSearchResults();
 
 for (const input of sleeveStyleInputs) {
   input.addEventListener("change", syncCuffsAvailability);
@@ -4878,6 +4955,8 @@ function restoreSessionDraft() {
 }
 
 function applyDraftFields(draft) {
+  // 検索で選んだ内蔵例は通常の選択肢に出さない。保存データを開くときだけ復元する。
+  ensureDemoOption(draft.fields?.costume_project?.value);
   const changed = [];
   Object.entries(draft.fields).forEach(([name, saved]) => {
     if (!saved || typeof saved !== "object") return;
