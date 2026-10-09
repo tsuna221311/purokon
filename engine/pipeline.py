@@ -3204,13 +3204,25 @@ class PatternForgePipeline:
         # (頭囲を測っていなければ既定値を使ったことも言う)。
         for plan in hood_plans[:1]:
             design_notes.extend(hood_notes(plan))
-        (scaled_parts, finalized_parts, princess_stats, princess_failures,
-         princess_waist_total, split_records, split_panels
-        ) = self._finalize_every_part(
-            garment_spec, measurements, precomputed, scaled_by_type,
-            fit, ease, effective_seam_cm, effective_hem_cm,
-            fabric_width_candidates, allow_rotation, one_way_fabric,
-            design_length_overrides, block, unsplit_fronts)
+        replacement_types = sorted({
+            request.replacement_part_type for request in garment_spec.parts
+            if request.replacement_part_type
+        })
+        try:
+            (scaled_parts, finalized_parts, princess_stats, princess_failures,
+             princess_waist_total, split_records, split_panels
+            ) = self._finalize_every_part(
+                garment_spec, measurements, precomputed, scaled_by_type,
+                fit, ease, effective_seam_cm, effective_hem_cm,
+                fabric_width_candidates, allow_rotation, one_way_fabric,
+                design_length_overrides, block, unsplit_fronts)
+        except ValueError as exc:
+            if not replacement_types:
+                raise
+            raise ValueError(
+                "自由輪郭で置き換えた型紙を確定できませんでした。"
+                "裁断用PDF・SVG・DXFは出力していません。置換対象: "
+                + "・".join(replacement_types) + "。原因: " + str(exc)) from exc
         finalized_parts, hem_pair_notes = pair_hem_extensions(
             finalized_parts, garment_spec.construction.get("costume_project_brief"))
         design_notes.extend(hem_pair_notes)
@@ -3302,10 +3314,6 @@ class PatternForgePipeline:
         # 肩、脇、首ぐり等が合わない、または測定不能なら、PDF/SVG/DXFを
         # 書き出す前に停止する。画像の外形を誤って型紙として入れた事故も
         # ここで止められる。
-        replacement_types = sorted({
-            request.replacement_part_type for request in garment_spec.parts
-            if request.replacement_part_type
-        })
         if replacement_types:
             seam_warnings = check_seam_compatibility(finalized_parts)
             unchecked = unchecked_seams(finalized_parts)

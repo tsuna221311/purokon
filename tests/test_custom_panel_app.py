@@ -275,6 +275,7 @@ def test_confirmed_but_mismatched_replacement_is_withheld(client):
     response = client.post("/api/generate", data=form)
     assert response.status_code == 400
     assert "裁断用PDF・SVG・DXFは出力していません" in response.get_json()["error"]
+    assert "袖山の前後合印" in response.get_json()["error"]
 
 
 def test_generate_manual_mode_custom_panel_invalid_json_returns_clear_error(client):

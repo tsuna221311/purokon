@@ -152,9 +152,10 @@ def test_replacement_with_mismatched_seams_stops_before_export(tmp_path):
         "合わない袖", _cape_points_cm(), mirror=True,
         replacement_part_type="sleeve", seam_fit_confirmed=True)
     base.parts = merge_custom_panel_requests(base.parts, bad)
-    with pytest.raises(ValueError, match="裁断用PDF・SVG・DXFは出力していません"):
+    with pytest.raises(ValueError, match="裁断用PDF・SVG・DXFは出力していません") as stopped:
         PatternForgePipeline(output_dir=str(tmp_path)).generate_from_selection(
             base, STANDARD)
+    assert "袖山の前後合印" in str(stopped.value)
     assert list(tmp_path.iterdir()) == []
 
 
