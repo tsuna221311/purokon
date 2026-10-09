@@ -207,6 +207,30 @@ def test_cut_line_that_contains_stitch_but_has_too_little_allowance_is_blocked()
     assert pattern_geometry_warnings([part]) == []
 
 
+def test_zero_hem_allowance_does_not_exempt_the_other_edges():
+    from shapely.geometry import Polygon
+    from engine.seam import finalize_from_stitch_line
+
+    stitch = [(0, 0), (10, 0), (10, 10), (0, 10)]
+    part = SimpleNamespace(
+        display_name="裾0cm試験片", stitch_line=stitch,
+        cut_line=list(Polygon(stitch).buffer(.35, join_style=2).exterior.coords),
+        seam_allowance_cm=1.0, hem_seam_allowance_cm=0.0,
+        part_type="front_bodice", variation="basic",
+        grainline={"line": ((2, 2), (2, 8)), "arrows": []}, notches=[],
+    )
+    assert any("縫い代が指定幅より細い" in item
+               for item in pattern_geometry_warnings([part]))
+
+    part.cut_line = list(Polygon(stitch).buffer(1.0, join_style=2).exterior.coords)
+    assert pattern_geometry_warnings([part]) == []
+
+    generated = finalize_from_stitch_line(
+        "front_bodice", "basic", stitch,
+        seam_allowance_cm=1.0, hem_seam_allowance_cm=0.0)
+    assert pattern_geometry_warnings([generated]) == []
+
+
 def test_non_finite_cut_coordinate_is_reported_instead_of_crashing(tmp_path):
     result = _result(tmp_path)
     result.finalized_parts[0].cut_line[0] = (float("nan"), 0.0)

@@ -17,6 +17,7 @@ from .compatibility import check_seam_compatibility, unchecked_seams
 from .endministrator_armhole import (endministrator_notch_pairing_warnings,
                                       endministrator_side_seam_warnings)
 from .hem_extensions import hem_extension_warnings
+from .seam import _hem_edge_distances
 
 
 def pattern_geometry_warnings(parts) -> list[str]:
@@ -54,22 +55,34 @@ def pattern_geometry_warnings(parts) -> list[str]:
         else:
             # A cut outline can contain the stitch outline yet leave almost no
             # material for sewing.  Check the *exported* geometry, not merely
-            # the requested allowance.  The smaller of the ordinary/hem
-            # allowances is a conservative floor at their transition.
+            # the requested allowance.  Evaluate each edge separately so a
+            # deliberate 0 cm hem does not disable checking the side seams.
             try:
-                allowances = [float(part.seam_allowance_cm)]
-                if part.hem_seam_allowance_cm is not None:
-                    allowances.append(float(part.hem_seam_allowance_cm))
-                minimum_allowance = min(allowances)
+                base_allowance = float(part.seam_allowance_cm)
+                hem_value = getattr(part, "hem_seam_allowance_cm", None)
+                hem_allowance = (base_allowance if hem_value is None
+                                 else float(hem_value))
             except (AttributeError, TypeError, ValueError, OverflowError):
-                minimum_allowance = 0.0
-            if minimum_allowance > 0.15 and isfinite(minimum_allowance):
+                base_allowance = hem_allowance = 0.0
+            if (base_allowance > 0.15 and isfinite(base_allowance)
+                    and isfinite(hem_allowance)):
                 closed = (stitch_points if stitch_points[0] == stitch_points[-1]
                           else [*stitch_points, stitch_points[0]])
+                edge_allowances = _hem_edge_distances(
+                    closed, base_allowance, hem_allowance,
+                    curved_hem=(getattr(part, "part_type", None) == "skirt"
+                                and getattr(part, "variation", None)
+                                in {"circle", "pleated"}))
                 cut_boundary = cut.boundary
                 thin_at = None
-                for start, end in zip(closed, closed[1:]):
-                    if Point(start).distance(Point(end)) < 0.2:
+                for (start, end), edge_allowance in zip(
+                        zip(closed, closed[1:]), edge_allowances):
+                    # At a wider turned hem the ordinary allowance is still
+                    # the conservative floor; a zero-allowance hem itself is
+                    # intentionally exempt, but no other edge is exempt.
+                    minimum_allowance = min(base_allowance, edge_allowance)
+                    if (minimum_allowance <= 0.15
+                            or Point(start).distance(Point(end)) < 0.2):
                         continue
                     for fraction in (0.25, 0.5, 0.75):
                         sample = Point(start[0] + (end[0] - start[0]) * fraction,
