@@ -61,7 +61,9 @@ def front_zip_armhole_path(stitch_outline_cm, underarm_y_cm):
     shoulder = None
     for index in range(start, len(points) - 1):
         a, b = points[index:index + 2]
-        if a[0] - b[0] > .20 * span and b[1] < a[1]:
+        # Boat necklines leave a shorter shoulder edge.  At 15% of this
+        # panel's width it is still distinct from sampled armhole segments.
+        if a[0] - b[0] > .15 * span and b[1] < a[1]:
             shoulder = index
             break
     if shoulder is None:

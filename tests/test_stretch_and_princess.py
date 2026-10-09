@@ -445,6 +445,10 @@ def test_the_princess_line_can_be_combined_with_a_front_zip(tmp_path, neckline):
     assert result.garment_spec.construction["front_zip_princess"] is True
     assert not [w for w in result.compatibility_warnings()
                 if w.kind == "side_seam"]
+    # The boat neckline has a short shoulder edge.  Its front armhole must
+    # still size the sleeve instead of aborting or measuring the neckline.
+    assert not [w for w in result.compatibility_warnings()
+                if w.kind == "armhole_sleeve_cap"]
 
 
 def test_front_zip_safety_split_recomputes_notches_on_the_real_panels(tmp_path):
