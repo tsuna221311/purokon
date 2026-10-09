@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1050 470" role="img" aria-labelledby="title desc">
+  <title id="title">オリジナル青いドレスの正面・側面・背面ラフ</title>
+  <desc id="desc">ラウンドネック、直線袖、ウエスト切替、膝丈フレアスカートの三面図。型紙の構成確認用に描いた模式図であり、実寸図ではない。</desc>
+  <rect width="1050" height="470" rx="22" fill="#f3f7fb"/>
+  <path d="M350 30V435M700 30V435" stroke="#d1dfec" stroke-width="2" stroke-dasharray="7 8"/>
+  <g fill="#142b48" font-family="'Noto Sans JP',sans-serif" text-anchor="middle">
+    <text x="175" y="45" font-size="23" font-weight="700">正面</text>
+    <text x="525" y="45" font-size="23" font-weight="700">側面</text>
+    <text x="875" y="45" font-size="23" font-weight="700">背面</text>
+  </g>
+  <g stroke="#183454" stroke-width="3" stroke-linejoin="round">
+    <!-- Front: rounded neckline, straight sleeves, waist seam and flare. -->
+    <path d="M136 83Q175 103 214 83L239 100 288 275 260 285 225 141 218 231 276 386Q175 405 74 386L132 231 125 141 90 285 62 275 111 100Z" fill="#3676bd"/>
+    <path d="M152 88Q175 116 198 88" fill="none" stroke="#dceafa" stroke-width="5"/>
+    <path d="M132 231Q175 241 218 231" fill="none" stroke="#173b68" stroke-width="5"/>
+    <path d="M150 231L157 190L164 231M186 231L193 190L200 231" fill="none" stroke="#b8d7ef" stroke-width="2"/>
+    <path d="M105 375Q175 393 245 375" fill="none" stroke="#aacceb" stroke-width="3"/>
+    <path d="M175 241V383" fill="none" stroke="#b8d7ef" stroke-width="2" stroke-dasharray="5 8"/>
+    <!-- Side: front faces left; one sleeve, waist, front/back hem visible. -->
+    <path d="M508 84Q524 92 541 84L562 104 598 275 569 285 544 142 548 230 575 382Q519 400 468 383L499 231 498 143 480 285 451 275 480 105Z" fill="#3676bd"/>
+    <path d="M507 86Q520 101 530 91" fill="none" stroke="#dceafa" stroke-width="5"/>
+    <path d="M499 232Q522 239 548 230" fill="none" stroke="#173b68" stroke-width="5"/>
+    <path d="M480 380Q522 392 566 379" fill="none" stroke="#aacceb" stroke-width="3"/>
+    <!-- Back: same sleeve and hem silhouette; shallow round neck. -->
+    <path d="M836 83Q875 91 914 83L939 100 988 275 960 285 925 141 918 231 976 386Q875 405 774 386L832 231 825 141 790 285 762 275 811 100Z" fill="#3676bd"/>
+    <path d="M851 86Q875 99 899 86" fill="none" stroke="#dceafa" stroke-width="5"/>
+    <path d="M832 231Q875 241 918 231" fill="none" stroke="#173b68" stroke-width="5"/>
+    <path d="M850 231L857 190L864 231M886 231L893 190L900 231" fill="none" stroke="#b8d7ef" stroke-width="2"/>
+    <path d="M805 375Q875 393 945 375" fill="none" stroke="#aacceb" stroke-width="3"/>
+    <path d="M875 101V231" fill="none" stroke="#b8d7ef" stroke-width="2" stroke-dasharray="5 8"/>
+  </g>
+  <g fill="#445e79" font-family="'Noto Sans JP',sans-serif" font-size="16" text-anchor="middle">
+    <text x="175" y="435">丸首・直線袖・ウエスト切替</text>
+    <text x="525" y="435">フレアの広がりを確認</text>
+    <text x="875" y="435">開き位置は未確定</text>
+  </g>
+</svg>

@@ -1883,3 +1883,18 @@ header.app-header a.nav-cta { color: #2f3c75 !important; }
 /* ---- round70: 型紙のプレビューは白地のSVG -----------------------------
    暗い画面では、白い図が黒い面に直接乗ると縁が痛い。白い「紙」を
    1枚敷いて、その上に載っているように見せる。 */
+
+/* 発表用の固定入力。一般の画像生成ワークフローとは視覚的にも分ける。 */
+.demo-cases { margin: 1rem 0; padding: 1rem; border: 1px solid var(--info-bd);
+  border-radius: var(--radius, 12px); background: var(--info-bg); }
+.demo-cases h2 { margin: 0 0 .4rem; font-size: 1.15rem; }
+.demo-cases > p { margin: .35rem 0 .8rem; color: var(--ink-soft); }
+.demo-case-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: .75rem; }
+.demo-case-card { padding: .85rem; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius, 12px); display: flex; flex-direction: column; gap: .55rem; }
+.demo-case-card h3, .demo-case-card p { margin: 0; }
+.demo-case-card h3 { font-size: 1rem; }
+.demo-case-card p { color: var(--ink-soft); font-size: .86rem; line-height: 1.5; }
+.demo-case-card img { display: block; width: 100%; background: #f3f7fb; border-radius: 8px; }
+.demo-case-card button { margin-top: auto; }
+#demo-case-status { min-height: 1.3em; color: var(--info-fg); }

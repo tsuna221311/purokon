@@ -24,7 +24,7 @@ class CostumeProject:
     custom_panel_specs: tuple[CustomPanelSpec, ...]
     lining: bool
     shoulder_drop_cm: float
-    worn_over_bust_cm: float
+    worn_over_bust_cm: float | None
     patternable_components: tuple[str, ...]
     separate_components: tuple[str, ...]
     material_plan: tuple[str, ...]
@@ -424,6 +424,8 @@ def _hatsune_miku_classic(measurements: Measurements) -> CostumeProject:
                        (strap_width * 0.72, arm_length), (0.0, arm_length)],
             quantity=1, mirror=False, allow_split=False),
     )
+
+
     return CostumeProject(
         key="hatsune_miku_classic", label="VOCALOID 初音ミク（定番衣装）",
         garment_spec_kwargs={
@@ -459,6 +461,43 @@ def _hatsune_miku_classic(measurements: Measurements) -> CostumeProject:
         commercial_benchmark=(
             "市販セットはトップス、スカート、ネクタイ、左右アームカバー、左右レッグカバー、クリップ／ステッカーを含む。",
             "比較対象: NSMG SHOP 定番セット US$109、S〜XL（2026-09確認）。",
+        ),
+    )
+
+
+def _blue_dress_three_view(measurements: Measurements) -> CostumeProject:
+    """オリジナル3面ラフに対応する、固定構成のフレアドレス初稿。"""
+    return CostumeProject(
+        key="blue_dress_three_view", label="オリジナル青いドレス（3面ラフ）",
+        garment_spec_kwargs={
+            "neckline": "round_neck", "sleeve_style": "straight",
+            "skirt_style": "flare", "front_zip": False,
+            "include_pants": False, "pants_style": "",
+            "include_collar": False, "include_cuffs": False,
+            "include_waistband": False, "waistband_style": "",
+            "princess_line": False,
+        },
+        custom_panel_specs=(), lining=False, shoulder_drop_cm=0.0,
+        worn_over_bust_cm=None,
+        patternable_components=(
+            "ラウンドネックの前後身頃", "直線袖", "ウエスト切替のフレアスカート",
+        ),
+        separate_components=(
+            "青い表地・飾り帯", "着脱用の開き・ファスナー（縫製前に設計が必要）",
+        ),
+        material_plan=(
+            "表地: 青い中肉ツイル等。採用前に伸縮・落ち感を実物で確認する。",
+            "装飾: 濃青の細い飾り帯。図の線は印刷指示ではない。",
+        ),
+        construction_plan=(
+            "前後身頃と袖を紙上で合わせ、合印と袖山いせ量を確認する。",
+            "スカートの前後脇縫い線とウエスト接合長を確認する。",
+            "開き位置と長さを実物の体型・生地で決め、別途補正して仮縫いする。",
+        ),
+        limitations=(
+            "3面ラフは本プロジェクト用に描いた模式図で、画像理解APIによる自動判定ではありません。",
+            "型紙は固定パーツ構成の初稿です。後ろ開き・飾り帯は自動製図していません。",
+            "デジタル縫い線検査は実布の着脱・強度・着心地を保証しません。",
         ),
     )
 
@@ -652,6 +691,7 @@ _PROJECT_BUILDERS = {
     "perlica": _perlica,
     "chen_qianyu": _chen_qianyu,
     "hatsune_miku_classic": _hatsune_miku_classic,
+    "blue_dress_three_view": _blue_dress_three_view,
     "yor_forger_thorn_princess": _yor_forger_thorn_princess,
 }
 _PROJECT_BUILDERS.update({

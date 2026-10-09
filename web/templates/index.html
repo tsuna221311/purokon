@@ -65,6 +65,31 @@
             </div>
             <p id="project-save-status" role="status" aria-live="polite">まだ端末に保存されていません。共有端末では保存を使わないでください。</p>
           </details>
+          <section class="demo-cases" id="demo-cases"
+                   data-bust="{{ demo_measurements.bust }}"
+                   data-waist="{{ demo_measurements.waist }}"
+                   data-hip="{{ demo_measurements.hip }}"
+                   data-height="{{ demo_measurements.height }}"
+                   data-sleeve-length="{{ demo_measurements.sleeve_length }}"
+                   data-shoulder-width="{{ demo_measurements.shoulder_width }}"
+                   aria-labelledby="demo-cases-title">
+            <h2 id="demo-cases-title">発表用・固定入力の3例</h2>
+            <p>下のボタンは現在の入力欄を置き換え、同じ採寸値と事前に確認したパーツ構成で生成します。<strong>画像を自動解析した結果ではありません。</strong> 裁断前には実寸印刷と仮縫いが必要です。</p>
+            <div class="demo-case-grid">
+              {% for case in demo_cases %}
+              <article class="demo-case-card">
+                <h3>{{ case.title }}</h3>
+                {% if case.sketch %}
+                <img src="{{ url_for('static', filename=case.sketch) }}" alt="青いドレスの正面・側面・背面を描いた模式ラフ">
+                {% endif %}
+                <p>{{ case.summary }}</p>
+                <button type="button" data-demo-case="{{ case.id }}"
+                        data-project-key="{{ case.project_key }}">この固定入力で生成</button>
+              </article>
+              {% endfor %}
+            </div>
+            <p id="demo-case-status" role="status" aria-live="polite"></p>
+          </section>
           {% endif %}
 
           <div class="workflow-overview" id="illustration-workflow-overview" aria-label="画像から作る流れ">
@@ -87,7 +112,7 @@
                 <strong>衣装画像を探す・参考カタログ（任意）</strong>
                 <p class="project-section-subtitle">名前を入力すると公開ライセンス画像をネット検索します。内蔵プリセットは手動モードで形を試すための別機能です。</p>
               </div>
-              <span class="project-count" id="costume-project-count">内蔵{{ costume_project_choices|length - 1 }}件</span>
+              <span class="project-count" id="costume-project-count">内蔵{{ costume_project_choices|length - 1 + (1 if demo_mode else 0) }}件</span>
             </summary>
             <div class="project-filters">
               <div class="field">
@@ -112,6 +137,9 @@
                 {% for value, label in costume_project_choices %}
                 <option value="{{ value }}">{{ label }}</option>
                 {% endfor %}
+                {% if demo_mode %}
+                <option value="blue_dress_three_view">発表用：オリジナル青いドレス（3面ラフ）</option>
+                {% endif %}
               </select>
               <p id="costume-project-selection-summary" class="project-selection-summary" aria-live="polite">
                 未選択です。資料画像から作る場合は、上の「資料画像を使う」を選んでください。

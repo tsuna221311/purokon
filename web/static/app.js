@@ -43,7 +43,7 @@ const illustrationWorkflowOverview = document.getElementById("illustration-workf
 const formReadiness = document.getElementById("form-readiness");
 const CURATED_PROJECT_KEYS = new Set([
   "endministrator_female", "endministrator_male", "perlica", "chen_qianyu",
-  "hatsune_miku_classic", "yor_forger_thorn_princess",
+  "hatsune_miku_classic", "yor_forger_thorn_princess", "blue_dress_three_view",
 ]);
 
 function projectCategoryFor(key, label) {
@@ -1134,6 +1134,42 @@ if (referenceModeButton) {
   });
 }
 setMode(form.querySelector('input[name="mode"]:checked')?.value || "illustration");
+
+// 発表用の再現可能な入力。資料の自動画像判定とは切り離した手動構成である。
+const demoCases = document.getElementById("demo-cases");
+if (demoCases) {
+  demoCases.querySelectorAll("[data-demo-case]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const key = button.dataset.projectKey;
+      if (!costumeProjectSelect || !Array.from(costumeProjectSelect.options).some((item) => item.value === key)) {
+        announce("このデモの構成が見つかりません。");
+        return;
+      }
+      form.reset(); // 前の画像・補正・カスタムパーツを固定入力へ混ぜない。
+      for (const panel of customPanels) panel.card.remove();
+      customPanels.length = 0;
+      updateCustomPanelsJson();
+      syncAddCustomPanelButton();
+      const manualMode = form.querySelector('input[name="mode"][value="manual"]');
+      manualMode.checked = true;
+      setMode("manual");
+      costumeProjectSelect.value = key;
+      syncCostumeProjectPicker();
+      syncCostumeProjectSummary();
+      for (const field of ["bust", "waist", "hip", "height", "sleeve_length", "shoulder_width"]) {
+        const input = form.querySelector(`[name="${field}"]`);
+        const value = demoCases.getAttribute(`data-${field.replaceAll("_", "-")}`);
+        if (input && value) input.value = value;
+      }
+      const projectName = form.querySelector('[name="project_name"]');
+      if (projectName) projectName.value = `発表用・${button.closest("article")?.querySelector("h3")?.textContent || key}`;
+      const status = document.getElementById("demo-case-status");
+      if (status) status.textContent = "固定採寸と構成を読み込みました。結果欄に生成状況を表示します。";
+      syncPrimaryAction();
+      form.requestSubmit(submitButton);
+    });
+  });
+}
 
 for (const input of sleeveStyleInputs) {
   input.addEventListener("change", syncCuffsAvailability);

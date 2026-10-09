@@ -200,6 +200,7 @@ from engine.fabric_groups import (
 from engine.measure_guide import guides_as_dict
 from engine.plausibility import measurement_hints
 from engine.costume_projects import costume_project_choices, get_costume_project
+from engine.demo_cases import DEMO_CASES, DEMO_MEASUREMENTS
 from engine.part_specs import (
     DEFAULT_FIT, FIT_PRESETS, STRETCH_PERCENT_RANGE, FitEase, custom_fit_ease,
     stretch_fit_ease,
@@ -1048,6 +1049,8 @@ def index():
         default_fabric_name=DEFAULT_FABRIC_NAME,
         max_fabric_groups=MAX_FABRIC_GROUPS,
         costume_project_choices=costume_project_choices(),
+        demo_cases=DEMO_CASES,
+        demo_measurements=DEMO_MEASUREMENTS,
         # round52: 縫い代の範囲も同じ理由で渡す(画面に0.3/3.0と書き写して
         # あったので、0を通せるようにしたときに片方だけ古くなりかけた)。
         seam_allowance_range=[f"{SEAM_ALLOWANCE_NONE_CM:g}",
