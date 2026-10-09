@@ -183,23 +183,35 @@ def _cap_and_armhole(spec, **kwargs):
     ({"worn_over_bust_cm": 90.0}, "重ね着"),
 ], ids=["標準", "重ね着"])
 def test_a_front_opening_sleeve_follows_the_armhole(kwargs, label):
-    """前開きの身頃でも、袖が袖ぐりと一緒に大きくなること。
+    """前開きの身頃でも、袖山が実際に縫う袖ぐりに合うこと。
 
     round73までは`front_bodice_zip_panel`から袖ぐりを測れず、袖は
     肩幅比の独立スケーリングへ落ちていた。実測で袖山線は標準でも
     重ね着でも**42.60cmのまま**動かず、袖ぐりが43.70cmまで広がった
     重ね着では3.9cm足りなかった。
     """
-    zip_cap, zip_back = _cap_and_armhole(OUTER, **kwargs)
+    zip_result = _build(OUTER, **kwargs)
+    zip_parts = _by_type(zip_result)
+    zip_cap = C.sleeve_cap_length(zip_parts["sleeve"][0])
+    zip_back = C.armhole_length(zip_parts["back_bodice"][0])
+    zip_front = [C.armhole_length(part)
+                 for part in zip_parts["front_bodice_zip_panel"]]
+    assert len(zip_front) == 2 and all(length is not None for length in zip_front)
+    sewn_armhole = (sum(zip_front) + zip_back) / 2
     plain_spec = GarmentSpec(parts=[
         PartRequest("front_bodice", "round_neck", 1),
         PartRequest("back_bodice", "round_neck", 1),
         PartRequest("sleeve", "straight", 2)])
-    plain_cap, plain_back = _cap_and_armhole(plain_spec, **kwargs)
+    _, plain_back = _cap_and_armhole(plain_spec, **kwargs)
 
     assert zip_back == pytest.approx(plain_back, abs=0.01), "後ろ身頃は同じはず"
-    # 割る前と割った後で袖山長が1%以内に収まっていること。
-    assert zip_cap == pytest.approx(plain_cap, rel=0.02), (zip_cap, plain_cap)
+    # 分割前との同値比較ではなく、裁断するパネルの実縫い線で判定する。
+    # 前開きテンプレートは曲線を分割前にポリライン化するため、未分割の
+    # ベジエ曲線を直接変形した身頃とは弧長がわずかに異なる。
+    assert zip_cap - sewn_armhole == pytest.approx(
+        C.sleeve_cap_ease_cm(sewn_armhole), abs=0.1)
+    assert not [warning for warning in zip_result.compatibility_warnings()
+                if warning.kind == "armhole_sleeve_cap"]
 
 
 def test_a_front_opening_sleeve_grows_with_the_layering_ease():

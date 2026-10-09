@@ -64,12 +64,9 @@ PART_SCALE_RULESの通り、パーツごとに異なる採寸項目の比率で�
     長さだと、閉じたときにきつすぎて着脱できない)。このチェッカーは
     その意図的な差分を「不整合」と誤判定しないよう、比較対象の期待値に
     あらかじめこのゆとり分を加えてから許容誤差判定を行う。
-  - front_bodice_zip_panel(前開き用の片側パネル)の袖ぐりは、袖山との
-    比較対象に含めていない。zip_panelの輪郭はshapelyの半平面交差
-    (scripts/generate_templates.pyの`_front_zip_panel_d`)で幾何的に
-    再構成されており、front_bodice/back_bodiceのような「輪郭の先頭点が
-    必ず肩先になる」という規則が保証されないため、`armhole_length`の
-    検出方法(輪郭の先頭から脇線までを辿る)を安全に適用できない。
+  - front_bodice_zip_panel(前開き用の片側パネル)は輪郭の先頭点が
+    肩先とは限らないため、通常の前身頃とは別に実際の脇下から肩先までの
+    縫い線を測る。その値を袖山との比較対象に含める。
   - 袖山と袖ぐりの比較は、あくまで「長さ」の比較である。実際の縫い付け
     では、いせ込みを袖山のどの範囲に配分するか(通常は前後の肩寄りに多く、
     脇の下には入れない)まで指定して初めて意図通りの丸みが出るが、
@@ -1341,8 +1338,8 @@ def check_seam_compatibility(finalized_parts: list) -> list[CompatibilityWarning
     # 5. 前身頃+後ろ身頃の袖ぐり vs 袖(sleeve)の袖山
     # (round11で追加、round12で絶対値比較に改めた。上記
     #  SLEEVE_CAP_EASE_CMのコメントに経緯を記載)。
-    # Zip-front halves carry the measured length of the unsplit front from
-    # which they were drafted.  Include both halves in the finished check.
+    # Zip-front halves carry measurements of their actual sewn armhole paths.
+    # Include both halves in the finished check.
     armhole_front_parts = _all(finalized_parts,
                                {"front_bodice", "front_bodice_zip_panel"})
     armhole_back_parts = _all(finalized_parts, {"back_bodice"})
