@@ -1899,4 +1899,7 @@ header.app-header a.nav-cta { color: #2f3c75 !important; }
 .demo-case-card-wide { grid-column: 1 / -1; }
 .demo-case-card-wide img { max-width: 900px; align-self: center; }
 .demo-case-card button { margin-top: auto; }
+.demo-case-assets { display: flex; flex-wrap: wrap; gap: .45rem .8rem; margin-top: .6rem; }
+.demo-case-assets a { color: var(--info-fg); font-size: .85rem; font-weight: 700; }
+.demo-case-assets a:hover, .demo-case-assets a:focus-visible { text-decoration-thickness: 2px; }
 #demo-case-status { min-height: 1.3em; color: var(--info-fg); }

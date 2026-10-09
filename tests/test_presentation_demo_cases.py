@@ -59,6 +59,13 @@ def test_demo_page_discloses_fixed_inputs_and_original_sketch(client, monkeypatc
     assert "画像を自動解析した結果ではありません" in page
     for case in DEMO_CASES:
         assert f'data-demo-case="{case["id"]}"' in page
+        paper_pdf = client.get("/static/" + case["doll_pdf"])
+        assert paper_pdf.status_code == 200
+        assert paper_pdf.data.startswith(b"%PDF")
+    assert "紙模型の流れを見る（模式動画）" in page
+    movie = client.get("/static/demo/blue_dress_paper_demo.mp4")
+    assert movie.status_code == 200
+    assert b"ftyp" in movie.data[:32]
     sketch = client.get("/static/demo/blue_dress_three_views.svg")
     assert sketch.status_code == 200
     assert b"<svg" in sketch.data

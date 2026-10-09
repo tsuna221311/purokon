@@ -74,7 +74,7 @@
                    data-shoulder-width="{{ demo_measurements.shoulder_width }}"
                    aria-labelledby="demo-cases-title">
             <h2 id="demo-cases-title">発表用・固定入力の3例</h2>
-            <p>下のボタンは現在の入力欄を置き換え、同じ採寸値と事前に確認したパーツ構成で生成します。<strong>画像を自動解析した結果ではありません。</strong> 裁断前には実寸印刷と仮縫いが必要です。</p>
+            <p>下のボタンは現在の入力欄を置き換え、同じ採寸値と事前に確認したパーツ構成で生成します。<strong>画像を自動解析した結果ではありません。</strong> 1/3紙模型は身長約52.7cm相当の固定採寸です。人形の実寸は未確認で、実物裁断には仮縫いが必要です。</p>
             <div class="demo-case-grid">
               {% for case in demo_cases %}
               <article class="demo-case-card{{ ' demo-case-card-wide' if case.sketch else '' }}">
@@ -85,6 +85,12 @@
                 <p>{{ case.summary }}</p>
                 <button type="button" data-demo-case="{{ case.id }}"
                         data-project-key="{{ case.project_key }}">この固定入力で生成</button>
+                <div class="demo-case-assets">
+                  <a href="{{ url_for('static', filename=case.doll_pdf) }}" download>1/3紙模型PDF（A4）</a>
+                  {% if case.doll_video %}
+                  <a href="{{ url_for('static', filename=case.doll_video) }}" target="_blank" rel="noopener">紙模型の流れを見る（模式動画）</a>
+                  {% endif %}
+                </div>
               </article>
               {% endfor %}
             </div>
