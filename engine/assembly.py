@@ -540,24 +540,30 @@ def assembly_steps(finalized_parts: list,
             lining_names,
         ))
 
-    steps.append((
-        "裾を始末する",
-        # round49: 「三つ折り」は縫い代を2回折る始末なので、折り幅は縫い代の
-        # 半分になる。既定の1cmだと5mmずつで、そのことを書かないと
-        # 「三つ折りにしてください」だけが残って手が止まる。
-        # 割り算の結果を書くだけで、縫い方の新しい主張はしていない。
-        ("接合A/B/C以外の自由な裾を" if joined_customs else "裾を")
-        + f"三つ折りにして縫います(縫い代を2回折るので、折り幅は"
-        f"{hem_cm / 2:g}cmずつになります)。この型紙の裾の縫い代は{hem_cm:g}cmです"
-        + ("(他の辺とは別に指定した値です)。" if hem_seam_allowance_cm is not None
-           and hem_seam_allowance_cm != seam_allowance_cm else "。")
-        # round49: 裏地の説明は engine/lining.py に1つだけ置いた文を使う。
-        # 以前はここに「表地より2cm短く」と手書きしてあり、round46で
-        # lining.py 側だけを実測値に直したため、**この1文だけが取り残されて**
-        # 既定(裾1.0cm)で「2cm短く」と嘘を言い続けていた。
-        + (hem_reduction_sentence(hem_cm) if lining_parts else ""),
-        (),
-    ))
+    # 縫い代0cmでは三つ折りの折り幅も0cmになり、裾を始末できない。
+    # 裁断後に気付くと布を足せないため、完成工程として案内しない。
+    if hem_cm <= 0:
+        hem_title = "裾の仕上げを確認する"
+        hem_detail = (
+            ("接合A/B/C以外の自由な裾は" if joined_customs else "裾は")
+            + f"縫い代が{hem_cm:g}cmのため、この型紙のまま三つ折りにはできません。"
+            "切りっぱなしなどの処理を選ぶか、折って始末するなら必要な縫い代を"
+            "指定して型紙を再生成し、裁断前に確認してください。"
+            "裾の仕上がりは実物で確認してください。"
+        )
+    else:
+        hem_title = "裾を始末する"
+        # round49: 三つ折りは縫い代を2回折るので、折り幅はその半分。
+        hem_detail = (
+            ("接合A/B/C以外の自由な裾を" if joined_customs else "裾を")
+            + f"三つ折りにして縫います(縫い代を2回折るので、折り幅は"
+            f"{hem_cm / 2:g}cmずつになります)。この型紙の裾の縫い代は{hem_cm:g}cmです"
+            + ("(他の辺とは別に指定した値です)。" if hem_seam_allowance_cm is not None
+               and hem_seam_allowance_cm != seam_allowance_cm else "。")
+        )
+    # 裏地の裾の差は engine/lining.py の実測値と同じ文を使う。
+    hem_detail += hem_reduction_sentence(hem_cm) if lining_parts else ""
+    steps.append((hem_title, hem_detail, ()))
 
     if lining_parts:
         steps.append((

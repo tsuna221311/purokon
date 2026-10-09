@@ -175,6 +175,31 @@ def test_the_hem_step_says_how_deep_each_fold_is():
             assert "規則どおりの2cmは引けていません" in step.detail
 
 
+def test_zero_hem_allowance_does_not_claim_a_finished_fold(tmp_path):
+    """縫い代0cmでは三つ折りを完成工程として案内しない。"""
+    from engine.assembly import assembly_steps
+
+    steps = assembly_steps([], seam_allowance_cm=1.0, hem_seam_allowance_cm=0.0)
+    hem = next(step for step in steps if "裾" in step.title)
+    assert hem.title == "裾の仕上げを確認する"
+    assert "三つ折りにはできません" in hem.detail
+    assert "型紙を再生成" in hem.detail
+    assert "折り幅は0cm" not in hem.detail
+
+    pypdf = pytest.importorskip("pypdf")
+    reportlab = pytest.importorskip("reportlab.pdfgen.canvas")
+    if pdf_export._LABEL_FONT == "Helvetica":
+        pytest.skip("日本語フォントがない環境ではPDF本文を検査できない")
+    output = tmp_path / "zero_hem_assembly.pdf"
+    canvas = reportlab.Canvas(str(output))
+    pdf_export._draw_assembly_pages(canvas, steps)
+    canvas.save()
+    printed = "".join(page.extract_text() or ""
+                      for page in pypdf.PdfReader(str(output)).pages)
+    assert "裾の仕上げを確認する" in printed
+    assert "三つ折りにはできません" in printed.replace("\n", "")
+
+
 # --- 3. サイズ展開で裏地を頼まれたら、やらないことを言う ---------------------
 
 def test_the_lining_section_is_shown_in_every_mode(client):
