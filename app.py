@@ -201,6 +201,10 @@ from engine.measure_guide import guides_as_dict
 from engine.plausibility import measurement_hints
 from engine.costume_projects import costume_project_choices, get_costume_project
 from engine.demo_cases import DEMO_CASES, DEMO_MEASUREMENTS
+from engine.booth_demo import (exact_match as match_booth_image,
+                               fixed_measurements_match as booth_measurements_match,
+                               default_options_match as booth_options_match,
+                               load_prepared as load_booth_pattern)
 from engine.part_specs import (
     DEFAULT_FIT, FIT_PRESETS, STRETCH_PERCENT_RANGE, FitEase, custom_fit_ease,
     stretch_fit_ease,
@@ -2342,6 +2346,28 @@ def _production_status(result) -> dict:
     return {"ready": bool(ready and not draft), "draft": draft, "pending": pending}
 
 
+def _respond_prepared_booth(case):
+    """Serve an audited fixed example only for the identical PNG and inputs."""
+    payload = load_booth_pattern(case)
+    base = f"/static/demo/booth_patterns/{case.key}/"
+    payload["download"] = {key: base + name for key, name in payload.pop("files").items()}
+    payload["preview_svg"] = payload["download"]["svg"]
+    payload["reference_review"] = {
+        "summary": payload["prepared_example"]["message"],
+        "detected": ["事前指定の布パーツ: " + "、".join(case.included)],
+        "missing": ["別工程・未収録: " + "、".join(case.not_included),
+                    "実布の仮縫い・着用検査は未実施"],
+        "has_back_reference": True,
+        "has_side_reference": True,
+        "has_detail_reference": False,
+        "used_mock": False,
+    }
+    payload["ai_contribution"] = "画像理解APIは使用していません。同一ファイルの照合後、事前に検査した固定構成の型紙を表示しています。"
+    payload["ai_engine"] = "none"
+    payload["classification_log"] = []
+    return jsonify(payload)
+
+
 def _respond_illustration(inputs: GenerationInputs):
     """イラストから読み取って生成する。
 
@@ -2959,6 +2985,15 @@ def _api_generate_impl():
                     f"イラストは一度に{MAX_ILLUSTRATION_IMAGES}枚までです"
                     f"（{len(uploads)}枚が選択されています）。"
                 )
+            # The four booth sheets have separately reviewed, frozen patterns.
+            # Match file bytes (not filename/visual similarity), fixed body size
+            # and default settings. Anything else uses the ordinary image flow.
+            if (DEMO_MODE and len(front_uploads) == 1 and len(uploads) == 1
+                    and booth_measurements_match(measurements)
+                    and booth_options_match(request.form)):
+                booth_case = match_booth_image(front_uploads[0])
+                if booth_case is not None:
+                    return _respond_prepared_booth(booth_case)
             image = [_load_uploaded_image(f) for f in uploads]
             if _bool_field(request.form, "illustration_three_views"):
                 if len(front_uploads) != 1 or back_uploads or side_uploads or detail_uploads:

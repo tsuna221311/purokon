@@ -4068,6 +4068,19 @@ form.addEventListener("submit", async (event) => {
     }
     multiSizeContent.classList.add("hidden");
 
+    const prepared = data.prepared_example;
+    const preparedBox = document.getElementById("prepared-booth-result");
+    if (preparedBox) {
+      preparedBox.classList.toggle("hidden", !prepared);
+      if (prepared) {
+        document.getElementById("prepared-booth-title").textContent =
+          `展示用の検査済み固定例：${prepared.title}`;
+        document.getElementById("prepared-booth-message").textContent = prepared.message;
+        document.getElementById("prepared-booth-omitted").textContent =
+          `型紙に含まない要素：${(prepared.not_included || []).join("、")}`;
+      }
+    }
+
     document.getElementById("stat-parts").textContent = data.part_count;
     document.getElementById("stat-waste").textContent = formatPercent(data.waste_ratio);
     document.getElementById("stat-length").textContent = data.used_length_cm;

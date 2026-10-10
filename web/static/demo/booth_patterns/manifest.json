@@ -1,0 +1,56 @@
+{
+  "measurements_cm": {
+    "bust": 83,
+    "waist": 66,
+    "hip": 91,
+    "height": 158,
+    "sleeve_length": 52,
+    "shoulder_width": 37
+  },
+  "cases": [
+    {
+      "case": "navy_coat",
+      "parts": 14,
+      "files": {
+        "svg": "pattern.svg",
+        "pdf": "pattern.pdf",
+        "dxf": "pattern.dxf",
+        "spec_pdf": "specification.pdf"
+      },
+      "digital_ready": true
+    },
+    {
+      "case": "emerald_jumpsuit",
+      "parts": 8,
+      "files": {
+        "svg": "pattern.svg",
+        "pdf": "pattern.pdf",
+        "dxf": "pattern.dxf",
+        "spec_pdf": "specification.pdf"
+      },
+      "digital_ready": true
+    },
+    {
+      "case": "terracotta_wrap",
+      "parts": 7,
+      "files": {
+        "svg": "pattern.svg",
+        "pdf": "pattern.pdf",
+        "dxf": "pattern.dxf",
+        "spec_pdf": "specification.pdf"
+      },
+      "digital_ready": true
+    },
+    {
+      "case": "moss_jacket_skirt",
+      "parts": 12,
+      "files": {
+        "svg": "pattern.svg",
+        "pdf": "pattern.pdf",
+        "dxf": "pattern.dxf",
+        "spec_pdf": "specification.pdf"
+      },
+      "digital_ready": true
+    }
+  ]
+}
