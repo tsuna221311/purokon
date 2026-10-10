@@ -239,7 +239,9 @@ def default_options_match(form, *, allow_structure: bool = False) -> bool:
     """Do not silently discard any setting that changes prepared geometry."""
     basic = {
         "fit": {"", "standard"},
-        "block": {""},
+        # The browser submits the selected adult block explicitly; it is not
+        # equivalent to a custom or child block, but is the pipeline default.
+        "block": {"", "adult_female"},
         "seam_allowance_cm": {"", "1", "1.0"},
         "hem_seam_allowance_cm": {""},
         "paper": {"", "a4", "A4"},

@@ -134,7 +134,10 @@ def test_production_checkbox_alone_uses_registered_sheet_plan(client, monkeypatc
     form = dict(bust="84", waist="68", hip="92", height="160",
                 sleeve_length="54", shoulder_width="37", mode="illustration",
                 illustration_stage="production", illustration_three_views="1",
-                paper="a4", fit="standard")
+                paper="a4", fit="standard", block="adult_female",
+                custom_panels_json="[]", illustration_layer_count="1",
+                illustration_slit_position="none",
+                illustration_motif_position="none")
     form["illustration"] = (io.BytesIO(source.read_bytes()), source.name)
     response = client.post("/api/generate", data=form, content_type="multipart/form-data")
     assert response.status_code == 200, response.get_json()
