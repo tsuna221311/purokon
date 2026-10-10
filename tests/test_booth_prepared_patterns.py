@@ -65,6 +65,8 @@ def test_only_identical_bytes_and_default_settings_match():
     assert fixed_measurements_match(Measurements(**DEMO_MEASUREMENTS))
     changed = dict(DEMO_MEASUREMENTS, bust=84)
     assert not fixed_measurements_match(Measurements(**changed))
+    changed = dict(DEMO_MEASUREMENTS, head_circumference=56)
+    assert not fixed_measurements_match(Measurements(**changed))
     assert default_options_match(MultiDict({"fit": "standard", "paper": "a4",
                                             "illustration_layer_count": "1"}))
     assert not default_options_match(MultiDict({"fit": "custom"}))

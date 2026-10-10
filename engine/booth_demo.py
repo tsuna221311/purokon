@@ -85,8 +85,11 @@ def exact_match(uploaded) -> BoothCase | None:
 
 
 def fixed_measurements_match(measurements) -> bool:
-    return all(float(getattr(measurements, key)) == float(value)
-               for key, value in DEMO_MEASUREMENTS.items())
+    return (all(float(getattr(measurements, key)) == float(value)
+                for key, value in DEMO_MEASUREMENTS.items())
+            and all(getattr(measurements, key) is None for key in (
+                "upper_arm", "bust_point_spacing", "bust_point_drop",
+                "head_circumference")))
 
 
 def default_options_match(form) -> bool:
