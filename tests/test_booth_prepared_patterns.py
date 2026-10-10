@@ -146,6 +146,48 @@ def test_production_checkbox_alone_uses_registered_sheet_plan(client, monkeypatc
     assert client.get(payload["download"]["pdf"]).data.startswith(b"%PDF")
 
 
+def test_duplicate_booth_sheet_in_front_and_back_still_downloads_pdf(client, monkeypatch):
+    """The browser can receive the same three-view sheet in both upload slots."""
+    monkeypatch.setattr(app_module, "DEMO_MODE", True)
+    monkeypatch.setattr(app_module.pipeline, "generate_from_illustration",
+                        lambda *args, **kwargs: pytest.fail("reviewed sheet must not call image AI"))
+    source = next(path for path in SHEETS.glob("*.png")
+                  if exact_match(SimpleNamespace(stream=io.BytesIO(path.read_bytes()))) == CASES[0])
+    image_bytes = source.read_bytes()
+    form = dict(bust="84", waist="68", hip="92", height="160",
+                sleeve_length="54", shoulder_width="37", mode="illustration",
+                illustration_stage="production", paper="a4", fit="standard",
+                block="adult_female", custom_panels_json="[]",
+                illustration_layer_count="1", illustration_slit_position="none",
+                illustration_motif_position="none")
+    form["illustration"] = (io.BytesIO(image_bytes), source.name)
+    form["illustration_back"] = (io.BytesIO(image_bytes), source.name)
+    response = client.post("/api/generate", data=form, content_type="multipart/form-data")
+    assert response.status_code == 200, response.get_json()
+    payload = response.get_json()
+    assert payload["prepared_example"]["dynamic"] is True
+    pdf = client.get(payload["download"]["pdf"])
+    assert pdf.status_code == 200
+    assert pdf.data.startswith(b"%PDF")
+
+
+def test_different_back_image_does_not_use_registered_plan(client, monkeypatch):
+    monkeypatch.setattr(app_module, "DEMO_MODE", True)
+    source = next(path for path in SHEETS.glob("*.png")
+                  if exact_match(SimpleNamespace(stream=io.BytesIO(path.read_bytes()))) == CASES[0])
+    other = next(path for path in SHEETS.glob("*.png")
+                 if exact_match(SimpleNamespace(stream=io.BytesIO(path.read_bytes()))) == CASES[1])
+    form = dict(bust="84", waist="68", hip="92", height="160",
+                sleeve_length="54", shoulder_width="37", mode="illustration",
+                illustration_stage="production", paper="a4", fit="standard",
+                block="adult_female", custom_panels_json="[]")
+    form["illustration"] = (io.BytesIO(source.read_bytes()), source.name)
+    form["illustration_back"] = (io.BytesIO(other.read_bytes()), other.name)
+    response = client.post("/api/generate", data=form, content_type="multipart/form-data")
+    assert response.status_code == 400
+    assert "自動判定" in response.get_json()["error"]
+
+
 def test_modified_or_unrelated_image_is_not_misidentified():
     source = next(path for path in SHEETS.glob("*.png")
                   if exact_match(SimpleNamespace(stream=io.BytesIO(path.read_bytes()))) == CASES[0])

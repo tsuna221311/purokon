@@ -3957,12 +3957,11 @@ function validateIllustrationProductionBeforeSubmit() {
     return "造形物用の土台には、実寸校正したカスタムパーツ輪郭が必要です。画像上で土台をトレースしてください。";
   }
   if (!missing.length) return null;
-  // 登録済みの展示用三面図だけはサーバー側で事前確認済みの構成を照合する。
-  // 一般画像ならサーバーが未確認項目を返す。ファイル名だけで判定しない。
+  // 登録済みの展示用三面図はサーバー側で画像そのものと構成を照合する。
+  // 追加資料を同じ画像で入れた場合も含め、ここでは照合前に止めない。
+  // 未登録画像や矛盾する選択はサーバーの製作可否チェックで止める。
   const selectedFiles = form.elements.namedItem("illustration")?.files;
-  const allAuto = requiredSelections.every(([name]) =>
-    form.elements.namedItem(name)?.value === "auto");
-  if (selectedFiles?.length === 1 && allAuto) return null;
+  if (selectedFiles?.length) return null;
   const firstNamed = form.elements.namedItem(missing[0][0]);
   const firstControl = firstNamed && typeof firstNamed.closest === "function"
     ? firstNamed : firstNamed?.[0];

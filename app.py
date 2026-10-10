@@ -3033,9 +3033,22 @@ def _api_generate_impl():
             # Registered booth sheets can be re-encoded or resized.  Only an
             # essentially identical image and compatible form selections may
             # use the reviewed sewing plan; other designs use image analysis.
-            if (DEMO_MODE and len(front_uploads) == 1 and len(uploads) == 1
+            if (DEMO_MODE and len(front_uploads) == 1
                     and booth_options_match(request.form, allow_structure=True)):
                 booth_match = match_booth_image(front_uploads[0])
+                if booth_match is not None:
+                    booth_case, match_kind = booth_match
+                    # A visitor may put the same three-view sheet into both
+                    # the front and back fields. Treat only copies that each
+                    # match the *same reviewed sheet* as redundant; a genuinely
+                    # different back/side/detail must take the normal path.
+                    duplicate_views = all(
+                        (other_match := match_booth_image(upload)) is not None
+                        and other_match[0] == booth_case
+                        for upload in uploads[1:]
+                    )
+                    if not duplicate_views:
+                        booth_match = None
                 if booth_match is not None:
                     booth_case, match_kind = booth_match
                     stage = (request.form.get("illustration_stage") or "production").strip()
