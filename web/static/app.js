@@ -3957,6 +3957,12 @@ function validateIllustrationProductionBeforeSubmit() {
     return "造形物用の土台には、実寸校正したカスタムパーツ輪郭が必要です。画像上で土台をトレースしてください。";
   }
   if (!missing.length) return null;
+  // 登録済みの展示用三面図だけはサーバー側で事前確認済みの構成を照合する。
+  // 一般画像ならサーバーが未確認項目を返す。ファイル名だけで判定しない。
+  const selectedFiles = form.elements.namedItem("illustration")?.files;
+  const allAuto = requiredSelections.every(([name]) =>
+    form.elements.namedItem(name)?.value === "auto");
+  if (selectedFiles?.length === 1 && allAuto) return null;
   const firstNamed = form.elements.namedItem(missing[0][0]);
   const firstControl = firstNamed && typeof firstNamed.closest === "function"
     ? firstNamed : firstNamed?.[0];
@@ -4074,7 +4080,7 @@ form.addEventListener("submit", async (event) => {
       preparedBox.classList.toggle("hidden", !prepared);
       if (prepared) {
         document.getElementById("prepared-booth-title").textContent =
-          `展示用の検査済み固定例：${prepared.title}`;
+          `${prepared.dynamic ? "登録済み構成から採寸別に生成" : "展示用の検査済み固定例"}：${prepared.title}`;
         document.getElementById("prepared-booth-message").textContent = prepared.message;
         document.getElementById("prepared-booth-omitted").textContent =
           `型紙に含まない要素：${(prepared.not_included || []).join("、")}`;

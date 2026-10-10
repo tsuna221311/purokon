@@ -201,7 +201,9 @@ from engine.measure_guide import guides_as_dict
 from engine.plausibility import measurement_hints
 from engine.costume_projects import costume_project_choices, get_costume_project
 from engine.demo_cases import DEMO_CASES, DEMO_MEASUREMENTS
-from engine.booth_demo import (exact_match as match_booth_image,
+from engine.booth_demo import (match_sheet as match_booth_image,
+                               build_case_spec as build_booth_case_spec,
+                               confirmed_structure_matches as booth_structure_matches,
                                fixed_measurements_match as booth_measurements_match,
                                default_options_match as booth_options_match,
                                load_prepared as load_booth_pattern)
@@ -2368,6 +2370,49 @@ def _respond_prepared_booth(case):
     return jsonify(payload)
 
 
+def _respond_resized_booth(case, match_kind, measurements, project_name):
+    """Rebuild the reviewed booth plan at the submitted measurements."""
+    spec = build_booth_case_spec(case)
+    result = pipeline.generate_from_selection(spec, measurements)
+    payload = result.summary()
+    quality = payload["production_quality"]
+    if not quality["digital_ready"] or result.compatibility_warnings():
+        raise ValueError(
+            "この採寸では展示用の衣装構成をデジタル検査に通せませんでした。"
+            "採寸・縫い合わせを確認してください: "
+            + "／".join(quality["blockers"][:3] or result.compatibility_warnings()[:3]))
+    db.record_job(result.job_id, _current_owner_key(),
+                  part_count=payload["part_count"], waste_ratio=payload["waste_ratio"],
+                  project_name=project_name or case.title)
+    payload["project_name"] = project_name or case.title
+    payload["download"] = _download_links(result)
+    payload["prepared_example"] = {
+        "title": case.title,
+        "dynamic": True,
+        "match_kind": match_kind,
+        "included": list(case.included),
+        "not_included": list(case.not_included),
+        "attachments": [{"part": panel.label, "cut_count": panel.quantity,
+                         "sewing_guide": panel.attachment} for panel in case.panels],
+        "message": "登録済みの三面図と照合し、事前に指定した衣装構成を入力採寸で引き直した型紙初稿です。画像理解APIによる新規衣装の解析ではありません。取付位置と実布の仮縫いは未確認です。",
+    }
+    payload["production_status"] = {
+        "ready": True, "draft": False,
+        "pending": ["実布の仮縫い", "別布の取付位置・動作確認", "開き・金具の実物確認"],
+    }
+    payload["reference_review"] = {
+        "summary": payload["prepared_example"]["message"],
+        "detected": ["事前指定の布パーツ: " + "、".join(case.included)],
+        "missing": ["別工程・未収録: " + "、".join(case.not_included)],
+        "has_back_reference": True, "has_side_reference": True,
+        "has_detail_reference": False, "used_mock": False,
+    }
+    payload["ai_contribution"] = "画像理解APIは使用せず、登録済みの衣装構成を採寸に合わせて再生成しました。"
+    payload["ai_engine"] = "none"
+    payload["classification_log"] = []
+    return jsonify({"ok": True, "mode": "illustration", **payload})
+
+
 def _respond_illustration(inputs: GenerationInputs):
     """イラストから読み取って生成する。
 
@@ -2985,15 +3030,26 @@ def _api_generate_impl():
                     f"イラストは一度に{MAX_ILLUSTRATION_IMAGES}枚までです"
                     f"（{len(uploads)}枚が選択されています）。"
                 )
-            # The four booth sheets have separately reviewed, frozen patterns.
-            # Match file bytes (not filename/visual similarity), fixed body size
-            # and default settings. Anything else uses the ordinary image flow.
+            # Registered booth sheets can be re-encoded or resized.  Only an
+            # essentially identical image and compatible form selections may
+            # use the reviewed sewing plan; other designs use image analysis.
             if (DEMO_MODE and len(front_uploads) == 1 and len(uploads) == 1
-                    and booth_measurements_match(measurements)
-                    and booth_options_match(request.form)):
-                booth_case = match_booth_image(front_uploads[0])
-                if booth_case is not None:
-                    return _respond_prepared_booth(booth_case)
+                    and booth_options_match(request.form, allow_structure=True)):
+                booth_match = match_booth_image(front_uploads[0])
+                if booth_match is not None:
+                    booth_case, match_kind = booth_match
+                    stage = (request.form.get("illustration_stage") or "production").strip()
+                    if not booth_structure_matches(booth_case, request.form):
+                        raise ValueError(
+                            "登録済み画像の衣装構成と、選択した構造項目が一致しません。"
+                            "選択を見直すか、別の画像として生成してください。")
+                    if stage == "draft" and match_kind == "exact" \
+                            and booth_measurements_match(measurements) \
+                            and booth_options_match(request.form):
+                        return _respond_prepared_booth(booth_case)
+                    if stage == "production":
+                        return _respond_resized_booth(
+                            booth_case, match_kind, measurements, project_name)
             image = [_load_uploaded_image(f) for f in uploads]
             if _bool_field(request.form, "illustration_three_views"):
                 if len(front_uploads) != 1 or back_uploads or side_uploads or detail_uploads:
