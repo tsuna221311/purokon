@@ -265,7 +265,7 @@ def export_specification_pdf(result, output_path: str) -> str:
     construction = {
         key: value for key, value in result.garment_spec.construction.items()
         if key not in {"unconfirmed_fields", "draft_mode", "costume_project_brief",
-                       "hem_extension_pairs"}
+                       "hem_extension_pairs", "booth_demo"}
     }
     if construction:
         story.append(_p("構造・装飾指定", heading))
@@ -275,7 +275,27 @@ def export_specification_pdf(result, output_path: str) -> str:
         ]
         story.append(_table(rows, [58 * mm, 118 * mm], normal))
 
-    story += [PageBreak(), _p("縫製順・検査記録", title)]
+    booth_demo = result.garment_spec.construction.get("booth_demo")
+    story += ([Spacer(1, 7 * mm)] if isinstance(booth_demo, dict)
+              else [PageBreak()])
+    story.append(_p("縫製順・検査記録", title))
+    if isinstance(booth_demo, dict):
+        story.append(_p("展示用衣装：別布パーツと取付け指示", heading))
+        story.append(_p(
+            "下記の別布は型紙PDF・SVG・DXFに収録済みです。取付け位置は"
+            "衣装ラフからの仮置きで、型紙の輪郭検査とは別です。金具や着用時の"
+            "落ち感・強度は紙模型と実布で確認してください。", normal))
+        attachment_rows = [["型紙パーツ", "裁断枚数", "取付け位置・方法（仮置き）"]]
+        for item in booth_demo.get("attachments", []):
+            attachment_rows.append([item["part"], str(item["cut_count"]),
+                                    item["sewing_guide"]])
+        if len(attachment_rows) > 1:
+            story.append(_table(attachment_rows,
+                                [46 * mm, 19 * mm, 111 * mm], small))
+        omitted = booth_demo.get("not_included") or []
+        if omitted:
+            story.append(_p("別途確認：" + "、".join(omitted), small))
+
     steps = result.assembly_steps()
     step_rows = [["No.", "工程", "内容"]] + [
         [step.number, step.title, step.detail] for step in steps

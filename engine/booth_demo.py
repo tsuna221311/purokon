@@ -16,6 +16,14 @@ from .demo_cases import DEMO_MEASUREMENTS
 
 
 @dataclass(frozen=True)
+class BoothPanel:
+    label: str
+    points_cm: tuple[tuple[float, float], ...]
+    quantity: int
+    attachment: str
+
+
+@dataclass(frozen=True)
 class BoothCase:
     key: str
     title: str
@@ -23,6 +31,7 @@ class BoothCase:
     spec: dict[str, object]
     included: tuple[str, ...]
     not_included: tuple[str, ...]
+    panels: tuple[BoothPanel, ...] = ()
 
 
 CASES = (
@@ -33,8 +42,18 @@ CASES = (
              front_zip=True, include_pants=True, pants_style="tapered",
              include_collar=True, collar_style="convertible_collar",
              include_cuffs=True, cuffs_style="button_tab", include_waistband=False),
-        ("前後身頃と左右袖", "コート下部のフレア", "衿・袖口", "内側のパンツ"),
-        ("ダブルボタンの打ち合わせとボタン位置", "ベルトとバックル", "飾りのパイピング・ポケット"),
+        ("前後身頃と左右袖", "コート下部のフレア", "衿・袖口", "内側のパンツ", "左右の外付けポケット・フラップ", "ベルト・ベルト通し"),
+        ("ダブルボタンの打ち合わせとボタン位置", "バックル・パイピングの実物仕様"),
+        (
+            BoothPanel("COAT PATCH POCKET", ((0, 0), (14, 0), (14, 13), (11, 17), (3, 17), (0, 13)), 2,
+                       "左右前身頃の前中心から外側7cm、肩線から下31cmをポケット上端の目安とする。フラップは上端から1cm上に付ける。仮縫いでダーツとの干渉を確認。"),
+            BoothPanel("COAT POCKET FLAP", ((0, 0), (15, 0), (15, 3), (12, 5), (3, 5), (0, 3)), 2,
+                       "対応するポケット上端の1cm上に縫付ける。完成幅はポケットより左右各0.5cm広い。"),
+            BoothPanel("COAT BELT", ((0, 0), (96, 0), (96, 5), (0, 5)), 1,
+                       "ウエスト位置に通す。芯材・バックル・留め具は別途選定。"),
+            BoothPanel("COAT BELT LOOP", ((0, 0), (9, 0), (9, 3), (0, 3)), 4,
+                       "左右脇と前身頃のベルト線に配分。ベルト完成幅に合わせ仮縫いで通し幅を確認。"),
+        ),
     ),
     BoothCase(
         "emerald_jumpsuit", "翡翠色のケープ付きジャンプスーツ",
@@ -43,8 +62,14 @@ CASES = (
              front_zip=False, include_pants=True, pants_style="wide",
              include_collar=True, collar_style="", include_cuffs=False,
              include_waistband=True, waistband_style="wide"),
-        ("ノースリーブの前後身頃", "ワイドパンツ", "衿・ウエスト帯"),
-        ("片肩ケープの接合部", "肩タブと金具", "斜めの前開き線・脇の配色"),
+        ("ノースリーブの前後身頃", "ワイドパンツ", "衿・ウエスト帯", "片肩ケープと肩タブ"),
+        ("肩タブ用のボタン・スナップ実物仕様", "斜めの前開き線・脇の配色"),
+        (
+            BoothPanel("SHOULDER CAPE", ((0, 0), (13, 0), (23, 20), (46, 69), (38, 80), (19, 66), (0, 45)), 1,
+                       "上端13cmを着用者左肩に沿わせ、上端の3cm・9cm位置を肩タブで留める。肩からの垂れ方と腕の可動域は紙模型で確認。"),
+            BoothPanel("CAPE SHOULDER TAB", ((0, 0), (10, 0), (10, 4), (0, 4)), 2,
+                       "左肩の首側から4cm・10cmの2点を目安に、ケープ上端3cm・9cm位置を留める。留め具は別途選定。"),
+        ),
     ),
     BoothCase(
         "terracotta_wrap", "テラコッタ色の巻き衣装",
@@ -53,8 +78,14 @@ CASES = (
              front_zip=False, include_pants=False, pants_style="",
              include_collar=False, include_cuffs=False,
              include_waistband=True, waistband_style="wide"),
-        ("Vネック前後身頃", "左右袖", "巻きスカート", "ウエスト帯"),
-        ("斜めの裾線と重ね順の確定", "結びひも", "袖口の白いフレア別布"),
+        ("Vネック前後身頃", "左右袖", "巻きスカート", "ウエスト帯", "左右の結びひも", "袖口の白いフレア別布"),
+        ("斜めの裾線と重ね順の確定", "白い内スカートの実物仕様"),
+        (
+            BoothPanel("WRAP TIE", ((0, 0), (65, 0), (65, 5), (0, 5)), 2,
+                       "左右ウエスト帯の端に各1本。結び代と着用時の締め具合は仮縫いで確認。"),
+            BoothPanel("WHITE SLEEVE FLOUNCE", ((0, 0), (37, 0), (42, 11), (35, 15), (7, 15), (0, 11)), 2,
+                       "袖口にギャザーを寄せて取付ける。袖口側縫い線37cmを袖口実測長に合わせて分配し、ギャザー量は紙模型で調整。"),
+        ),
     ),
     BoothCase(
         "moss_jacket_skirt", "苔色フードジャケットと橙色スカート",
@@ -63,13 +94,19 @@ CASES = (
              front_zip=True, include_pants=False, pants_style="",
              include_collar=False, include_hood=True, include_cuffs=True,
              cuffs_style="wide", include_waistband=True, waistband_style="wide"),
-        ("前開きジャケットの身頃・袖・フード", "袖口", "別体のスカートとウエスト帯"),
-        ("胸ポケットとフラップ", "裾のリブとドローストリング", "前ボタンの開き仕様"),
+        ("前開きジャケットの身頃・袖・フード", "袖口", "別体のスカートとウエスト帯", "左右の胸ポケット・フラップ"),
+        ("裾のリブとドローストリングの実物仕様", "前ボタンの開き仕様"),
+        (
+            BoothPanel("JACKET CHEST POCKET", ((0, 0), (11, 0), (11, 9), (8, 12), (3, 12), (0, 9)), 2,
+                       "左右前身頃の前中心から外側6cm、肩線から下18cmを上端の目安にする。着用時に腕と重ならないか確認。"),
+            BoothPanel("JACKET POCKET FLAP", ((0, 0), (12, 0), (12, 3), (10, 5), (2, 5), (0, 3)), 2,
+                       "各ポケット上端の1cm上に縫付ける。完成幅はポケットより左右各0.5cm広い。"),
+        ),
     ),
 )
 
 BY_DIGEST = {case.sha256: case for case in CASES}
-ASSET_ROOT = Path(__file__).resolve().parents[1] / "web" / "static" / "demo" / "booth_patterns"
+ASSET_ROOT = Path(__file__).resolve().parents[1] / "web" / "static" / "demo" / "booth_patterns_v2"
 
 
 def exact_match(uploaded) -> BoothCase | None:

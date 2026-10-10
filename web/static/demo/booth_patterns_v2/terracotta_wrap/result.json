@@ -1,0 +1,529 @@
+{
+  "job_id": "booth-terracotta_wrap",
+  "seam_allowance_cm": 1.0,
+  "hem_seam_allowance_cm": null,
+  "part_count": 11,
+  "unplaced_count": 0,
+  "unplaced_warnings": [],
+  "fabric_width_cm": 140.0,
+  "used_length_cm": 173.1,
+  "pdf_sheet_count": 49,
+  "all_pdf_sheet_count": 49,
+  "paper": "A4",
+  "waste_ratio": 0.0816,
+  "rotation_used": false,
+  "elapsed_seconds": 0.44,
+  "ai_contribution": "このジョブではAIは使用していません（手動で選んだパーツ構成を、テンプレート型紙+ルールベースの体型スケーリングのみで生成しました）。",
+  "ai_engine": "none",
+  "classification_evidence": [],
+  "darts_applied": 8,
+  "darts_by_part": [
+    {
+      "name": "前身頃（Vネック）",
+      "dart_count": 4
+    },
+    {
+      "name": "後身頃（Vネック）",
+      "dart_count": 4
+    }
+  ],
+  "measurement_warnings": [],
+  "design_notes": [
+    "カスタムパーツの裁断線には、他のパーツと同じ縫い代1cmが四方に付いています(出来上がり線は破線の方です)。EVAフォームや樹脂板のように「線の上で切る」素材で作る場合は、「縫い代」の設定を0にするか、「本体パーツを含めない」でカスタムパーツだけを縫い代0で生成し直してください。"
+  ],
+  "split_panels": {},
+  "shopping_list": {
+    "widths": [
+      {
+        "width_cm": 110.0,
+        "used_length_cm": 235.4,
+        "buy_length_cm": 240,
+        "waste_ratio": 0.1405,
+        "all_parts_fit": true
+      },
+      {
+        "width_cm": 140.0,
+        "used_length_cm": 173.1,
+        "buy_length_cm": 180,
+        "waste_ratio": 0.0816,
+        "all_parts_fit": true
+      },
+      {
+        "width_cm": 150.0,
+        "used_length_cm": 173.1,
+        "buy_length_cm": 180,
+        "waste_ratio": 0.1429,
+        "all_parts_fit": true
+      }
+    ],
+    "recommended_width_cm": 140.0,
+    "interfacing_length_cm": 20,
+    "interfacing_width_cm": 90.0,
+    "lining_widths": [],
+    "lining_recommended_width_cm": null,
+    "shrink_buy_length_cm": [
+      180,
+      180
+    ],
+    "pattern_repeat_extra_cm": 0,
+    "front_opening_cm": null,
+    "front_opening_bottom": "",
+    "suggestions": [
+      {
+        "part_label": "前身頃（Vネック）",
+        "text": "身頃は、綿ブロード・綿サテン・T/Cブロードなどが扱いやすい生地です(綿サテンは柔らかくさらさらしていますが、しわになりやすい)。",
+        "source_name": "うさこの洋裁工房「プロの洋裁の先生が教える生地の選び方」",
+        "source_url": "https://yousai.net/how_to/kijinoerabikata"
+      },
+      {
+        "part_label": "スカート（ラップ）",
+        "text": "張りのある生地が向きます(タイプライター、ヘリンボーン、ツイード、ベロア、ダンボールニットなど)。",
+        "source_name": "nunocoto fabric「スカート（大人服）作りにおすすめの生地と型紙」",
+        "source_url": "https://book.nunocoto-fabric.com/35327"
+      }
+    ],
+    "notes": [
+      "綿・麻は地直し(水通し)で縮みます。日本の検査基準では形状変化率1〜3%が許容値で、その範囲なら買うのは180cmです(この型紙では1%でも3%でも同じ切り売り単位に収まります)。生地のタグに収縮率が書いてあれば、その値で計算し直せます。化学繊維・絹・ウールは水通しが要らないので、180cmのままで足ります。"
+    ]
+  },
+  "stash_verdict": null,
+  "stash_verdicts_by_fabric": null,
+  "fabric_groups": null,
+  "lining": null,
+  "assembly_steps": [
+    {
+      "number": 1,
+      "title": "印を付ける",
+      "detail": "裁った布に、型紙の合印(短い線)・ダーツ・基準線(BL/WL/HL/CF/CB/BP)を写します。合印は縫い合わせる相手と必ず突き合うように打ってあるので、ここを省くとどこを合わせればよいか分からなくなります。",
+      "parts": []
+    },
+    {
+      "number": 2,
+      "title": "接着芯を貼る",
+      "detail": "下のパーツの裏に接着芯を貼ります。貼らないと衿が立たず、カフスやウエストバンドがよれます。括弧の中に、全面か一部かを書いてあります。",
+      "parts": [
+        "ウエストバンド（接着芯あり）"
+      ]
+    },
+    {
+      "number": 3,
+      "title": "ダーツを縫う",
+      "detail": "身頃のダーツ(合計8本)を、印の頂点に向かって縫います。V字の切り込みは縫い閉じる位置、両端が尖ったひし形は内側で摘む位置です。先端は返し縫いをせず、糸を結んで留めます。",
+      "parts": [
+        "前身頃",
+        "後身頃"
+      ]
+    },
+    {
+      "number": 4,
+      "title": "肩線を縫う",
+      "detail": "前身頃と後身頃を中表に合わせ、肩線を縫い代1cmで縫います。縫い代は割ります。",
+      "parts": [
+        "前身頃",
+        "後身頃"
+      ]
+    },
+    {
+      "number": 5,
+      "title": "脇線を縫う",
+      "detail": "前後の身頃を中表に合わせ、脇線を縫い代1cmで縫います。脇線の途中にある合印が前後で必ず突き合うので、そこを合わせてから縫い始めてください。",
+      "parts": [
+        "前身頃",
+        "後身頃"
+      ]
+    },
+    {
+      "number": 6,
+      "title": "袖を筒にする",
+      "detail": "袖の袖下を縫って筒にし、縫い代を割ります。(身頃に付ける前に袖を完成させる「筒付け」の手順です。)",
+      "parts": [
+        "袖 左",
+        "袖 右"
+      ]
+    },
+    {
+      "number": 7,
+      "title": "袖を身頃に付ける",
+      "detail": "袖山の合印から合印までをぐし縫いし、糸を引いて約2.1cm縮めます(この分が肩先の丸みになります)。肩合わせの専用合印はありません。前後の合印を合わせて仮止めし、肩線との位置を仮縫いで確認してください。そのあと袖と身頃を中表に合わせ、前後の合印を対応する袖ぐりの合印に、袖下の縫い目を脇線に合わせてしつけをしてから縫います。袖ぐり側の合印は前が1本・後ろが2本なので、その違いで前後を確認できます。",
+      "parts": [
+        "袖 左",
+        "袖 右"
+      ]
+    },
+    {
+      "number": 8,
+      "title": "スカートの脇を縫う",
+      "detail": "前後のスカートを中表に合わせ、脇を縫います。",
+      "parts": [
+        "スカート 前",
+        "スカート 後"
+      ]
+    },
+    {
+      "number": 9,
+      "title": "身頃とスカート(パンツ)をつなぐ",
+      "detail": "ウエストで中表に合わせ、脇線どうし・中心どうしを合わせてから縫います。縫い代は身頃側へ倒します。",
+      "parts": []
+    },
+    {
+      "number": 10,
+      "title": "ウエストバンドを付ける",
+      "detail": "ウエストバンドを上端に付けます。バンドはウエストより長く作ってあり、その差が開閉の重なり分になります。",
+      "parts": [
+        "ウエストバンド"
+      ]
+    },
+    {
+      "number": 11,
+      "title": "裾を始末する",
+      "detail": "裾を三つ折りにして縫います(縫い代を2回折るので、折り幅は0.5cmずつになります)。この型紙の裾の縫い代は1cmです。",
+      "parts": []
+    },
+    {
+      "number": 12,
+      "title": "カスタムパーツを取り付ける",
+      "detail": "カスタムパーツ(WRAP TIE-1・WRAP TIE-2・WHITE SLEEVE FLOUNCE-1・WHITE SLEEVE FLOUNCE-2)は、あなたが形と寸法を指定したパーツです。体のどこにどう留まるのかはパーツごとに違い、この型紙はその情報を持っていないため、付け方をここに書けません。作りたいものに合わせて取り付けてください。この工程を最後に置いてあるのは順番の指示ではなく、他の工程と混ざらないようにするためです。",
+      "parts": [
+        "WRAP TIE-1",
+        "WRAP TIE-2",
+        "WHITE SLEEVE FLOUNCE-1",
+        "WHITE SLEEVE FLOUNCE-2"
+      ]
+    }
+  ],
+  "compatibility_warnings": [],
+  "production_quality": {
+    "digital_ready": true,
+    "status": "physical_verification_required",
+    "blockers": [],
+    "physical_signoff_required": true,
+    "fitting_checklist": [
+      {
+        "code": "print_scale",
+        "label": "印刷倍率の実測",
+        "method": "各型紙PDFを実物大・倍率100%で試し印刷し、校正用の5cm枠を定規で測る。表地・別布・裏地を別々に出す場合は各PDFで確認する。",
+        "pass_condition": "すべての校正枠が実測5.0cmで、印刷時の自動拡大・縮小が無効である。",
+        "correction_field": null
+      },
+      {
+        "code": "tile_assembly",
+        "label": "分割紙面の貼り合わせ",
+        "method": "行列番号に従って全ページを仮配置し、紙面の境界をまたぐ裁断線・縫い線・合印を突き合わせる。",
+        "pass_condition": "欠けたページ、線の段差、重複がなく、裁断する全パーツが揃っている。",
+        "correction_field": null
+      },
+      {
+        "code": "shoulder_position",
+        "label": "肩線の位置",
+        "method": "首側と肩先を合わせて着用し、縫い目と実際の肩先のずれをcmで測る。",
+        "pass_condition": "前後の肩線が肩の頂点を通り、腕を下ろして食い込みや浮きがない。",
+        "correction_field": "肩幅の補正欄"
+      },
+      {
+        "code": "shoulder_slope",
+        "label": "肩の傾き",
+        "method": "肩先または首元で余る布をつまみ、つまんだ幅をcmで測る。",
+        "pass_condition": "首元・肩先のどちらにも放射状のしわや浮きがない。",
+        "correction_field": "肩の傾きの補正欄"
+      },
+      {
+        "code": "bust_ease",
+        "label": "胸まわり",
+        "method": "水平に一周し、足りない量を正、余る量を負としてcmで記録する。",
+        "pass_condition": "呼吸でき、前中心が開かず、脇線が前後へ引かれない。",
+        "correction_field": "胸まわりの補正欄"
+      },
+      {
+        "code": "waist_ease",
+        "label": "ウエスト",
+        "method": "ウエストを水平に一周し、足りない量を正、余る量を負で測る。",
+        "pass_condition": "座位でも食い込まず、余分なしわが脇へ集中しない。",
+        "correction_field": "ウエストの補正欄"
+      },
+      {
+        "code": "hip_ease",
+        "label": "ヒップと下半身の動作",
+        "method": "ヒップを水平に一周して差を測り、座る・しゃがむ・一歩踏み出す。",
+        "pass_condition": "横じわ、開き、裾の持ち上がりがなく、予定動作を行える。",
+        "correction_field": "ヒップの補正欄"
+      },
+      {
+        "code": "arm_motion",
+        "label": "袖ぐりと腕の可動域",
+        "method": "両腕を前・横・上へ動かし、袖山のねじれと袖ぐりの食い込みを確認する。",
+        "pass_condition": "予定する最大動作で身頃が大きく持ち上がらず、血流を妨げない。",
+        "correction_field": null
+      },
+      {
+        "code": "sleeve_cap_toile",
+        "label": "袖山のいせ込みと左右差",
+        "method": "本番生地と同条件の仮縫いで型紙の前後・肩の合印を合わせ、袖山の波打ち・つれと左右の形を正面・側面・背面で比較する。",
+        "pass_condition": "袖山に意図しないギャザー、縫い目の裂け、左右差がなく、腕を動かしても肩先に強いしわが出ない。",
+        "correction_field": null
+      },
+      {
+        "code": "fabric_sample",
+        "label": "本番生地の試験片",
+        "method": "20cm角を地直しして前後寸法を測り、縫い代と同条件で縫って引張る。",
+        "pass_condition": "収縮率を必要量へ反映し、縫い目の波打ち・裂け・色移りがない。",
+        "correction_field": null
+      },
+      {
+        "code": "final_toile",
+        "label": "最終仮縫い承認",
+        "method": "左右、前、後ろの写真を撮り、上の全項目を着用者と製作者が確認する。",
+        "pass_condition": "未確認項目がなく、補正後の仮縫いで再確認済みである。",
+        "correction_field": null
+      }
+    ],
+    "summary": "デジタル検査は通過しました。本番裁断前に印刷倍率・貼り合わせ・試験片・仮縫いの確認が必要です。"
+  },
+  "naive_used_length_cm": 418.7,
+  "naive_waste_ratio": 0.6204,
+  "parts": [
+    {
+      "display_name": "前身頃（Vネック） [ダーツ4本]",
+      "part_type": "front_bodice",
+      "variation": "v_neck",
+      "identifier": "front_bodice(v_neck) [ダーツ4本]",
+      "cutting_note": "表地1枚 わ裁ち不要",
+      "dart_count": 4,
+      "width_cm": 50.4,
+      "height_cm": 64.6
+    },
+    {
+      "display_name": "後身頃（Vネック） [ダーツ4本]",
+      "part_type": "back_bodice",
+      "variation": "v_neck",
+      "identifier": "back_bodice(v_neck) [ダーツ4本]",
+      "cutting_note": "表地1枚 わ裁ち不要",
+      "dart_count": 4,
+      "width_cm": 49.6,
+      "height_cm": 60.1
+    },
+    {
+      "display_name": "袖（ストレート） 左",
+      "part_type": "sleeve",
+      "variation": "straight",
+      "identifier": "sleeve(straight) 左",
+      "cutting_note": "表地1枚 わ裁ち不要",
+      "dart_count": 0,
+      "width_cm": 36.4,
+      "height_cm": 54.0
+    },
+    {
+      "display_name": "袖（ストレート） 右",
+      "part_type": "sleeve",
+      "variation": "straight",
+      "identifier": "sleeve(straight) 右",
+      "cutting_note": "表地1枚 わ裁ち不要",
+      "dart_count": 0,
+      "width_cm": 36.4,
+      "height_cm": 54.0
+    },
+    {
+      "display_name": "スカート（ラップ） 前",
+      "part_type": "skirt",
+      "variation": "wrap",
+      "identifier": "skirt(wrap) 前",
+      "cutting_note": "表地1枚 わ裁ち不要",
+      "dart_count": 0,
+      "width_cm": 69.5,
+      "height_cm": 62.0
+    },
+    {
+      "display_name": "スカート（ラップ） 後",
+      "part_type": "skirt",
+      "variation": "wrap",
+      "identifier": "skirt(wrap) 後",
+      "cutting_note": "表地1枚 わ裁ち不要",
+      "dart_count": 0,
+      "width_cm": 69.5,
+      "height_cm": 62.0
+    },
+    {
+      "display_name": "ウエストバンド（ワイド）",
+      "part_type": "waistband",
+      "variation": "wide",
+      "identifier": "waistband(wide)",
+      "cutting_note": "表地1枚 わ裁ち不要 接着芯あり",
+      "dart_count": 0,
+      "width_cm": 73.0,
+      "height_cm": 14.0
+    },
+    {
+      "display_name": "WRAP TIE-1",
+      "part_type": "custom_panel",
+      "variation": "WRAP TIE-1",
+      "identifier": "custom_panel(WRAP TIE-1)",
+      "cutting_note": "表地1枚 わ裁ち不要",
+      "dart_count": 0,
+      "width_cm": 67.0,
+      "height_cm": 7.0
+    },
+    {
+      "display_name": "WRAP TIE-2",
+      "part_type": "custom_panel",
+      "variation": "WRAP TIE-2",
+      "identifier": "custom_panel(WRAP TIE-2)",
+      "cutting_note": "表地1枚 わ裁ち不要",
+      "dart_count": 0,
+      "width_cm": 67.0,
+      "height_cm": 7.0
+    },
+    {
+      "display_name": "WHITE SLEEVE FLOUNCE-1",
+      "part_type": "custom_panel",
+      "variation": "WHITE SLEEVE FLOUNCE-1",
+      "identifier": "custom_panel(WHITE SLEEVE FLOUNCE-1)",
+      "cutting_note": "表地1枚 わ裁ち不要",
+      "dart_count": 0,
+      "width_cm": 44.3,
+      "height_cm": 17.0
+    },
+    {
+      "display_name": "WHITE SLEEVE FLOUNCE-2",
+      "part_type": "custom_panel",
+      "variation": "WHITE SLEEVE FLOUNCE-2",
+      "identifier": "custom_panel(WHITE SLEEVE FLOUNCE-2)",
+      "cutting_note": "表地1枚 わ裁ち不要",
+      "dart_count": 0,
+      "width_cm": 44.3,
+      "height_cm": 17.0
+    }
+  ],
+  "ok": true,
+  "mode": "illustration",
+  "source_sha256": "398cd54dfa70d96101ff6eba1450d0d4357cb24357d56a7b213aec446cdffa02",
+  "digital_ready": true,
+  "prepared_example": {
+    "title": "テラコッタ色の巻き衣装",
+    "included": [
+      "Vネック前後身頃",
+      "左右袖",
+      "巻きスカート",
+      "ウエスト帯",
+      "左右の結びひも",
+      "袖口の白いフレア別布"
+    ],
+    "not_included": [
+      "斜めの裾線と重ね順の確定",
+      "白い内スカートの実物仕様"
+    ],
+    "attachments": [
+      {
+        "part": "WRAP TIE",
+        "cut_count": 2,
+        "sewing_guide": "左右ウエスト帯の端に各1本。結び代と着用時の締め具合は仮縫いで確認。"
+      },
+      {
+        "part": "WHITE SLEEVE FLOUNCE",
+        "cut_count": 2,
+        "sewing_guide": "袖口にギャザーを寄せて取付ける。袖口側縫い線37cmを袖口実測長に合わせて分配し、ギャザー量は紙模型で調整。"
+      }
+    ],
+    "message": "この画像と固定採寸に一致したため、事前に構成・縫い線を検査した展示用の型紙初稿を表示しています。ケープ・ポケット等の別布は型紙と仕様書に含みますが、取付位置は仮置きです。画像理解APIのリアルタイム生成ではありません。実布の仮縫いは未実施です。"
+  },
+  "production_status": {
+    "ready": true,
+    "draft": false,
+    "pending": [
+      "実布の仮縫い",
+      "ケープ・ポケット等の取付位置と動作確認",
+      "金具・開き仕様の実物確認"
+    ]
+  },
+  "quality_report": {
+    "digital_ready": true,
+    "status": "physical_verification_required",
+    "blockers": [],
+    "physical_signoff_required": true,
+    "fitting_checklist": [
+      {
+        "code": "print_scale",
+        "label": "印刷倍率の実測",
+        "method": "各型紙PDFを実物大・倍率100%で試し印刷し、校正用の5cm枠を定規で測る。表地・別布・裏地を別々に出す場合は各PDFで確認する。",
+        "pass_condition": "すべての校正枠が実測5.0cmで、印刷時の自動拡大・縮小が無効である。",
+        "correction_field": null
+      },
+      {
+        "code": "tile_assembly",
+        "label": "分割紙面の貼り合わせ",
+        "method": "行列番号に従って全ページを仮配置し、紙面の境界をまたぐ裁断線・縫い線・合印を突き合わせる。",
+        "pass_condition": "欠けたページ、線の段差、重複がなく、裁断する全パーツが揃っている。",
+        "correction_field": null
+      },
+      {
+        "code": "shoulder_position",
+        "label": "肩線の位置",
+        "method": "首側と肩先を合わせて着用し、縫い目と実際の肩先のずれをcmで測る。",
+        "pass_condition": "前後の肩線が肩の頂点を通り、腕を下ろして食い込みや浮きがない。",
+        "correction_field": "肩幅の補正欄"
+      },
+      {
+        "code": "shoulder_slope",
+        "label": "肩の傾き",
+        "method": "肩先または首元で余る布をつまみ、つまんだ幅をcmで測る。",
+        "pass_condition": "首元・肩先のどちらにも放射状のしわや浮きがない。",
+        "correction_field": "肩の傾きの補正欄"
+      },
+      {
+        "code": "bust_ease",
+        "label": "胸まわり",
+        "method": "水平に一周し、足りない量を正、余る量を負としてcmで記録する。",
+        "pass_condition": "呼吸でき、前中心が開かず、脇線が前後へ引かれない。",
+        "correction_field": "胸まわりの補正欄"
+      },
+      {
+        "code": "waist_ease",
+        "label": "ウエスト",
+        "method": "ウエストを水平に一周し、足りない量を正、余る量を負で測る。",
+        "pass_condition": "座位でも食い込まず、余分なしわが脇へ集中しない。",
+        "correction_field": "ウエストの補正欄"
+      },
+      {
+        "code": "hip_ease",
+        "label": "ヒップと下半身の動作",
+        "method": "ヒップを水平に一周して差を測り、座る・しゃがむ・一歩踏み出す。",
+        "pass_condition": "横じわ、開き、裾の持ち上がりがなく、予定動作を行える。",
+        "correction_field": "ヒップの補正欄"
+      },
+      {
+        "code": "arm_motion",
+        "label": "袖ぐりと腕の可動域",
+        "method": "両腕を前・横・上へ動かし、袖山のねじれと袖ぐりの食い込みを確認する。",
+        "pass_condition": "予定する最大動作で身頃が大きく持ち上がらず、血流を妨げない。",
+        "correction_field": null
+      },
+      {
+        "code": "sleeve_cap_toile",
+        "label": "袖山のいせ込みと左右差",
+        "method": "本番生地と同条件の仮縫いで型紙の前後・肩の合印を合わせ、袖山の波打ち・つれと左右の形を正面・側面・背面で比較する。",
+        "pass_condition": "袖山に意図しないギャザー、縫い目の裂け、左右差がなく、腕を動かしても肩先に強いしわが出ない。",
+        "correction_field": null
+      },
+      {
+        "code": "fabric_sample",
+        "label": "本番生地の試験片",
+        "method": "20cm角を地直しして前後寸法を測り、縫い代と同条件で縫って引張る。",
+        "pass_condition": "収縮率を必要量へ反映し、縫い目の波打ち・裂け・色移りがない。",
+        "correction_field": null
+      },
+      {
+        "code": "final_toile",
+        "label": "最終仮縫い承認",
+        "method": "左右、前、後ろの写真を撮り、上の全項目を着用者と製作者が確認する。",
+        "pass_condition": "未確認項目がなく、補正後の仮縫いで再確認済みである。",
+        "correction_field": null
+      }
+    ],
+    "summary": "デジタル検査は通過しました。本番裁断前に印刷倍率・貼り合わせ・試験片・仮縫いの確認が必要です。"
+  },
+  "files": {
+    "svg": "pattern.svg",
+    "pdf": "pattern.pdf",
+    "dxf": "pattern.dxf",
+    "spec_pdf": "specification.pdf"
+  },
+  "project_name": "テラコッタ色の巻き衣装（展示用・固定構成）"
+}

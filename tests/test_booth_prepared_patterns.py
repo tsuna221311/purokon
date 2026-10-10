@@ -41,6 +41,12 @@ def test_exact_sheet_returns_same_audited_files(client, monkeypatch, case):
         assert payload["production_quality"]["digital_ready"] is True
         assert payload["ai_engine"] == "none"
         assert payload["part_count"] > 0
+        assert len(payload["prepared_example"]["attachments"]) == len(case.panels)
+        for panel in case.panels:
+            assert sum(part["part_type"] == "custom_panel"
+                       and (part["variation"] == panel.label or
+                            part["variation"].startswith(panel.label + "-"))
+                       for part in payload["parts"]) == panel.quantity
         for kind in ("pdf", "svg", "dxf", "spec_pdf"):
             downloaded = client.get(payload["download"][kind])
             assert downloaded.status_code == 200

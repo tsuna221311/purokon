@@ -2349,7 +2349,7 @@ def _production_status(result) -> dict:
 def _respond_prepared_booth(case):
     """Serve an audited fixed example only for the identical PNG and inputs."""
     payload = load_booth_pattern(case)
-    base = f"/static/demo/booth_patterns/{case.key}/"
+    base = f"/static/demo/booth_patterns_v2/{case.key}/"
     payload["download"] = {key: base + name for key, name in payload.pop("files").items()}
     payload["preview_svg"] = payload["download"]["svg"]
     payload["reference_review"] = {
